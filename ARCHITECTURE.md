@@ -30,10 +30,22 @@ BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents, ex
 **Node Tables:**
 - `Concept(name STRING PRIMARY KEY)` - knowledge concepts
 - `Document(doc_id STRING PRIMARY KEY, name STRING)` - ingested documents
+- `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
+- `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
+- `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Relationship Tables:**
 - `MENTIONS(Document -> Concept, chunk_ids STRING[])` - which chunks in a document mention a concept
 - `RELATED_TO(Concept -> Concept, relationship STRING)` - semantic relationships between concepts
+- `PART_OF(Concept -> Concept)` - concept is a sub-concept of another
+- `INSPIRED_BY(Concept -> Concept)` - concept was inspired by another
+- `DEPENDS_ON(Concept -> Concept)` - concept depends on another
+- `LEARNED_FROM(Concept -> Concept)` - concept was learned from another
+- `HAS_TASK(Project -> Task)` - project contains a task
+- `USES_CONCEPT(Project -> Concept)` - project uses a concept
+- `HAS_REFLECTION(Document -> Reflection)` - document contains a reflection
+- `MENTIONS_PROJECT(Document -> Project)` - document mentions a project
+- `MENTIONS_TASK(Document -> Task)` - document mentions a task
 
 ## Project Structure
 
