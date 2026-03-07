@@ -74,7 +74,7 @@ frontend/
     App.tsx                  - Layout shell, legend, and search state
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Sidebar chat UI for LLM query history
+      ChatPanel.tsx          - Right-side chat UI for LLM query history
       Graph3D.tsx            - 3D graph scene and interaction behavior
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
@@ -151,7 +151,7 @@ The frontend constrains force-simulated node positions against the actual loaded
 ## Frontend Chat Flow
 
 ```
-Input: user question in sidebar
+Input: user question in right-side panel
   |
   v
 ChatPanel -- controlled input + session message history
@@ -169,7 +169,7 @@ Backend returns { answer, discovery_concepts }
 ChatPanel -- render assistant answer + discovery concept tags
 ```
 
-Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet.
+Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet. The panel is toggled from a single side-mounted control so it can collapse without adding a second toolbar area.
 
 ## Ingestion Flow (`POST /ingest`)
 

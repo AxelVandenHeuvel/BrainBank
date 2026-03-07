@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./hooks/useGraphData', () => ({
@@ -33,14 +34,26 @@ vi.mock('./components/ChatPanel', () => ({
 import App from './App';
 
 describe('App', () => {
-  it('renders the shell, graph summary, node legend, and chat panel', () => {
+  it('renders the shell, graph summary, node legend, and lets users toggle the chat panel', async () => {
+    const user = userEvent.setup();
+
     render(<App />);
 
     expect(screen.getByTestId('graph-scene')).toBeInTheDocument();
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
     expect(screen.getByText('BrainBank')).toBeInTheDocument();
     expect(screen.getByText('Mock data')).toBeInTheDocument();
     expect(screen.getByText('Concept')).toBeInTheDocument();
     expect(screen.getByText('Document')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Close chat panel' }));
+
+    expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open chat panel' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+
+    expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
   });
 });
