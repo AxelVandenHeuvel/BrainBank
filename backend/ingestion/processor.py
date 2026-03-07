@@ -2,7 +2,7 @@ import uuid
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
-from backend.ingestion.chunker import chunk_text
+from backend.ingestion.chunker import semantic_chunk_text as chunk_text
 from backend.services.embeddings import embed_texts
 from backend.services.llm import extract_concepts
 
