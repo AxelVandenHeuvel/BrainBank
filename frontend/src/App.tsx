@@ -1,6 +1,7 @@
 import { startTransition, useDeferredValue, useState } from 'react';
 
 import { Graph3D } from './components/Graph3D';
+import { IngestPanel } from './components/IngestPanel';
 import { SearchBar } from './components/SearchBar';
 import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
 import { useGraphData } from './hooks/useGraphData';
@@ -19,7 +20,7 @@ function formatSourceLabel(source: 'api' | 'mock'): string {
 }
 
 export default function App() {
-  const { data, source, isLoading, error } = useGraphData();
+  const { data, source, isLoading, error, refetch } = useGraphData();
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
@@ -52,6 +53,8 @@ export default function App() {
             matchCount={matchCount}
             onQueryChange={handleQueryChange}
           />
+
+          <IngestPanel onIngestComplete={refetch} />
 
           <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
             <div className="flex items-center justify-between">
