@@ -16,6 +16,7 @@ import {
   getNodeId,
   isDirectHoverLink,
 } from '../lib/graphView';
+import { clampNodesToContainment, createBrainContainment, type BrainContainment } from '../lib/brainModel';
 import type { GraphData, GraphLink, GraphNode } from '../types/graph';
 import { NodeTooltip } from './NodeTooltip';
 
@@ -39,6 +40,7 @@ interface ForceGraphHandle {
     z: number,
   ) => { x: number; y: number };
   scene: () => THREE.Scene;
+  refresh: () => void;
 }
 
 interface TooltipPosition {
@@ -65,12 +67,27 @@ export function Graph3D({
   onHoverNode,
 }: Graph3DProps) {
   const graphRef = useRef<ForceGraphHandle | null>(null);
+  const brainContainmentRef = useRef<BrainContainment | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(
     null,
   );
   const adjacency = buildAdjacencyMap(data);
   const matchedNodeIds = findMatchingNodeIds(data.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
+
+  function clampNodesWithinBrain(refresh = false) {
+    const containment = brainContainmentRef.current;
+
+    if (!containment) {
+      return;
+    }
+
+    const changed = clampNodesToContainment(data.nodes, containment);
+
+    if (changed && refresh) {
+      graphRef.current?.refresh();
+    }
+  }
 
   useEffect(() => {
     const controls = graphRef.current?.controls();
@@ -137,12 +154,11 @@ export function Graph3D({
 
         const bounds = new THREE.Box3().setFromObject(brainGroup);
         const center = bounds.getCenter(new THREE.Vector3());
-        const size = bounds.getSize(new THREE.Vector3()).length() || 1;
-        const scale = 260 / size;
+        const size = bounds.getSize(new THREE.Vector3());
+        const scale = 260 / (size.length() || 1);
 
         brainGroup.position.sub(center);
         brainGroup.scale.setScalar(scale);
-
         brainGroup.traverse((node) => {
           if (node instanceof THREE.Mesh) {
             node.material = new THREE.MeshBasicMaterial({
@@ -150,10 +166,14 @@ export function Graph3D({
               wireframe: true,
               transparent: true,
               opacity: 0.12,
+              side: THREE.DoubleSide,
             });
           }
         });
 
+        brainGroup.updateMatrixWorld(true);
+        brainContainmentRef.current = createBrainContainment(brainGroup);
+        clampNodesWithinBrain(true);
         scene.add(brainGroup);
         return;
       }
@@ -163,12 +183,17 @@ export function Graph3D({
 
     return () => {
       cancelled = true;
+      brainContainmentRef.current = null;
 
       if (brainGroup) {
         scene.remove(brainGroup);
       }
     };
   }, []);
+
+  useEffect(() => {
+    clampNodesWithinBrain(true);
+  }, [data.nodes]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -276,6 +301,7 @@ export function Graph3D({
         cooldownTicks={120}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}
+        onEngineTick={() => clampNodesWithinBrain()}
         onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
         enableNodeDrag={false}
         controlType="orbit"

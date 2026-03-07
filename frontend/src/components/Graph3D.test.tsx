@@ -1,8 +1,10 @@
 import { render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as THREE from 'three';
 
 import type { GraphData, GraphNode } from '../types/graph';
 import { Graph3D } from './Graph3D';
+import { createBrainContainment, isNodeInsideContainment } from '../lib/brainModel';
 
 const graphPropsSpy = vi.fn();
 const controls = {
@@ -15,6 +17,7 @@ const cameraPosition = vi.fn();
 const graph2ScreenCoords = vi.fn(() => ({ x: 160, y: 120 }));
 const sceneAdd = vi.fn();
 const sceneRemove = vi.fn();
+const refresh = vi.fn();
 
 vi.mock('react-force-graph-3d', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
@@ -29,6 +32,7 @@ vi.mock('react-force-graph-3d', async () => {
           add: sceneAdd,
           remove: sceneRemove,
         }),
+        refresh,
       }));
       graphPropsSpy(props);
       return <div data-testid="force-graph" />;
@@ -38,11 +42,11 @@ vi.mock('react-force-graph-3d', async () => {
 
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
-    load(_url: string, onLoad: (value: { scene: { traverse: (fn: (node: object) => void) => void } }) => void) {
+    load(_url: string, onLoad: (value: { scene: THREE.Object3D }) => void) {
+      const scene = new THREE.Group();
+      scene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 8, 8)));
       onLoad({
-        scene: {
-          traverse: () => undefined,
-        },
+        scene,
       });
     }
   },
@@ -136,5 +140,38 @@ describe('Graph3D', () => {
       type: 'Project',
       name: 'BrainBank',
     })).toBe('rgba(148, 163, 184, 0.2)');
+  });
+
+  it('keeps simulated nodes inside the brain containment volume', () => {
+    render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onEngineTick: () => void;
+    };
+    const outsideNode = graph.nodes[0];
+    outsideNode.x = 250;
+    outsideNode.y = 210;
+    outsideNode.z = 180;
+
+    props.onEngineTick();
+
+    expect(
+      isNodeInsideContainment(
+        outsideNode,
+        createBrainContainment(
+          new THREE.Mesh(
+            new THREE.SphereGeometry(75, 8, 8),
+            new THREE.MeshBasicMaterial(),
+          ),
+        ),
+      ),
+    ).toBe(true);
   });
 });
