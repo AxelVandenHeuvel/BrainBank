@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
+import type { GraphNode } from '../types/graph';
 import {
   clampNodeToContainment,
   createBrainContainment,
   isNodeInsideContainment,
 } from './brainModel';
-import type { GraphNode } from '../types/graph';
 
 describe('brainModel helpers', () => {
   function createBrainMesh() {

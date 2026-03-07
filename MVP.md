@@ -27,24 +27,12 @@ This creates a **persistent context layer** that AI systems can reference during
 
 ## Data Model
 
-Each journal entry is parsed into structured nodes and relationships.
-
-### Node Types
+Each journal entry is parsed into structured nodes and relationships. Each node represents a concept. Each concept has documents justfying it's existence, and nodes are connected to other nodes via relationships/edges.
 
 **Concept**
 - Ideas or knowledge areas  
 - Examples: "Graph Neural Networks", "Probability Theory"
 
-**Project**
-- Things the user is building or working on  
-- Examples: "Brain Bank", "Pump and Dump Detector"
-
-**Task**
-- Actions or next steps  
-- Examples: "Implement graph database", "Write design doc"
-
-**Reflection**
-- Insights, observations, or lessons learned
 
 ---
 

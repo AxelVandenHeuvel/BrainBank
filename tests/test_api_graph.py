@@ -116,6 +116,47 @@ class TestGetDocuments:
         assert isinstance(doc["concepts"], list)
 
 
+class TestGetConceptDocuments:
+    def test_unknown_concept_returns_empty_list(self):
+        response = client.get("/api/concepts/NonExistentConcept/documents")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_returns_documents_after_ingest(self):
+        _ingest_sample()
+        response = client.get("/api/concepts/Calculus/documents")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) > 0
+
+    def test_document_shape(self):
+        _ingest_sample()
+        response = client.get("/api/concepts/Calculus/documents")
+        doc = response.json()[0]
+        assert "doc_id" in doc
+        assert "name" in doc
+        assert "full_text" in doc
+        assert isinstance(doc["doc_id"], str)
+        assert isinstance(doc["name"], str)
+        assert isinstance(doc["full_text"], str)
+
+    def test_full_text_contains_document_content(self):
+        _ingest_sample()
+        response = client.get("/api/concepts/Calculus/documents")
+        doc = response.json()[0]
+        assert len(doc["full_text"]) > 0
+        assert doc["name"] == "Math Notes"
+
+    def test_deduplicates_documents(self):
+        _ingest_sample()
+        _ingest_sample()
+        response = client.get("/api/concepts/Calculus/documents")
+        data = response.json()
+        doc_ids = [d["doc_id"] for d in data]
+        assert len(doc_ids) == len(set(doc_ids))
+
+
 class TestGetStats:
     def test_response_structure(self):
         response = client.get("/api/stats")
