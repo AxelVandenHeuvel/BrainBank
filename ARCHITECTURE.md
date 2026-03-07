@@ -80,6 +80,7 @@ frontend/
     hooks/
       useGraphData.ts        - GET /api/graph with mock fallback
     lib/
+      brainModel.ts          - Brain mesh containment math for node bounds
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, and match helpers
     mock/
@@ -140,10 +141,10 @@ Graph3D -- react-force-graph-3d scene
   |         +-- search -> highlight matches, zoom camera
   |         +-- idle -> orbit controls auto-rotate
   v
-GLTFLoader -- load human-brain.glb as a translucent wireframe shell
+GLTFLoader -- load human-brain.glb, derive containment bounds, render wireframe shell
 ```
 
-The frontend treats the brain model as a visual shell around the graph, not as a hard layout constraint. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
+The frontend constrains force-simulated node positions against the actual loaded brain mesh, not just its bounding box. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the brain shell. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -258,6 +259,6 @@ Tests mock both the LLM (`extract_concepts`, `extract_knowledge`, `generate_answ
 
 Run: `uv run pytest tests/ -v`
 
-Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, mock fallback behavior, and the graph shell UI.
+Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, brain containment math, mock fallback behavior, and the graph shell UI.
 
 Run: `cd frontend && npm test`
