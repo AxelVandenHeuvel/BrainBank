@@ -2,9 +2,12 @@ import os
 import kuzu
 
 def init_kuzu(db_path: str = "./data/kuzu"):
-    # FIX: Create the directory structure so Kuzu doesn't crash on a fresh run
-    os.makedirs(db_path, exist_ok=True)
+    # Extract the parent directory ("./data") and ONLY create that.
+    parent_dir = os.path.dirname(db_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
 
+    # Now Kuzu can safely create its file inside the data folder
     db = kuzu.Database(db_path)
     conn = kuzu.Connection(db)
     
