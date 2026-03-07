@@ -26,7 +26,7 @@ describe('useChat', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/query', {
+    expect(fetchMock).toHaveBeenCalledWith('/query/test-llm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: 'What is calculus?' }),
