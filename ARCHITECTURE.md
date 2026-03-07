@@ -63,6 +63,7 @@ The richer extraction schema now exists in the LLM service. Persistence and API 
 ## Project Structure
 
 ```
+run.sh                      - Starts backend and frontend together
 frontend/
   package.json               - Frontend scripts and dependencies
   vite.config.ts             - Vite React config + /api proxy
@@ -80,8 +81,9 @@ frontend/
     hooks/
       useGraphData.ts        - GET /api/graph with mock fallback
     lib/
+      brainModel.ts          - Brain mesh containment math for node bounds
       graphData.ts           - Graph payload validation + normalization
-      graphView.ts           - Colors, adjacency, and match helpers
+      graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
       mockGraph.ts           - Development graph payload
     test/
@@ -138,12 +140,15 @@ Graph3D -- react-force-graph-3d scene
   |         |
   |         +-- hover -> highlight node + neighbors, tooltip
   |         +-- search -> highlight matches, zoom camera
-  |         +-- idle -> orbit controls auto-rotate
+  |         +-- load -> zoomToFit for default framing
+  |         +-- idle (5s) -> slow camera auto-rotation
+  |         +-- top-right UI buttons -> zoom in / zoom out / reset
+  |         +-- double-click node -> focus camera on that node
   v
-GLTFLoader -- load human-brain.glb as a translucent wireframe shell
+GLTFLoader -- load human-brain.glb, derive mesh containment, render wireframe shell
 ```
 
-The frontend treats the brain model as a visual shell around the graph, not as a hard layout constraint. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
+The frontend uses the loaded brain mesh as a real containment boundary for the force layout, clamping node positions back inside the model during simulation so nodes do not drift outside the rendered shell. Graph3D also manages its own camera state: it auto-centers on load, resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
 
 ## Ingestion Flow (`POST /ingest`)
 

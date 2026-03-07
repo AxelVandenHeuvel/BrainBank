@@ -1,5 +1,24 @@
 import type { GraphData, GraphLink, GraphNode, GraphNodeType } from '../types/graph';
 
+interface CameraPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface ForceGraphCameraHandle {
+  cameraPosition(): CameraPosition;
+  cameraPosition(
+    position: CameraPosition,
+    lookAt?: CameraPosition,
+    durationMs?: number,
+  ): unknown;
+}
+
+interface ForceGraphCameraRef {
+  current: ForceGraphCameraHandle | null;
+}
+
 export const NODE_TYPE_COLORS: Record<GraphNodeType, string> = {
   Concept: '#3b82f6',
   Document: '#22c55e',
@@ -87,3 +106,44 @@ export function isDirectHoverLink(
   return source === hoveredNode.id || target === hoveredNode.id;
 }
 
+export function autoRotateCamera(
+  fgRef: ForceGraphCameraRef,
+  speed = 0.002,
+): void {
+  const currentPosition = fgRef.current?.cameraPosition();
+
+  if (!currentPosition) {
+    return;
+  }
+
+  const cosine = Math.cos(speed);
+  const sine = Math.sin(speed);
+
+  fgRef.current?.cameraPosition({
+    x: currentPosition.x * cosine - currentPosition.z * sine,
+    y: currentPosition.y,
+    z: currentPosition.x * sine + currentPosition.z * cosine,
+  });
+}
+
+export function zoomToNode(
+  fgRef: ForceGraphCameraRef,
+  node: GraphNode,
+  distance = 100,
+): void {
+  const lookAt = {
+    x: node.x ?? 0,
+    y: node.y ?? 0,
+    z: node.z ?? 0,
+  };
+
+  fgRef.current?.cameraPosition(
+    {
+      x: lookAt.x + distance,
+      y: lookAt.y + distance * 0.25,
+      z: lookAt.z + distance,
+    },
+    lookAt,
+    1200,
+  );
+}

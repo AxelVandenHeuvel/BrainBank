@@ -1,8 +1,10 @@
-import { render } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as THREE from 'three';
 
 import type { GraphData, GraphNode } from '../types/graph';
 import { Graph3D } from './Graph3D';
+import { createBrainContainment, isNodeInsideContainment } from '../lib/brainModel';
 
 const graphPropsSpy = vi.fn();
 const controls = {
@@ -11,10 +13,20 @@ const controls = {
   addEventListener: vi.fn(),
   removeEventListener: vi.fn(),
 };
-const cameraPosition = vi.fn();
+let currentCameraPosition = { x: 200, y: 60, z: 200 };
+const cameraPosition = vi.fn((position?: typeof currentCameraPosition) => {
+  if (!position) {
+    return currentCameraPosition;
+  }
+
+  currentCameraPosition = position;
+  return currentCameraPosition;
+});
 const graph2ScreenCoords = vi.fn(() => ({ x: 160, y: 120 }));
 const sceneAdd = vi.fn();
 const sceneRemove = vi.fn();
+const zoomToFit = vi.fn();
+const refresh = vi.fn();
 
 vi.mock('react-force-graph-3d', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
@@ -25,10 +37,17 @@ vi.mock('react-force-graph-3d', async () => {
         controls: () => controls,
         cameraPosition,
         graph2ScreenCoords,
+        zoomToFit,
         scene: () => ({
           add: sceneAdd,
           remove: sceneRemove,
         }),
+        getGraphBbox: () => ({
+          x: [-100, 100],
+          y: [-60, 60],
+          z: [-80, 80],
+        }),
+        refresh,
       }));
       graphPropsSpy(props);
       return <div data-testid="force-graph" />;
@@ -38,11 +57,11 @@ vi.mock('react-force-graph-3d', async () => {
 
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
-    load(_url: string, onLoad: (value: { scene: { traverse: (fn: (node: object) => void) => void } }) => void) {
+    load(_url: string, onLoad: (value: { scene: THREE.Object3D }) => void) {
+      const scene = new THREE.Group();
+      scene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 8, 8)));
       onLoad({
-        scene: {
-          traverse: () => undefined,
-        },
+        scene,
       });
     }
   },
@@ -78,11 +97,17 @@ const hoveredNode: GraphNode = {
 };
 
 describe('Graph3D', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
+  beforeEach(() => {
+    vi.useFakeTimers();
+    currentCameraPosition = { x: 200, y: 60, z: 200 };
   });
 
-  it('configures orbit auto-rotation and pauses on interaction', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('auto-centers the graph on load', () => {
     render(
       <Graph3D
         data={graph}
@@ -92,10 +117,9 @@ describe('Graph3D', () => {
       />,
     );
 
-    expect(controls.autoRotate).toBe(true);
-    expect(controls.autoRotateSpeed).toBeGreaterThan(0);
-    expect(controls.addEventListener).toHaveBeenCalledWith('start', expect.any(Function));
-    expect(controls.addEventListener).toHaveBeenCalledWith('end', expect.any(Function));
+    vi.advanceTimersByTime(200);
+
+    expect(zoomToFit).toHaveBeenCalledWith(1200, 120);
   });
 
   it('zooms the camera to the first matching search result', () => {
@@ -113,6 +137,29 @@ describe('Graph3D', () => {
       expect.objectContaining({ x: 10, y: 0, z: 0 }),
       1200,
     );
+  });
+
+  it('starts rotating after 5 seconds of idle time and stops on mouse movement', () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const callCountBeforeIdle = cameraPosition.mock.calls.length;
+    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(32);
+
+    expect(cameraPosition.mock.calls.length).toBeGreaterThan(callCountBeforeIdle);
+
+    const callCountAfterIdle = cameraPosition.mock.calls.length;
+    fireEvent.mouseMove(container.firstChild as HTMLElement);
+    vi.advanceTimersByTime(100);
+
+    expect(cameraPosition.mock.calls.length).toBe(callCountAfterIdle);
   });
 
   it('highlights connected neighbors while dimming unrelated nodes on hover', () => {
@@ -136,5 +183,82 @@ describe('Graph3D', () => {
       type: 'Project',
       name: 'BrainBank',
     })).toBe('rgba(148, 163, 184, 0.2)');
+  });
+
+  it('renders zoom controls and uses them', () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '+' }));
+    fireEvent.click(screen.getByRole('button', { name: '−' }));
+    fireEvent.click(screen.getByRole('button', { name: '⟳' }));
+
+    expect(container.querySelector('.absolute.top-4.right-4.flex.flex-col.gap-2')).not.toBeNull();
+    expect(cameraPosition).toHaveBeenCalled();
+    expect(zoomToFit).toHaveBeenCalledWith(1200, 120);
+  });
+
+  it('double-clicking a node focuses it', () => {
+    render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onNodeClick: (node: GraphNode) => void;
+    };
+
+    props.onNodeClick(graph.nodes[1]);
+    vi.advanceTimersByTime(100);
+    props.onNodeClick(graph.nodes[1]);
+
+    expect(cameraPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number), z: expect.any(Number) }),
+      expect.objectContaining({ x: -10, y: 0, z: 0 }),
+      1200,
+    );
+  });
+
+  it('keeps simulated nodes inside the brain containment volume', () => {
+    render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onEngineTick: () => void;
+    };
+    const outsideNode = graph.nodes[0];
+    outsideNode.x = 250;
+    outsideNode.y = 210;
+    outsideNode.z = 180;
+
+    props.onEngineTick();
+
+    expect(
+      isNodeInsideContainment(
+        outsideNode,
+        createBrainContainment(
+          new THREE.Mesh(
+            new THREE.SphereGeometry(75, 8, 8),
+            new THREE.MeshBasicMaterial(),
+          ),
+        ),
+      ),
+    ).toBe(true);
   });
 });
