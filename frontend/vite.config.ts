@@ -7,6 +7,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:8000',
+      '/query': 'http://localhost:8000',
+      '/ingest': 'http://localhost:8000',
     },
   },
   test: {
@@ -15,4 +17,3 @@ export default defineConfig({
     globals: true,
   },
 });
-

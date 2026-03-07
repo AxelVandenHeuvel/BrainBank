@@ -4,6 +4,7 @@ import os
 from google import genai
 
 _client = None
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def _get_client():
@@ -14,6 +15,10 @@ def _get_client():
             raise ValueError("GEMINI_API_KEY environment variable is required")
         _client = genai.Client(api_key=api_key)
     return _client
+
+
+def _get_model_name() -> str:
+    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 
 
 def _parse_json_response(raw_text: str) -> dict:
@@ -38,7 +43,7 @@ def extract_concepts(text: str, doc_name: str) -> dict:
         '"relationship": "related_to"}]}'
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash", contents=prompt
+        model=_get_model_name(), contents=prompt
     )
     return _parse_json_response(response.text)
 
@@ -74,7 +79,7 @@ def extract_knowledge(text: str, doc_name: str) -> dict:
         "}"
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash", contents=prompt
+        model=_get_model_name(), contents=prompt
     )
     return _parse_json_response(response.text)
 
@@ -89,6 +94,21 @@ def generate_answer(query: str, context: str, concepts: list[str]) -> str:
         "Provide a grounded answer based only on the context provided."
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash", contents=prompt
+        model=_get_model_name(), contents=prompt
+    )
+    return response.text
+
+
+def generate_test_answer(question: str) -> str:
+    """Return a direct model response without any retrieval context."""
+    prompt = (
+        "You are a test route for BrainBank.\n"
+        "Answer the user's question directly and briefly.\n\n"
+        f"Question: {question}"
+    )
+
+    client = _get_client()
+    response = client.models.generate_content(
+        model=_get_model_name(), contents=prompt
     )
     return response.text

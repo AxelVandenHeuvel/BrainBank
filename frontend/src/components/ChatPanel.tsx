@@ -24,7 +24,7 @@ export function ChatPanel() {
         <div>
           <h2 className="text-sm font-medium text-slate-200">Chat</h2>
           <p className="mt-1 text-xs uppercase tracking-[0.24em] text-cyan-200/70">
-            Query your graph
+            LLM test route
           </p>
         </div>
         {isLoading ? (

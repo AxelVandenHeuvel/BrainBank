@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from backend.api_graph import graph_router
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
+from backend.services.llm import generate_test_answer
 
 app = FastAPI(title="BrainBank", version="0.1.0")
 app.include_router(graph_router)
@@ -30,4 +31,13 @@ def query(req: QueryRequest):
     return {
         "answer": result["answer"],
         "discovery_concepts": result["discovery_concepts"],
+    }
+
+
+@app.post("/query/test-llm")
+def query_test_llm(req: QueryRequest):
+    return {
+        "answer": generate_test_answer(req.question),
+        "discovery_concepts": [],
+        "mode": "llm_test",
     }

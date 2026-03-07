@@ -1,6 +1,11 @@
 from unittest.mock import Mock, patch
 
-from backend.services.llm import extract_concepts, extract_knowledge
+from backend.services.llm import (
+    extract_concepts,
+    extract_knowledge,
+    generate_answer,
+    generate_test_answer,
+)
 
 
 def _mock_response(text: str):
@@ -134,3 +139,16 @@ class TestExtractConcepts:
                 }
             ],
         }
+
+
+class TestModelSelection:
+    @patch("backend.services.llm._get_client")
+    def test_generate_answer_uses_current_default_model(self, mock_get_client):
+        client = Mock()
+        client.models.generate_content.return_value = _mock_response("Answer")
+        mock_get_client.return_value = client
+
+        result = generate_answer("What is calculus?", "Context", ["Calculus"])
+
+        assert result == "Answer"
+        assert client.models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash"
