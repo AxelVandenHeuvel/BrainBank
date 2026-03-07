@@ -71,11 +71,12 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell, legend, and search state
+    App.tsx                  - Layout shell, view switching (graph/editor), legend, search
     index.css                - Tailwind import + global theme
     components/
       Graph3D.tsx            - 3D graph scene and interaction behavior
-      IngestPanel.tsx        - Note input + file upload for ingestion
+      IngestPanel.tsx        - New Note button + file upload
+      NoteEditor.tsx         - Full-page markdown note editor
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
@@ -147,12 +148,12 @@ GLTFLoader -- load human-brain.glb, derive containment bounds, render wireframe 
 
 ### Ingest Panel
 
-The sidebar includes a collapsible IngestPanel with two modes:
+The sidebar has a "New Note" button and a file upload option:
 
-1. **Quick Note** - user types a title + markdown content, clicks "Add to Brain"
-2. **File Upload** - user picks a `.md` or `.txt` file, contents are read client-side
+1. **New Note** - clicking swaps the main area from the 3D graph to a full-page markdown editor (NoteEditor). The editor has a title field, a large textarea, and a "Save to Brain" button. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
+2. **File Upload** - user picks a `.md` or `.txt` file from the sidebar. Contents are read client-side and sent via `POST /ingest`. Success shows extracted concept count.
 
-Both modes `POST /ingest` with `{title, text}`. On success the panel shows concept count and triggers `useGraphData.refetch()` to reload the 3D graph with new data. Vite proxies `/ingest` to the backend alongside `/api`.
+Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
 The frontend constrains force-simulated node positions against the actual loaded brain mesh, not just its bounding box. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the brain shell. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
 

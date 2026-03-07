@@ -28,10 +28,14 @@ def ingest_markdown(
     ]
     table.add(records)
 
-    # Extract concepts via LLM
-    extraction = extract_concepts(text, doc_name)
-    concepts = extraction.get("concepts", [])
-    relationships = extraction.get("relationships", [])
+    # Extract concepts via LLM (graceful — note saves even if LLM is unavailable)
+    try:
+        extraction = extract_concepts(text, doc_name)
+        concepts = extraction.get("concepts", [])
+        relationships = extraction.get("relationships", [])
+    except Exception:
+        concepts = []
+        relationships = []
 
     # Upsert Document node
     conn.execute(
