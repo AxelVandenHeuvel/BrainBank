@@ -65,7 +65,7 @@ The richer extraction schema now exists in the LLM service. Persistence and API 
 ```
 frontend/
   package.json               - Frontend scripts and dependencies
-  vite.config.ts             - Vite React config + /api proxy
+  vite.config.ts             - Vite React config + /api and /ingest proxy
   index.html                 - Frontend HTML entrypoint
   public/assets/
     human-brain.glb          - Embedded glTF brain wireframe asset
@@ -76,11 +76,13 @@ frontend/
     components/
       ChatPanel.tsx          - Right-side chat UI for LLM query history
       Graph3D.tsx            - 3D graph scene and interaction behavior
+      IngestPanel.tsx        - Note input + file upload for ingestion
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
       useChat.ts             - POST /query hook for chat state and answers
       useGraphData.ts        - GET /api/graph with mock fallback
+      useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
       graphData.ts           - Graph payload validation + normalization
@@ -145,6 +147,15 @@ Graph3D -- react-force-graph-3d scene
   v
 GLTFLoader -- load human-brain.glb, derive containment bounds, render wireframe shell
 ```
+
+### Ingest Panel
+
+The sidebar includes a collapsible IngestPanel with two modes:
+
+1. **Quick Note** - user types a title + markdown content, clicks "Add to Brain"
+2. **File Upload** - user picks a `.md` or `.txt` file, contents are read client-side
+
+Both modes `POST /ingest` with `{title, text}`. On success the panel shows concept count and triggers `useGraphData.refetch()` to reload the 3D graph with new data. Vite proxies `/ingest` to the backend alongside `/api`.
 
 The frontend constrains force-simulated node positions against the actual loaded brain mesh, not just its bounding box. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the brain shell. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
 
