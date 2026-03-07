@@ -30,10 +30,22 @@ BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents and
 **Current Node Tables:**
 - `Concept(name STRING PRIMARY KEY)` - knowledge concepts
 - `Document(doc_id STRING PRIMARY KEY, name STRING)` - ingested documents
+- `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
+- `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
+- `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Current Relationship Tables:**
 - `MENTIONS(Document -> Concept, chunk_ids STRING[])` - which chunks in a document mention a concept
 - `RELATED_TO(Concept -> Concept, relationship STRING)` - semantic relationships between concepts
+- `PART_OF(Concept -> Concept)` - concept is a sub-concept of another
+- `INSPIRED_BY(Concept -> Concept)` - concept was inspired by another
+- `DEPENDS_ON(Concept -> Concept)` - concept depends on another
+- `LEARNED_FROM(Concept -> Concept)` - concept was learned from another
+- `HAS_TASK(Project -> Task)` - project contains a task
+- `USES_CONCEPT(Project -> Concept)` - project uses a concept
+- `HAS_REFLECTION(Document -> Reflection)` - document contains a reflection
+- `MENTIONS_PROJECT(Document -> Project)` - document mentions a project
+- `MENTIONS_TASK(Document -> Task)` - document mentions a task
 
 **Extraction Model:**
 - `concepts` - key ideas, topics, or entities
@@ -49,6 +61,7 @@ The richer extraction schema now exists in the LLM service. Persistence and API 
 ```
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
+  api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats
   db/
     lance.py                - LanceDB init + chunks table schema
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
@@ -58,12 +71,14 @@ backend/
   ingestion/
     chunker.py              - Text splitting by paragraphs
     journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
+    chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
     query.py                - Query pipeline: search -> expand -> answer
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
+  test_api_graph.py         - Graph export API tests
   db/
     test_lance.py           - LanceDB init tests
     test_kuzu.py            - Kuzu init tests
@@ -85,7 +100,7 @@ Each file has a single responsibility. Tests mirror the source structure.
 Input: text + title
   |
   v
-chunker.chunk_text() -- split by paragraphs, ~500 chars each
+chunker.semantic_chunk_text() -- split by topic shift using sentence similarity
   |
   v
 embeddings.embed_texts() -- sentence-transformers -> 384-dim vectors
@@ -162,6 +177,19 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 ### `POST /query`
 - Body: `{"question": "..."}`
 - Returns: `{"answer": "...", "discovery_concepts": [...]}`
+
+### `GET /api/graph`
+- Returns: `{"nodes": [{"id", "type", "name"}], "edges": [{"source", "target", "type"}]}`
+- Full graph for frontend 3D visualization
+
+### `GET /api/concepts`
+- Returns: `{"concepts": [{"name", "document_count", "related_concepts"}]}`
+
+### `GET /api/documents`
+- Returns: `{"documents": [{"doc_id", "name", "chunk_count", "concepts"}]}`
+
+### `GET /api/stats`
+- Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`
 
 ## Configuration
 
