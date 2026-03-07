@@ -21,43 +21,33 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 
 ### LanceDB: `chunks` table
 
-| Column   | Type              | Description                |
-|----------|-------------------|----------------------------|
-| chunk_id | STRING            | Unique ID per chunk        |
-| doc_id   | STRING            | Parent document ID         |
-| text     | STRING            | Chunk text content         |
-| vector   | FLOAT32[384]      | Embedding vector           |
+| Column   | Type              | Description                              |
+|----------|-------------------|------------------------------------------|
+| chunk_id | STRING            | Unique ID per chunk                      |
+| doc_id   | STRING            | Parent document ID                       |
+| doc_name | STRING            | Human-readable document title            |
+| text     | STRING            | Chunk text content                       |
+| concepts | STRING[]          | Concepts mentioned in this chunk         |
+| vector   | FLOAT32[384]      | Embedding vector                         |
+
+LanceDB is the sole source of document identity and the concept→document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph.
 
 ### Kuzu: Graph Schema
 
-**Current Node Tables:**
-- `Concept(name STRING PRIMARY KEY)` - knowledge concepts
-- `Document(doc_id STRING PRIMARY KEY, name STRING)` - ingested documents
+**Node Tables:**
+- `Concept(name STRING PRIMARY KEY)` - knowledge concepts extracted from documents
 - `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
 - `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
 - `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
-**Current Relationship Tables:**
-- `MENTIONS(Document -> Concept, chunk_ids STRING[])` - which chunks in a document mention a concept
-- `RELATED_TO(Concept -> Concept, relationship STRING)` - semantic relationships between concepts
-- `PART_OF(Concept -> Concept)` - concept is a sub-concept of another
-- `INSPIRED_BY(Concept -> Concept)` - concept was inspired by another
-- `DEPENDS_ON(Concept -> Concept)` - concept depends on another
-- `LEARNED_FROM(Concept -> Concept)` - concept was learned from another
+**Relationship Tables:**
+- `RELATED_TO(Concept -> Concept, reason STRING)` - semantic relationships between concepts
+- `APPLIED_TO_PROJECT(Concept -> Project)` - concept is applied in a project
+- `GENERATED_TASK(Concept -> Task)` - concept generated a task
+- `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
-- `USES_CONCEPT(Project -> Concept)` - project uses a concept
-- `HAS_REFLECTION(Document -> Reflection)` - document contains a reflection
-- `MENTIONS_PROJECT(Document -> Project)` - document mentions a project
-- `MENTIONS_TASK(Document -> Task)` - document mentions a task
 
-**Extraction Model:**
-- `concepts` - key ideas, topics, or entities
-- `projects` - things being built or worked on
-- `tasks` - action items or next steps
-- `reflections` - insights or lessons learned
-- `relationships` - typed links such as `related_to`, `has_task`, and `uses_concept`
-
-The richer extraction schema now exists in the LLM service. Persistence and API integration still use the legacy concept-only path until a later change updates the ingestion pipeline.
+Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata.
 
 ## Project Structure
 
@@ -93,7 +83,8 @@ frontend/
       setup.ts               - Vitest setup
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats
+  api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  schemas.py                - Shared Pydantic response models (DocumentResponse)
   db/
     lance.py                - LanceDB init + chunks table schema
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
@@ -191,26 +182,25 @@ Chat history persists for the current browser session because it lives in React 
 Input: text + title
   |
   v
+llm.extract_concepts() -- Gemini extracts concepts + relationships
+  |
+  v
 chunker.semantic_chunk_text() -- split by topic shift using sentence similarity
   |
   v
 embeddings.embed_texts() -- sentence-transformers -> 384-dim vectors
   |
   v
-LanceDB.add() -- store chunks with vectors
+LanceDB.add() -- store chunks with doc_name, concepts[], and vectors
+  |              concepts field is the doc<->concept bridge (no Kuzu Document node)
+  v
+Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
-llm.extract_concepts() -- Gemini extracts concepts + relationships
-  |
-  v
-Kuzu MERGE -- upsert Concept nodes (no duplicates)
-  |
-  v
-Kuzu CREATE edges -- MENTIONS (doc->concept with chunk_ids)
-                  -- RELATED_TO (concept->concept)
+Kuzu CREATE -- RELATED_TO edges (concept->concept with reason)
 ```
 
-Key behavior: Concepts are **upserted** via Cypher `MERGE`. If "Calculus" already exists from a previous document, it is reused, not duplicated. New MENTIONS edges link the new document's chunks to the existing concept.
+Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
 
 ## Journal Parsing Flow
 
@@ -280,6 +270,11 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 
 ### `GET /api/documents`
 - Returns: `{"documents": [{"doc_id", "name", "chunk_count", "concepts"}]}`
+
+### `GET /api/concepts/{concept_name}/documents`
+- Returns: `[{"doc_id", "name", "full_text"}]`
+- Queries LanceDB only (no Kuzu). Filters chunks by concept tag, deduplicates by doc_id, and joins all chunk texts into one readable document per result.
+- Returns `[]` if no documents are found for the concept.
 
 ### `GET /api/stats`
 - Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`
