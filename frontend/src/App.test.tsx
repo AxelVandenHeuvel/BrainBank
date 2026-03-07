@@ -26,17 +26,21 @@ vi.mock('./components/Graph3D', () => ({
   Graph3D: () => <div data-testid="graph-scene" />,
 }));
 
+vi.mock('./components/ChatPanel', () => ({
+  ChatPanel: () => <div data-testid="chat-panel">Chat panel</div>,
+}));
+
 import App from './App';
 
 describe('App', () => {
-  it('renders the shell, graph summary, and node legend', () => {
+  it('renders the shell, graph summary, node legend, and chat panel', () => {
     render(<App />);
 
     expect(screen.getByTestId('graph-scene')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
     expect(screen.getByText('BrainBank')).toBeInTheDocument();
     expect(screen.getByText('Mock data')).toBeInTheDocument();
     expect(screen.getByText('Concept')).toBeInTheDocument();
     expect(screen.getByText('Document')).toBeInTheDocument();
   });
 });
-

@@ -1,5 +1,6 @@
 import { startTransition, useDeferredValue, useState } from 'react';
 
+import { ChatPanel } from './components/ChatPanel';
 import { Graph3D } from './components/Graph3D';
 import { SearchBar } from './components/SearchBar';
 import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
@@ -111,6 +112,8 @@ export default function App() {
                 : 'Hover a node to inspect its local neighborhood.'}
             </p>
           </section>
+
+          <ChatPanel />
         </aside>
 
         <section className="min-h-[70vh]">
@@ -125,4 +128,3 @@ export default function App() {
     </main>
   );
 }
-

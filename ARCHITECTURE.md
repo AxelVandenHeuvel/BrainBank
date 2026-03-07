@@ -74,10 +74,12 @@ frontend/
     App.tsx                  - Layout shell, legend, and search state
     index.css                - Tailwind import + global theme
     components/
+      ChatPanel.tsx          - Sidebar chat UI for LLM query history
       Graph3D.tsx            - 3D graph scene and interaction behavior
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
+      useChat.ts             - POST /query hook for chat state and answers
       useGraphData.ts        - GET /api/graph with mock fallback
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
@@ -145,6 +147,29 @@ GLTFLoader -- load human-brain.glb, derive containment bounds, render wireframe 
 ```
 
 The frontend constrains force-simulated node positions against the actual loaded brain mesh, not just its bounding box. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the brain shell. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
+
+## Frontend Chat Flow
+
+```
+Input: user question in sidebar
+  |
+  v
+ChatPanel -- controlled input + session message history
+  |
+  v
+useChat.sendMessage() -- append user message and set loading state
+  |
+  v
+POST http://localhost:8000/query
+  |
+  v
+Backend returns { answer, discovery_concepts }
+  |
+  v
+ChatPanel -- render assistant answer + discovery concept tags
+```
+
+Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet.
 
 ## Ingestion Flow (`POST /ingest`)
 
