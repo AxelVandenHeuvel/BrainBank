@@ -2,12 +2,16 @@
 
 ## Overview
 
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents, extracts concepts and relationships via LLM, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. The frontend renders that graph as an interactive 3D neural map with search, hover highlighting, and a translucent brain-shell overlay.
 BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections.
 
 ## Stack
 
 | Layer       | Technology              | Purpose                          |
 |-------------|-------------------------|----------------------------------|
+| Frontend    | React + Vite + TypeScript | Standalone graph UI            |
+| UI Styling  | Tailwind CSS            | Search, sidebar, and overlays    |
+| 3D Rendering| react-force-graph-3d + Three.js | Force graph and brain shell |
 | API         | FastAPI                 | HTTP endpoints                   |
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
@@ -59,6 +63,29 @@ The richer extraction schema now exists in the LLM service. Persistence and API 
 ## Project Structure
 
 ```
+frontend/
+  package.json               - Frontend scripts and dependencies
+  vite.config.ts             - Vite React config + /api proxy
+  index.html                 - Frontend HTML entrypoint
+  public/assets/
+    human-brain.glb          - Embedded glTF brain wireframe asset
+  src/
+    main.tsx                 - React entrypoint
+    App.tsx                  - Layout shell, legend, and search state
+    index.css                - Tailwind import + global theme
+    components/
+      Graph3D.tsx            - 3D graph scene and interaction behavior
+      SearchBar.tsx          - Controlled search input
+      NodeTooltip.tsx        - Hover tooltip
+    hooks/
+      useGraphData.ts        - GET /api/graph with mock fallback
+    lib/
+      graphData.ts           - Graph payload validation + normalization
+      graphView.ts           - Colors, adjacency, and match helpers
+    mock/
+      mockGraph.ts           - Development graph payload
+    test/
+      setup.ts               - Vitest setup
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats
@@ -93,6 +120,30 @@ tests/
 ```
 
 Each file has a single responsibility. Tests mirror the source structure.
+
+## Frontend Graph Flow
+
+```
+Input: frontend boot
+  |
+  v
+useGraphData() -- GET /api/graph
+  |               |
+  |               +-- invalid / unavailable -> mockGraph fallback
+  v
+graphData.normalizeGraphData() -- convert { nodes, edges } -> { nodes, links }
+  |
+  v
+Graph3D -- react-force-graph-3d scene
+  |         |
+  |         +-- hover -> highlight node + neighbors, tooltip
+  |         +-- search -> highlight matches, zoom camera
+  |         +-- idle -> orbit controls auto-rotate
+  v
+GLTFLoader -- load human-brain.glb as a translucent wireframe shell
+```
+
+The frontend treats the brain model as a visual shell around the graph, not as a hard layout constraint. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -179,6 +230,8 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 - Returns: `{"answer": "...", "discovery_concepts": [...]}`
 
 ### `GET /api/graph`
+- Intended payload: `{"nodes": [...], "edges": [...]}`
+- Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
 - Returns: `{"nodes": [{"id", "type", "name"}], "edges": [{"source", "target", "type"}]}`
 - Full graph for frontend 3D visualization
 
@@ -204,3 +257,7 @@ Database paths default to `./data/lancedb` and `./data/kuzu`.
 Tests mock both the LLM (`extract_concepts`, `extract_knowledge`, `generate_answer`) and embeddings (`embed_texts`, `embed_query`) so they run without API keys or model downloads. Mock embeddings use deterministic SHA-256 hashes padded to 384 dimensions.
 
 Run: `uv run pytest tests/ -v`
+
+Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, mock fallback behavior, and the graph shell UI.
+
+Run: `cd frontend && npm test`
