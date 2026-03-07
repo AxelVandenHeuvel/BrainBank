@@ -1,5 +1,6 @@
 import { startTransition, useDeferredValue, useState } from 'react';
 
+import { ChatPanel } from './components/ChatPanel';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
 import { SearchBar } from './components/SearchBar';
@@ -19,11 +20,16 @@ function formatSourceLabel(source: 'api' | 'mock'): string {
   return source === 'api' ? 'Live API' : 'Mock data';
 }
 
+function getChatToggleLabel(isChatOpen: boolean): string {
+  return isChatOpen ? 'Close chat panel' : 'Open chat panel';
+}
+
 export default function App() {
   const { data, source, isLoading, error, refetch } = useGraphData();
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(true);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
 
   function handleQueryChange(nextQuery: string) {
@@ -34,7 +40,13 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:grid-cols-[22rem_minmax(0,1fr)] lg:px-6">
+      <div
+        className={`mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:px-6 ${
+          isChatOpen
+            ? 'lg:grid-cols-[22rem_minmax(0,1fr)_24rem]'
+            : 'lg:grid-cols-[22rem_minmax(0,1fr)]'
+        }`}
+      >
         <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-200/70">
@@ -124,8 +136,30 @@ export default function App() {
             onHoverNode={setHoveredNode}
           />
         </section>
+
+        {isChatOpen ? (
+          <aside className="relative flex min-h-[70vh]">
+            <button
+              type="button"
+              aria-label={getChatToggleLabel(true)}
+              onClick={() => setIsChatOpen(false)}
+              className="absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl]"
+            >
+              Chat
+            </button>
+            <ChatPanel />
+          </aside>
+        ) : (
+          <button
+            type="button"
+            aria-label={getChatToggleLabel(false)}
+            onClick={() => setIsChatOpen(true)}
+            className="fixed right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl]"
+          >
+            Chat
+          </button>
+        )}
       </div>
     </main>
   );
 }
-
