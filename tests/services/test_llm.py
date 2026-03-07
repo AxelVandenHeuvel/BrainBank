@@ -152,3 +152,19 @@ class TestModelSelection:
 
         assert result == "Answer"
         assert client.models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash"
+
+    @patch.dict("backend.services.llm.os.environ", {"TEST_LLM_PROVIDER": "ollama"}, clear=False)
+    @patch("backend.services.llm.urlopen")
+    def test_generate_test_answer_can_use_local_ollama(self, mock_urlopen):
+        response = Mock()
+        response.read.return_value = b'{"response": "Local model reply"}'
+        mock_urlopen.return_value.__enter__.return_value = response
+
+        result = generate_test_answer("Say hello")
+
+        assert result == "Local model reply"
+        request = mock_urlopen.call_args.args[0]
+        assert request.full_url == "http://localhost:11434/api/generate"
+        assert request.get_method() == "POST"
+        assert b'"model": "llama3.2:3b"' in request.data
+        assert b'"prompt": "Say hello"' in request.data
