@@ -10,8 +10,8 @@ export interface BrainContainment {
 const VELOCITY_DAMPING = 0.18;
 const INTERSECTION_EPSILON = 1e-3;
 const INSIDE_TEST_DIRECTION = new THREE.Vector3(0.932, 0.271, 0.239).normalize();
-const SURFACE_INSET_DISTANCE = 8;
-const SURFACE_INSET_RATIO = 0.94;
+const SURFACE_INSET_DISTANCE = 12;
+const SURFACE_INSET_RATIO = 0.9;
 
 function getNodePoint(node: Pick<GraphNode, 'x' | 'y' | 'z'>): THREE.Vector3 {
   return new THREE.Vector3(node.x ?? 0, node.y ?? 0, node.z ?? 0);

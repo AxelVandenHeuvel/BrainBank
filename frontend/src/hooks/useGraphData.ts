@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { normalizeGraphData, validateGraphApiResponse } from '../lib/graphData';
 import { mockGraphApiResponse } from '../mock/mockGraph';
@@ -9,17 +9,23 @@ interface UseGraphDataResult {
   source: GraphSource;
   isLoading: boolean;
   error: string | null;
+  refetch: () => void;
 }
 
 const fallbackGraphData = normalizeGraphData(mockGraphApiResponse);
 
 export function useGraphData(): UseGraphDataResult {
-  const [result, setResult] = useState<UseGraphDataResult>({
+  const [result, setResult] = useState<Omit<UseGraphDataResult, 'refetch'>>({
     data: fallbackGraphData,
     source: 'mock',
     isLoading: true,
     error: null,
   });
+  const [fetchKey, setFetchKey] = useState(0);
+
+  const refetch = useCallback(() => {
+    setFetchKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,8 +71,8 @@ export function useGraphData(): UseGraphDataResult {
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [fetchKey]);
 
-  return result;
+  return { ...result, refetch };
 }
 
