@@ -2,8 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents, extracts concepts and relationships via LLM, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. The frontend renders that graph as an interactive 3D neural map with search, hover highlighting, and a translucent brain-shell overlay.
-BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, ingest controls, and a translucent brain-shell overlay.
 
 ## Stack
 
@@ -63,6 +62,7 @@ The richer extraction schema now exists in the LLM service. Persistence and API 
 ## Project Structure
 
 ```
+run.sh                      - Starts backend and frontend together
 frontend/
   package.json               - Frontend scripts and dependencies
   vite.config.ts             - Vite React config + /api and /ingest proxy
@@ -86,7 +86,7 @@ frontend/
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
       graphData.ts           - Graph payload validation + normalization
-      graphView.ts           - Colors, adjacency, and match helpers
+      graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
       mockGraph.ts           - Development graph payload
     test/
@@ -143,9 +143,12 @@ Graph3D -- react-force-graph-3d scene
   |         |
   |         +-- hover -> highlight node + neighbors, tooltip
   |         +-- search -> highlight matches, zoom camera
-  |         +-- idle -> orbit controls auto-rotate
+  |         +-- load -> zoomToFit for default framing
+  |         +-- idle (5s) -> slow camera auto-rotation
+  |         +-- top-right UI buttons -> zoom in / zoom out / reset
+  |         +-- double-click node -> focus camera on that node
   v
-GLTFLoader -- load human-brain.glb, derive containment bounds, render wireframe shell
+GLTFLoader -- load human-brain.glb, derive mesh containment, render wireframe shell
 ```
 
 ### Ingest Panel
@@ -157,7 +160,7 @@ The sidebar includes a collapsible IngestPanel with two modes:
 
 Both modes `POST /ingest` with `{title, text}`. On success the panel shows concept count and triggers `useGraphData.refetch()` to reload the 3D graph with new data. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The frontend constrains force-simulated node positions against the actual loaded brain mesh, not just its bounding box. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the brain shell. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
+The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also manages its own camera state: it auto-centers on load, resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 ## Frontend Chat Flow
 
