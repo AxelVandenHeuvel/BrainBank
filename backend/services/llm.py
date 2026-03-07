@@ -16,6 +16,14 @@ def _get_client():
     return _client
 
 
+def _parse_json_response(raw_text: str) -> dict:
+    raw = raw_text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1]
+        raw = raw.rsplit("```", 1)[0]
+    return json.loads(raw.strip())
+
+
 def extract_concepts(text: str, doc_name: str) -> dict:
     client = _get_client()
     prompt = (
@@ -32,12 +40,43 @@ def extract_concepts(text: str, doc_name: str) -> dict:
     response = client.models.generate_content(
         model="gemini-1.5-flash", contents=prompt
     )
-    raw = response.text.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1]
-        raw = raw.rsplit("```", 1)[0]
-    return json.loads(raw)
+    return _parse_json_response(response.text)
+
+
+def extract_knowledge(text: str, doc_name: str) -> dict:
+    """Extract all knowledge types from text via Gemini."""
+    client = _get_client()
+    prompt = (
+        "Analyze the following journal entry and extract structured knowledge.\n"
+        "Return only valid JSON.\n\n"
+        "Extract these fields:\n"
+        "- concepts: key ideas, topics, or entities\n"
+        "- projects: things being built or actively worked on\n"
+        "- tasks: action items or next steps\n"
+        "- reflections: insights, lessons, or observations\n"
+        "- relationships: connections between any extracted items\n\n"
+        "Use concise names. Prefer lowercase snake_case values for relationship types.\n"
+        "Valid example relationship types include related_to, has_task, uses_concept, "
+        "part_of, inspired_by, depends_on, and learned_from.\n\n"
+        f"Document title: {doc_name}\n"
+        f"Document text:\n{text}\n\n"
+        "Respond ONLY with valid JSON in this format:\n"
+        "{"
+        '"concepts": ["Calculus", "Linear Algebra"], '
+        '"projects": [{"name": "BrainBank", "status": "in_progress"}], '
+        '"tasks": [{"name": "Implement graph database", "status": "pending"}], '
+        '"reflections": ["Graphs are more powerful than tables for knowledge modeling"], '
+        '"relationships": ['
+        '{"from": "Calculus", "to": "Linear Algebra", "type": "related_to"}, '
+        '{"from": "BrainBank", "to": "Implement graph database", "type": "has_task"}, '
+        '{"from": "BrainBank", "to": "Calculus", "type": "uses_concept"}'
+        "]"
+        "}"
+    )
+    response = client.models.generate_content(
+        model="gemini-1.5-flash", contents=prompt
+    )
+    return _parse_json_response(response.text)
 
 
 def generate_answer(query: str, context: str, concepts: list[str]) -> str:

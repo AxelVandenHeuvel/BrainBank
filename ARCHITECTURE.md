@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents, extracts concepts and relationships via LLM, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections.
+BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections.
 
 ## Stack
 
@@ -12,7 +12,7 @@ BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents, ex
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
-| LLM         | Gemini 1.5 Flash        | Concept extraction + answers     |
+| LLM         | Gemini 1.5 Flash        | Knowledge extraction + answers   |
 
 ## Data Model
 
@@ -27,14 +27,14 @@ BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents, ex
 
 ### Kuzu: Graph Schema
 
-**Node Tables:**
+**Current Node Tables:**
 - `Concept(name STRING PRIMARY KEY)` - knowledge concepts
 - `Document(doc_id STRING PRIMARY KEY, name STRING)` - ingested documents
 - `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
 - `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
 - `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
-**Relationship Tables:**
+**Current Relationship Tables:**
 - `MENTIONS(Document -> Concept, chunk_ids STRING[])` - which chunks in a document mention a concept
 - `RELATED_TO(Concept -> Concept, relationship STRING)` - semantic relationships between concepts
 - `PART_OF(Concept -> Concept)` - concept is a sub-concept of another
@@ -47,6 +47,15 @@ BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents, ex
 - `MENTIONS_PROJECT(Document -> Project)` - document mentions a project
 - `MENTIONS_TASK(Document -> Task)` - document mentions a task
 
+**Extraction Model:**
+- `concepts` - key ideas, topics, or entities
+- `projects` - things being built or worked on
+- `tasks` - action items or next steps
+- `reflections` - insights or lessons learned
+- `relationships` - typed links such as `related_to`, `has_task`, and `uses_concept`
+
+The richer extraction schema now exists in the LLM service. Persistence and API integration still use the legacy concept-only path until a later change updates the ingestion pipeline.
+
 ## Project Structure
 
 ```
@@ -58,8 +67,10 @@ backend/
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
   services/
     embeddings.py           - Sentence-transformer embedding functions
-    llm.py                  - Gemini API for concept extraction + answer gen
+    llm.py                  - Gemini API for legacy concept extraction, richer knowledge extraction, and answer gen
   ingestion/
+    chunker.py              - Text splitting by paragraphs
+    journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
     chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
@@ -73,7 +84,10 @@ tests/
     test_kuzu.py            - Kuzu init tests
   ingestion/
     test_chunker.py         - Chunking logic tests
+    test_journal_parser.py  - Journal parsing tests
     test_processor.py       - Ingestion pipeline tests
+  services/
+    test_llm.py             - LLM extraction tests
   retrieval/
     test_query.py           - Query pipeline tests
 ```
@@ -106,6 +120,24 @@ Kuzu CREATE edges -- MENTIONS (doc->concept with chunk_ids)
 ```
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. If "Calculus" already exists from a previous document, it is reused, not duplicated. New MENTIONS edges link the new document's chunks to the existing concept.
+
+## Journal Parsing Flow
+
+```
+Input: raw journal text
+  |
+  v
+journal_parser.parse_journal_entry()
+  |
+  +-- sections         -- extracted from `##` headings
+  +-- raw_tasks        -- extracted from `- [ ]` and `- TODO`
+  +-- raw_reflections  -- extracted from `Today I learned` and `Insight:`
+  |
+  v
+full_text             -- cleaned text passed to later extraction steps
+```
+
+This parser is intentionally shallow. It provides structure hints only. Semantic extraction remains the LLM's responsibility.
 
 ## Query Flow (`POST /query`)
 
@@ -169,6 +201,6 @@ Database paths default to `./data/lancedb` and `./data/kuzu`.
 
 ## Testing
 
-Tests mock both the LLM (`extract_concepts`, `generate_answer`) and embeddings (`embed_texts`, `embed_query`) so they run without API keys or model downloads. Mock embeddings use deterministic SHA-256 hashes padded to 384 dimensions.
+Tests mock both the LLM (`extract_concepts`, `extract_knowledge`, `generate_answer`) and embeddings (`embed_texts`, `embed_query`) so they run without API keys or model downloads. Mock embeddings use deterministic SHA-256 hashes padded to 384 dimensions.
 
 Run: `uv run pytest tests/ -v`
