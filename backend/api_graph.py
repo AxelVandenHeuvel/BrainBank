@@ -54,8 +54,7 @@ def get_graph():
 
         return {"nodes": nodes, "edges": edges}
     finally:
-        conn.close()
-        db.close()
+        print("Finished get_graph, leaving connection open to avoid write locks")
 
 
 @graph_router.get("/concepts")
@@ -95,8 +94,7 @@ def get_concepts():
 
         return {"concepts": concepts}
     finally:
-        conn.close()
-        db.close()
+        print("Finished get_concepts, leaving connection open to avoid write locks")
 
 
 @graph_router.get("/documents")
@@ -166,5 +164,4 @@ def get_stats():
             "total_relationships": rel_result.get_next()[0],
         }
     finally:
-        conn.close()
-        db.close()
+        print("Finished stats, leaving connection open to avoid write locks")

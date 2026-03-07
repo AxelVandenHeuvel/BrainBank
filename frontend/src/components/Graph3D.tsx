@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -90,11 +90,37 @@ export function Graph3D({
     null,
   );
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
+  // Tracks which concept is currently expanded so the async fetch callback
+  // can detect if the user clicked elsewhere before the response arrived.
+  const expandedConceptIdRef = useRef<string | null>(null);
+  const [injectedNodes, setInjectedNodes] = useState<GraphNode[]>([]);
+  const [injectedLinks, setInjectedLinks] = useState<GraphLink[]>([]);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(
     null,
   );
-  const adjacency = buildAdjacencyMap(data);
-  const matchedNodeIds = findMatchingNodeIds(data.nodes, query);
+
+  // Merge base graph with temporarily injected document leaf nodes.
+  // useMemo prevents ForceGraph3D from treating a new object reference as a
+  // full data reset (which would restart the physics simulation) on every render.
+  const displayData = useMemo(
+    () =>
+      injectedNodes.length === 0
+        ? data
+        : {
+            nodes: [...data.nodes, ...injectedNodes],
+            links: [...data.links, ...injectedLinks],
+          },
+    [data, injectedNodes, injectedLinks],
+  );
+
+  // Set of injected node IDs — used to render them smaller than permanent nodes.
+  const injectedNodeIds = useMemo(
+    () => new Set(injectedNodes.map((n) => n.id)),
+    [injectedNodes],
+  );
+
+  const adjacency = buildAdjacencyMap(displayData);
+  const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
 
   function clampNodesWithinBrain(refresh = false) {
@@ -104,7 +130,7 @@ export function Graph3D({
       return;
     }
 
-    const changed = clampNodesToContainment(data.nodes, containment);
+    const changed = clampNodesToContainment(displayData.nodes, containment);
 
     if (changed && refresh) {
       graphRef.current?.refresh();
@@ -183,9 +209,63 @@ export function Graph3D({
     handleZoom(BUTTON_ZOOM_OUT_FACTOR);
   }
 
+  async function handleConceptExpansion(node: GraphNode) {
+    const conceptNodeId = node.id;
+
+    // Same concept clicked again — collapse
+    if (expandedConceptIdRef.current === conceptNodeId) {
+      expandedConceptIdRef.current = null;
+      setInjectedNodes([]);
+      setInjectedLinks([]);
+      return;
+    }
+
+    // New concept — clear previous expansion immediately, then fetch
+    expandedConceptIdRef.current = conceptNodeId;
+    setInjectedNodes([]);
+    setInjectedLinks([]);
+
+    try {
+      const response = await fetch(
+        `/api/concepts/${encodeURIComponent(node.name)}/documents`,
+      );
+      if (!response.ok) return;
+
+      // Guard: user may have clicked a different concept while this fetch was in flight
+      if (expandedConceptIdRef.current !== conceptNodeId) return;
+
+      const docs = (await response.json()) as Array<{
+        doc_id: string;
+        name: string;
+        full_text: string;
+      }>;
+
+      setInjectedNodes(
+        docs.map((doc) => ({
+          id: `doc:${doc.doc_id}`,
+          type: 'Document' as const,
+          name: doc.name,
+        })),
+      );
+      setInjectedLinks(
+        docs.map((doc) => ({
+          source: conceptNodeId,
+          target: `doc:${doc.doc_id}`,
+          type: 'MENTIONS',
+        })),
+      );
+    } catch {
+      // Silently ignore network errors
+    }
+  }
+
   function handleNodeClick(node: GraphNode) {
+    // Injected document leaf nodes are intentionally non-interactive
+    if (node.type === 'Document') return;
+
     const now = Date.now();
 
+    // Double-click: zoom to node
     if (
       lastNodeClickRef.current &&
       lastNodeClickRef.current.nodeId === node.id &&
@@ -201,10 +281,8 @@ export function Graph3D({
       return;
     }
 
-    lastNodeClickRef.current = {
-      nodeId: node.id,
-      timestamp: now,
-    };
+    lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
+    void handleConceptExpansion(node);
   }
 
   useEffect(() => {
@@ -283,7 +361,7 @@ export function Graph3D({
 
   useEffect(() => {
     clampNodesWithinBrain(true);
-  }, [data.nodes]);
+  }, [displayData.nodes]);
 
   useEffect(() => {
     if (!data.nodes.length) {
@@ -304,8 +382,8 @@ export function Graph3D({
       return;
     }
 
-    const firstMatchId = findMatchingNodeIds(data.nodes, query).values().next().value;
-    const firstMatch = data.nodes.find((node) => node.id === firstMatchId);
+    const firstMatchId = findMatchingNodeIds(displayData.nodes, query).values().next().value;
+    const firstMatch = displayData.nodes.find((node) => node.id === firstMatchId);
 
     if (!firstMatch) {
       return;
@@ -317,7 +395,7 @@ export function Graph3D({
       z: firstMatch.z ?? 0,
     };
     zoomToNode(graphRef, firstMatch, 140);
-  }, [data.nodes, query]);
+  }, [displayData.nodes, query]);
 
   useEffect(() => {
     if (!hoveredNode) {
@@ -389,9 +467,10 @@ export function Graph3D({
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
       <ForceGraph3D
         ref={graphRef as never}
-        graphData={data}
+        graphData={displayData}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
+        nodeVal={(node) => injectedNodeIds.has((node as GraphNode).id) ? 0.5 : 1}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
         linkOpacity={0.7}
