@@ -1,0 +1,128 @@
+import { startTransition, useDeferredValue, useState } from 'react';
+
+import { Graph3D } from './components/Graph3D';
+import { SearchBar } from './components/SearchBar';
+import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
+import { useGraphData } from './hooks/useGraphData';
+import type { GraphNode, GraphNodeType } from './types/graph';
+
+const NODE_TYPES: GraphNodeType[] = [
+  'Concept',
+  'Document',
+  'Project',
+  'Task',
+  'Reflection',
+];
+
+function formatSourceLabel(source: 'api' | 'mock'): string {
+  return source === 'api' ? 'Live API' : 'Mock data';
+}
+
+export default function App() {
+  const { data, source, isLoading, error } = useGraphData();
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
+
+  function handleQueryChange(nextQuery: string) {
+    startTransition(() => {
+      setQuery(nextQuery);
+    });
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:grid-cols-[22rem_minmax(0,1fr)] lg:px-6">
+        <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-200/70">
+              Cognitive Map
+            </p>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white">
+              BrainBank
+            </h1>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              Explore your knowledge graph as a living neural landscape.
+            </p>
+          </div>
+
+          <SearchBar
+            query={query}
+            matchCount={matchCount}
+            onQueryChange={handleQueryChange}
+          />
+
+          <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-200">Data source</span>
+              <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+                {formatSourceLabel(source)}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-300">
+              <div className="rounded-2xl bg-slate-950/70 p-3">
+                <p className="text-slate-500">Nodes</p>
+                <p className="mt-1 text-2xl font-semibold text-white">
+                  {data.nodes.length}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-slate-950/70 p-3">
+                <p className="text-slate-500">Edges</p>
+                <p className="mt-1 text-2xl font-semibold text-white">
+                  {data.links.length}
+                </p>
+              </div>
+            </div>
+            {error ? (
+              <p className="mt-4 text-xs leading-5 text-amber-300/90">
+                Using mock graph because the API was unavailable: {error}
+              </p>
+            ) : null}
+          </section>
+
+          <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-slate-200">Node legend</h2>
+              {isLoading ? (
+                <span className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">
+                  Loading
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-4 space-y-3">
+              {NODE_TYPES.map((type) => (
+                <div key={type} className="flex items-center gap-3 text-sm text-slate-300">
+                  <span
+                    className="h-3 w-3 rounded-full shadow-[0_0_18px_currentColor]"
+                    style={{ backgroundColor: NODE_TYPE_COLORS[type], color: NODE_TYPE_COLORS[type] }}
+                  />
+                  <span>{type}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-300">
+            <h2 className="font-medium text-slate-200">Hover details</h2>
+            <p className="mt-3 leading-6">
+              {hoveredNode
+                ? `${hoveredNode.name} is active in the graph.`
+                : 'Hover a node to inspect its local neighborhood.'}
+            </p>
+          </section>
+        </aside>
+
+        <section className="min-h-[70vh]">
+          <Graph3D
+            data={data}
+            query={deferredQuery}
+            hoveredNode={hoveredNode}
+            onHoverNode={setHoveredNode}
+          />
+        </section>
+      </div>
+    </main>
+  );
+}
+
