@@ -30,7 +30,6 @@ def mock_embed_texts(texts: list[str]) -> list[list[float]]:
     for text in texts:
         h = hashlib.sha256(text.encode()).digest()
         vec = [float(b) / 255.0 for b in h]
-        # Pad or truncate to 384 dims
         vec = (vec * (384 // len(vec) + 1))[:384]
         vectors.append(vec)
     return vectors

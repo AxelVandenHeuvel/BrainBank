@@ -1,6 +1,7 @@
-from brainbank.embeddings import embed_query
-from brainbank.engine_setup import init_kuzu, init_lancedb
-from brainbank.llm import generate_answer
+from backend.db.kuzu import init_kuzu
+from backend.db.lance import init_lancedb
+from backend.services.embeddings import embed_query
+from backend.services.llm import generate_answer
 
 
 def query_brainbank(

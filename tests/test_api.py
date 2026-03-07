@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from brainbank.api import app
+from backend.api import app
 from tests.conftest import (
     mock_embed_query,
     mock_embed_texts,
@@ -14,8 +14,8 @@ client = TestClient(app)
 
 
 class TestIngestEndpoint:
-    @patch("brainbank.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("brainbank.processor.extract_concepts", side_effect=mock_extract_concepts)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     def test_ingest_success(self, mock_llm, mock_emb):
         response = client.post(
             "/ingest",
@@ -33,12 +33,11 @@ class TestIngestEndpoint:
 
 
 class TestQueryEndpoint:
-    @patch("brainbank.logic.generate_answer", side_effect=mock_generate_answer)
-    @patch("brainbank.logic.embed_query", side_effect=mock_embed_query)
-    @patch("brainbank.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("brainbank.processor.extract_concepts", side_effect=mock_extract_concepts)
+    @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     def test_query_success(self, mock_ext, mock_emb_t, mock_emb_q, mock_gen):
-        # Ingest first
         client.post(
             "/ingest",
             json={"text": "Calculus is about derivatives.", "title": "Math"},

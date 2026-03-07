@@ -35,17 +35,36 @@ BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents, ex
 - `MENTIONS(Document -> Concept, chunk_ids STRING[])` - which chunks in a document mention a concept
 - `RELATED_TO(Concept -> Concept, relationship STRING)` - semantic relationships between concepts
 
-## Module Responsibilities
+## Project Structure
 
 ```
-brainbank/
-  engine_setup.py   - Initialize LanceDB + Kuzu with schemas
-  processor.py      - Ingest pipeline: chunk -> embed -> extract -> store
-  logic.py          - Query pipeline: search -> expand -> answer
-  api.py            - FastAPI /ingest and /query endpoints
-  embeddings.py     - Sentence-transformer embedding functions
-  llm.py            - Gemini API for concept extraction + answer gen
+backend/
+  api.py                    - FastAPI /ingest and /query endpoints
+  db/
+    lance.py                - LanceDB init + chunks table schema
+    kuzu.py                 - Kuzu init + graph schema (nodes + edges)
+  services/
+    embeddings.py           - Sentence-transformer embedding functions
+    llm.py                  - Gemini API for concept extraction + answer gen
+  ingestion/
+    chunker.py              - Text splitting by paragraphs
+    processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
+  retrieval/
+    query.py                - Query pipeline: search -> expand -> answer
+tests/
+  conftest.py               - Shared fixtures + mock functions
+  test_api.py               - API endpoint tests
+  db/
+    test_lance.py           - LanceDB init tests
+    test_kuzu.py            - Kuzu init tests
+  ingestion/
+    test_chunker.py         - Chunking logic tests
+    test_processor.py       - Ingestion pipeline tests
+  retrieval/
+    test_query.py           - Query pipeline tests
 ```
+
+Each file has a single responsibility. Tests mirror the source structure.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -53,16 +72,16 @@ brainbank/
 Input: text + title
   |
   v
-chunk_text() -- split by paragraphs, ~500 chars each
+chunker.chunk_text() -- split by paragraphs, ~500 chars each
   |
   v
-embed_texts() -- sentence-transformers -> 384-dim vectors
+embeddings.embed_texts() -- sentence-transformers -> 384-dim vectors
   |
   v
 LanceDB.add() -- store chunks with vectors
   |
   v
-extract_concepts() -- Gemini extracts concepts + relationships
+llm.extract_concepts() -- Gemini extracts concepts + relationships
   |
   v
 Kuzu MERGE -- upsert Concept nodes (no duplicates)
@@ -80,7 +99,7 @@ Key behavior: Concepts are **upserted** via Cypher `MERGE`. If "Calculus" alread
 Input: question
   |
   v
-embed_query() -- embed question to 384-dim vector
+embeddings.embed_query() -- embed question to 384-dim vector
   |
   v
 LanceDB.search() -- top 5 nearest chunks (vector similarity)
@@ -95,7 +114,7 @@ Kuzu: 1-hop expansion -- for each source Concept, find RELATED_TO
 Retrieve expanded chunks -- get chunk texts for discovery concepts
   |
   v
-generate_answer() -- Gemini generates grounded answer from all context
+llm.generate_answer() -- Gemini generates grounded answer from all context
   |
   v
 Output: { answer, discovery_concepts }

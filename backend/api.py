@@ -1,8 +1,8 @@
-from pydantic import BaseModel
 from fastapi import FastAPI
+from pydantic import BaseModel
 
-from brainbank.logic import query_brainbank
-from brainbank.processor import ingest_markdown
+from backend.ingestion.processor import ingest_markdown
+from backend.retrieval.query import query_brainbank
 
 app = FastAPI(title="BrainBank", version="0.1.0")
 
