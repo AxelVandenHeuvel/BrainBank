@@ -2,8 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents, extracts concepts and relationships via LLM, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. The frontend renders that graph as an interactive 3D neural map with search, hover highlighting, and a translucent brain-shell overlay.
-BrainBank is a hybrid Vector/Graph RAG system. It ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, ingest controls, and a translucent brain-shell overlay.
 
 ## Stack
 
@@ -66,7 +65,7 @@ The richer extraction schema now exists in the LLM service. Persistence and API 
 run.sh                      - Starts backend and frontend together
 frontend/
   package.json               - Frontend scripts and dependencies
-  vite.config.ts             - Vite React config + /api proxy
+  vite.config.ts             - Vite React config + /api and /ingest proxy
   index.html                 - Frontend HTML entrypoint
   public/assets/
     human-brain.glb          - Embedded glTF brain wireframe asset
@@ -76,10 +75,11 @@ frontend/
     index.css                - Tailwind import + global theme
     components/
       Graph3D.tsx            - 3D graph scene and interaction behavior
+      IngestPanel.tsx        - Note input + file upload for ingestion
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
-      useGraphData.ts        - GET /api/graph with mock fallback
+      useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
       graphData.ts           - Graph payload validation + normalization
@@ -148,7 +148,16 @@ Graph3D -- react-force-graph-3d scene
 GLTFLoader -- load human-brain.glb, derive mesh containment, render wireframe shell
 ```
 
-The frontend uses the loaded brain mesh as a real containment boundary for the force layout, clamping node positions back inside the model during simulation so nodes do not drift outside the rendered shell. Graph3D also manages its own camera state: it auto-centers on load, resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` requests to `http://localhost:8000`.
+### Ingest Panel
+
+The sidebar includes a collapsible IngestPanel with two modes:
+
+1. **Quick Note** - user types a title + markdown content, clicks "Add to Brain"
+2. **File Upload** - user picks a `.md` or `.txt` file, contents are read client-side
+
+Both modes `POST /ingest` with `{title, text}`. On success the panel shows concept count and triggers `useGraphData.refetch()` to reload the 3D graph with new data. Vite proxies `/ingest` to the backend alongside `/api`.
+
+The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also manages its own camera state: it auto-centers on load, resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -263,6 +272,6 @@ Tests mock both the LLM (`extract_concepts`, `extract_knowledge`, `generate_answ
 
 Run: `uv run pytest tests/ -v`
 
-Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, mock fallback behavior, and the graph shell UI.
+Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, brain containment math, mock fallback behavior, and the graph shell UI.
 
 Run: `cd frontend && npm test`

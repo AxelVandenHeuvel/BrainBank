@@ -14,7 +14,6 @@ import {
   DIMMED_SEARCH_COLOR,
   findMatchingNodeIds,
   getConnectionCount,
-  getNodeId,
   isDirectHoverLink,
   zoomToNode,
 } from '../lib/graphView';
@@ -73,7 +72,6 @@ const CAMERA_MOVE_DURATION_MS = 1200;
 const AUTO_CENTER_PADDING = 120;
 const IDLE_ROTATE_DELAY_MS = 5000;
 const IDLE_ROTATE_INTERVAL_MS = 16;
-const IDLE_ROTATE_SPEED = 0.002;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;

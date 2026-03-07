@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
+import type { GraphNode } from '../types/graph';
 import {
   clampNodeToContainment,
   createBrainContainment,
   isNodeInsideContainment,
 } from './brainModel';
-import type { GraphNode } from '../types/graph';
 
 describe('brainModel helpers', () => {
   function createBrainMesh() {
@@ -41,7 +41,7 @@ describe('brainModel helpers', () => {
     expect(isNodeInsideContainment(node, containment)).toBe(true);
   });
 
-  it('treats points inside the bounding box but outside the mesh as outside', () => {
+  it('treats points inside the bounding box but outside the actual mesh as outside', () => {
     const containment = createBrainContainment(createBrainMesh());
 
     expect(
@@ -71,4 +71,3 @@ describe('brainModel helpers', () => {
     expect(isNodeInsideContainment(node, containment)).toBe(true);
   });
 });
-

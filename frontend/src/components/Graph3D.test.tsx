@@ -2,9 +2,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
+import { createBrainContainment, isNodeInsideContainment } from '../lib/brainModel';
 import type { GraphData, GraphNode } from '../types/graph';
 import { Graph3D } from './Graph3D';
-import { createBrainContainment, isNodeInsideContainment } from '../lib/brainModel';
 
 const graphPropsSpy = vi.fn();
 const controls = {

@@ -19,6 +19,7 @@ vi.mock('./hooks/useGraphData', () => ({
     source: 'mock',
     isLoading: false,
     error: null,
+    refetch: () => {},
   }),
 }));
 

@@ -1,51 +1,89 @@
-🧠 Brain Bank
+# Brain Bank
+
 Your thoughts, structured. Your context, persistent.
-Brain Bank is a high-fidelity personal knowledge graph that transforms unstructured journaling into a navigable 3D neural map. By leveraging LLM-based entity extraction and vector-graph hybrid storage, it creates a "cognitive twin" that enables AI systems to reason with the same context as the user.
 
-🏗️ Technical Architecture
-Brain Bank operates on a Relational-Vector Hybrid Pipeline:
+Brain Bank is a hybrid Vector/Graph RAG system that transforms unstructured journaling into a navigable 3D knowledge graph. It extracts concepts, projects, tasks, and reflections from journal entries and connects them into an explorable network.
 
-Ingestion: Daily logs are processed via FastAPI using Claude/GPT-4o for Named Entity Recognition (NER).
+## Quick Start
 
-Structuring: Entities are mapped into a Graph Schema (Nodes: Concept, Project, Task, Reflection).
+### Prerequisites
 
-Embedding: Text chunks are vectorized and stored in Pinecone for semantic retrieval.
+- Python 3.12+
+- Node.js 18+
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- A [Gemini API key](https://aistudio.google.com/apikey) (free)
 
-Spatial Mapping: Relationships are calculated using d3-force-3d and rendered in a 60fps React Three Fiber environment.
+### Setup
 
-🛠️ The Stack
-🚀 Key Features (MVP)
-🛰️ Semantic 3D Navigation
-Unlike flat list-based note apps, Brain Bank uses force-directed layouts to cluster related ideas spatially.
+```bash
+# Clone and install backend
+git clone https://github.com/AxelVandenHeuvel/BrainBank.git
+cd BrainBank
+uv venv && uv pip install -e ".[dev]"
 
-Dynamic Linking: Connection strengths grow based on cross-references and semantic similarity.
+# Install frontend
+cd frontend && npm install && cd ..
+```
 
-Level-Awareness: The graph tracks your "Mastery" (e.g., distinguishing between your Calc 1 vs. Calc 2 nodes).
+### Run
 
-🤖 Recursive RAG (Retrieval-Augmented Generation)
-When you ask the AI a question, it doesn't just search text; it traverses the graph.
+**Terminal 1 — Backend:**
+```bash
+export GEMINI_API_KEY=your_key_here
+uv run uvicorn backend.api:app --reload --port 8000
+```
 
-Personalized Context: "Explain this like I just finished Calc 2 but haven't started Linear Algebra."
+**Terminal 2 — Frontend:**
+```bash
+cd frontend && npm run dev
+```
 
-Temporal Recall: Ask what you were researching 6 months ago; the graph retrieves the exact node and its inspired-by links.
+Open http://localhost:5173 in your browser.
 
-📈 Roadmap
-[ ] Phase 1 (Hackathon): Core 3D visualization, Google Docs/Notion ingestion, and basic Pinecone RAG.
+### Ingest a journal entry
 
-[ ] Phase 2: Local-First implementation using SQLite/WASM for 100% privacy.
+```bash
+curl -X POST http://localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Today I worked on BrainBank. I learned about graph databases and vector search. They relate to knowledge representation.", "title": "Dev Journal"}'
+```
 
-[ ] Phase 3: Automated Code Analysis. Integrate C/Rust parsers to link your source code directly to your project nodes.
+Refresh the frontend to see your knowledge graph populate.
 
-[ ] Phase 4: Chrome Extension. Real-time note-taking that suggests "Existing Connections" as you browse.
+### Run tests
 
-🤝 The Team
-We are a group of 4 Computer Science seniors from CU Boulder (Graduating May 2026). Our background includes internships at Charter Communications and Bio-Rad, with deep experience in:
+```bash
+# Backend (60 tests, no API key needed)
+uv run pytest tests/ -v
 
-Low-level programming (C/Rust)
+# Frontend
+cd frontend && npm test
+```
 
-Distributed Systems & Full-Stack Development
+## Tech Stack
 
-Machine Learning (PyTorch/Transformers)
+| Layer       | Technology              | Purpose                          |
+|-------------|-------------------------|----------------------------------|
+| API         | FastAPI                 | HTTP endpoints                   |
+| Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
+| Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
+| Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
+| LLM         | Gemini 1.5 Flash        | Concept extraction + answers     |
+| Frontend    | React + Three.js        | 3D knowledge graph visualization |
 
-🎯 One Sentence Pitch
-Brain Bank converts the chaos of daily thoughts into a structured 3D knowledge graph, providing a persistent context layer for the next generation of personalized AI.
+## API Endpoints
+
+| Method | Endpoint          | Description                        |
+|--------|-------------------|------------------------------------|
+| POST   | `/ingest`         | Ingest text + title                |
+| POST   | `/query`          | Ask a question, get grounded answer|
+| GET    | `/api/graph`      | Full graph for visualization       |
+| GET    | `/api/concepts`   | List concepts with metadata        |
+| GET    | `/api/documents`  | List documents with metadata       |
+| GET    | `/api/stats`      | Aggregate counts                   |
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full technical details.
+
+## The Team
+
+4 Computer Science seniors from CU Boulder (Graduating May 2026).
