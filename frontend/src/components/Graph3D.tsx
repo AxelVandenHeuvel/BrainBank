@@ -8,6 +8,7 @@ import {
   autoRotateCamera,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
+  centerCameraOnTarget,
   createFocusSet,
   DIMMED_LINK_COLOR,
   DIMMED_NODE_COLOR,
@@ -60,6 +61,15 @@ interface TooltipPosition {
   y: number;
 }
 
+interface BrainHomeView {
+  distance: number;
+  target: {
+    x: number;
+    y: number;
+    z: number;
+  };
+}
+
 interface Graph3DProps {
   data: GraphData;
   query: string;
@@ -75,6 +85,9 @@ const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
+const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.08;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 
 export function Graph3D({
   data,
@@ -84,6 +97,7 @@ export function Graph3D({
 }: Graph3DProps) {
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
+  const brainHomeViewRef = useRef<BrainHomeView | null>(null);
   const idleTimeoutRef = useRef<number | null>(null);
   const idleRotationIntervalRef = useRef<number | null>(null);
   const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(
@@ -151,6 +165,19 @@ export function Graph3D({
   }
 
   function handleReset() {
+    const brainHomeView = brainHomeViewRef.current;
+
+    if (brainHomeView) {
+      lookAtTargetRef.current = brainHomeView.target;
+      centerCameraOnTarget(
+        graphRef,
+        brainHomeView.target,
+        brainHomeView.distance,
+        CAMERA_MOVE_DURATION_MS,
+      );
+      return;
+    }
+
     lookAtTargetRef.current = getGraphCenter();
     graphRef.current?.zoomToFit(CAMERA_MOVE_DURATION_MS, AUTO_CENTER_PADDING);
   }
@@ -262,9 +289,24 @@ export function Graph3D({
         });
 
         brainGroup.updateMatrixWorld(true);
+        const framedBounds = new THREE.Box3().setFromObject(brainGroup);
+        const framedSize = framedBounds.getSize(new THREE.Vector3());
+        const framedSphere = framedBounds.getBoundingSphere(new THREE.Sphere());
         brainContainmentRef.current = createBrainContainment(brainGroup);
+        brainHomeViewRef.current = {
+          distance: Math.max(
+            framedSphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
+            MIN_BRAIN_HOME_VIEW_DISTANCE,
+          ),
+          target: {
+            x: framedSphere.center.x,
+            y: framedSphere.center.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
+            z: framedSphere.center.z,
+          },
+        };
         clampNodesWithinBrain(true);
         scene.add(brainGroup);
+        handleReset();
         return;
       }
 
@@ -274,6 +316,7 @@ export function Graph3D({
     return () => {
       cancelled = true;
       brainContainmentRef.current = null;
+      brainHomeViewRef.current = null;
 
       if (brainGroup) {
         scene.remove(brainGroup);
