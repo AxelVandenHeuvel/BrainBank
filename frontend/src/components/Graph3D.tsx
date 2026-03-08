@@ -90,6 +90,10 @@ const DOUBLE_CLICK_THRESHOLD_MS = 300;
 const CONTAINER_SPHERE_RADIUS = 22;
 // Distance from concept center at which doc nodes are pinned
 const DOC_ORBIT_RADIUS = 15;
+// Brain home view camera positioning
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
+const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
 
 export function Graph3D({
   data,
