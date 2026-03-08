@@ -35,7 +35,6 @@ import type {
 } from '../types/graph';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { getMockDocumentsForConcept } from '../mock/mockGraph';
-import type { GraphData, GraphLink, GraphNode } from '../types/graph';
 import { NodeTooltip } from './NodeTooltip';
 
 interface OrbitControlsLike {
@@ -118,10 +117,6 @@ const MAX_SCENE_TILT = Math.PI / 3;
 const CONTAINER_SPHERE_RADIUS = 22;
 // Distance from concept center at which doc nodes are pinned
 const DOC_ORBIT_RADIUS = 15;
-// Brain home view camera positioning
-const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
-const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
-const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
 
 export function Graph3D({
   data,
@@ -162,8 +157,6 @@ export function Graph3D({
     useState<RelationshipDetails | null>(null);
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
-  const adjacency = buildAdjacencyMap(data);
-  const matchedNodeIds = findMatchingNodeIds(data.nodes, query);
 
   // Merge base graph with injected document leaf nodes.
   // useMemo prevents ForceGraph3D from treating a new object reference as a
@@ -902,18 +895,15 @@ export function Graph3D({
       ref={containerRef}
       className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
       onContextMenu={(event) => event.preventDefault()}
-      onMouseMove={handleMouseMove}
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseEnd}
-      onMouseLeave={handleMouseEnd}
-      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)]"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
         }
       }}
-      onMouseMove={handleInteraction}
-      onMouseDown={handleInteraction}
+      onMouseMove={handleMouseMove}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseEnd}
+      onMouseLeave={handleMouseEnd}
       onWheel={handleInteraction}
       onTouchStart={handleInteraction}
     >

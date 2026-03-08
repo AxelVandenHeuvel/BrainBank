@@ -90,10 +90,6 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         'A neural network is a stack of linear layers separated by non-linear activations. Backpropagation computes gradients; gradient descent updates weights.',
     },
     {
-      source: 'concept:Calculus',
-      target: 'concept:Derivatives',
-      type: 'RELATED_TO',
-      reason: 'Derivatives are a core tool within calculus',
       doc_id: 'nn-2',
       name: 'Activation Functions.md',
       full_text:
@@ -146,10 +142,10 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
   ],
   Python: [
     {
-      source: 'task:impl-graph',
-      target: 'concept:Derivatives',
-      type: 'RELATED_TO',
-      reason: 'Implementation work reinforces derivative concepts',
+      doc_id: 'py-1',
+      name: 'Python for ML.md',
+      full_text:
+        'Python dominates the ML ecosystem via NumPy, PyTorch, and the Hugging Face library. Its dynamic typing and REPL workflow suit rapid experimentation.',
     },
   ],
 };
@@ -186,13 +182,6 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
     ],
     shared_document_ids: ['doc-math-notes'],
   },
-};
-      doc_id: 'py-1',
-      name: 'Python for ML.md',
-      full_text:
-        'Python dominates the ML ecosystem via NumPy, PyTorch, and the Hugging Face library. Its dynamic typing and REPL workflow suit rapid experimentation.',
-    },
-  ],
 };
 
 /** Returns mock documents for a concept name, with a generic fallback. */
