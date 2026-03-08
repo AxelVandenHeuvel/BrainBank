@@ -237,10 +237,8 @@ export default function App() {
           }`}
         >
           {/* Branding + toggle */}
-          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} mb-4`}>
-            {!sidebarCollapsed && (
-              <span className="text-sm font-bold tracking-tight text-white">braen.</span>
-            )}
+          <div className={`flex items-center ${sidebarCollapsed ? 'flex-col gap-2' : 'justify-between'} mb-4`}>
+            <span className={`font-bold tracking-tight text-white ${sidebarCollapsed ? 'text-[10px]' : 'text-sm'}`}>braen.</span>
             <button
               type="button"
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
