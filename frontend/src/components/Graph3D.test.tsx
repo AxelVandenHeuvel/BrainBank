@@ -302,6 +302,37 @@ describe('Graph3D', () => {
     });
   });
 
+  it('renders a top-left checkbox control that toggles the brain mesh visibility', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const toggleCheckbox = screen.getByRole('checkbox', { name: 'Brain mesh' });
+    expect(toggleCheckbox).toBeInTheDocument();
+    expect(toggleCheckbox).toBeChecked();
+
+    const brainGroup = sceneObject.children[0] as THREE.Group | undefined;
+    expect(brainGroup?.visible).toBe(true);
+
+    fireEvent.click(toggleCheckbox);
+    expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).not.toBeChecked();
+    expect(brainGroup?.visible).toBe(false);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Brain mesh' }));
+    expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).toBeChecked();
+    expect(brainGroup?.visible).toBe(true);
+  });
+
   it('creates dodecahedron node with correct color and label', () => {
     render(
       <Graph3D
@@ -587,6 +618,56 @@ describe('Graph3D', () => {
     expect(nodeWorld.x).toBeCloseTo(0, 1);
     expect(nodeWorld.y).toBeCloseTo(0, 1);
     expect(nodeWorld.z).toBeCloseTo(0, 1);
+  });
+
+  it('does not snap the scene to the next node before the node-to-node fly animation completes', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    vi.advanceTimersByTime(1300);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[1]);
+    });
+
+    sceneObject.updateMatrixWorld(true);
+    const secondNodeWorldBeforeAnimation = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[1].x ?? 0,
+        graph.nodes[1].y ?? 0,
+        graph.nodes[1].z ?? 0,
+      ),
+    );
+
+    expect(secondNodeWorldBeforeAnimation.x).not.toBeCloseTo(0, 1);
+
+    vi.advanceTimersByTime(1300);
+
+    sceneObject.updateMatrixWorld(true);
+    const secondNodeWorldAfterAnimation = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[1].x ?? 0,
+        graph.nodes[1].y ?? 0,
+        graph.nodes[1].z ?? 0,
+      ),
+    );
+
+    expect(secondNodeWorldAfterAnimation.x).toBeCloseTo(0, 1);
+    expect(secondNodeWorldAfterAnimation.y).toBeCloseTo(0, 1);
+    expect(secondNodeWorldAfterAnimation.z).toBeCloseTo(0, 1);
   });
 
   it('does not rotate the scene on right-button drag', () => {
@@ -1030,6 +1111,8 @@ describe('Graph3D', () => {
     await act(async () => {
       getLatestGraphProps().onNodeClick(graph.nodes[0]);
     });
+
+    vi.advanceTimersByTime(1300);
 
     sceneObject.updateMatrixWorld(true);
     const nodeWorld = sceneObject.localToWorld(
