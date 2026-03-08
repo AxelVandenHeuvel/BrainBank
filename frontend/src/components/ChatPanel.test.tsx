@@ -50,7 +50,7 @@ import { ChatPanel } from './ChatPanel';
 describe('ChatPanel', () => {
   it('renders message history, retrieval concept sections, and loading state', () => {
     isLoading = true;
-    render(<ChatPanel />);
+    render(<ChatPanel graphSource="api" />);
 
     expect(screen.getByTestId('chat-panel-shell')).toHaveClass('lg:h-full', 'lg:min-h-0');
     expect(screen.getByTestId('chat-panel-messages')).toHaveClass('flex-1', 'overflow-y-auto');
@@ -73,7 +73,7 @@ describe('ChatPanel', () => {
     const user = userEvent.setup();
     sendMessage.mockResolvedValue(undefined);
 
-    render(<ChatPanel />);
+    render(<ChatPanel graphSource="api" />);
 
     const input = screen.getByLabelText('Ask braen');
     await user.type(input, 'Where should I focus next?');
@@ -87,12 +87,20 @@ describe('ChatPanel', () => {
     isLoading = false;
     const user = userEvent.setup();
 
-    render(<ChatPanel />);
+    render(<ChatPanel graphSource="api" />);
 
     await user.click(screen.getByRole('button', { name: 'New chat' }));
     expect(createSession).toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Earlier chat' }));
     expect(selectSession).toHaveBeenCalledWith('session-1');
+  });
+
+  it('warns when the graph is mock data because chat only queries live ingested notes', () => {
+    render(<ChatPanel graphSource="mock" />);
+
+    expect(
+      screen.getByText('Graph is showing mock data. Chat only queries live ingested notes from the backend.'),
+    ).toBeInTheDocument();
   });
 });

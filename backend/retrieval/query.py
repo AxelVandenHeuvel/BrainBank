@@ -14,6 +14,10 @@ from backend.services.llm import (
     synthesize_answers,
 )
 
+EMPTY_BRAINBANK_MESSAGE = (
+    "No ingested documents found. Upload or import notes before querying BrainBank."
+)
+
 
 def _get_query_connection(shared_kuzu_db, kuzu_db_path: str):
     if shared_kuzu_db is not None:
@@ -64,8 +68,12 @@ def query_brainbank(
             config,
         )
         if not search_result.seed_chunks:
+            if table.to_pandas().empty:
+                answer = EMPTY_BRAINBANK_MESSAGE
+            else:
+                answer = "No relevant information found."
             return QueryResult(
-                answer="No relevant information found.",
+                answer=answer,
                 source_concepts=(),
                 discovery_concepts=(),
             ).to_response()

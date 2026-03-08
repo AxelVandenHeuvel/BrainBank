@@ -82,7 +82,7 @@ This table powers the global GraphRAG route. It is refreshed only by the batch r
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
+Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -99,7 +99,7 @@ frontend/
     App.tsx                  - Layout shell with collapsible sidebar, top search bar, permanent Brain tab, fully wired tab system, FileExplorer, TabBar, DocumentEditor, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Right-side chat UI with session list and active conversation
+      ChatPanel.tsx          - Right-side chat UI with session list, active conversation, and mock-data warning when chat is not grounded in live backend notes
       ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
       DocumentEditor.tsx     - Auto-saving Milkdown Crepe editor with debounced save (POST /ingest for new, lightweight PUT /api/documents/{id} for existing)
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
@@ -137,9 +137,10 @@ backend/
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
+    mock_demo.py            - Builds and seeds the hackathon demo corpus that mirrors the frontend mock graph
   db/
     lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup + delete_document_chunks
-    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + update_node_communities() + clear concurrent-open error translation
+    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + shared-engine repair from LanceDB + update_node_communities() + clear concurrent-open error translation
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
@@ -170,6 +171,7 @@ sample_data/
 scripts/
   print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
+  seed_mock_demo_data.py     - Seeds the hackathon demo corpus into local databases
   rebuild_graphrag_artifacts.py - Recomputes concept centroids and community summaries in batch
 tests/
   conftest.py               - Shared fixtures + mock functions
@@ -208,6 +210,8 @@ Each file has a single responsibility. Tests mirror the source structure.
 ## Sample Data Seeding
 
 `sample_data/college_math_notes` contains a small college-student math corpus for frontend document-opening tests. `scripts/seed_college_math_notes.py` loads the catalog, splits each markdown file into paragraph chunks, writes deterministic vectors plus chunk text into LanceDB, and upserts the matching Concept and RELATED_TO graph data into Kuzu. The seeder skips any sample `doc_id` values that are already present, so rerunning it does not duplicate the sample documents.
+
+`backend/sample_data/mock_demo.py` provides a larger hackathon demo corpus that mirrors the frontend mock graph. It combines curated calculus, physics, philosophy, and journal notes with generated domain notes for Computer Science, Biology, Economics, Psychology, Product Design, History, Arts, and Data Science. The seeder writes chunks, document centroids, Concept nodes, RELATED_TO edges, concept centroids, and deterministic community summaries so the backend query, discovery, graph, and overview flows all have demo data immediately. `scripts/seed_mock_demo_data.py` seeds that corpus into arbitrary LanceDB/Kuzu paths, while `POST /ingest/demo/mock` runs the same seeding logic inside the live backend process using the shared Kuzu handle so it avoids the embedded database file-lock conflict.
 
 ## Mock Data
 
@@ -314,9 +318,11 @@ Backend returns { answer, source_concepts, discovery_concepts }
   |
   v
 ChatPanel -- render assistant answer + separate source/discovery concept sections
+  |
+  +-- when graph source is mock -> show warning that chat only queries live backend notes
 ```
 
-Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. The frontend uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
+Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. The frontend uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. When the graph view has fallen back to local mock data, `ChatPanel` now renders an explicit warning so users do not assume those mock concepts are queryable through `/query`. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -481,6 +487,7 @@ route.classify_query_route() -- GLOBAL for overview/theme prompts, otherwise LOC
 ```
 
 The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. Retrieval still preserves the stable `/query` contract, but internally it is now route-aware and GraphRAG-specific. Local retrieval defaults to chunk/document artifacts already produced during ingest and upgrades itself when `concept_centroids` exists. Global retrieval only activates when `community_summaries` exists; otherwise overview-style questions transparently fall back to the local path. When `session_id` and `history` are provided, the API stores turns in `SessionMemory`, and the history turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
+If LanceDB has zero ingested chunks, `/query` returns a specific empty-database message instead of the generic "No relevant information found." response. That makes it clear the failure is missing ingested data rather than a bad retrieval match.
 
 ## API Endpoints
 
@@ -488,13 +495,18 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 - Body: `{"text": "...", "title": "..."}`
 - Returns: `{"doc_id": "...", "chunks": N, "concepts": [...]}`
 
+### `POST /ingest/demo/mock`
+- Body: empty
+- Returns: `{"seeded_documents": N, "skipped_documents": N, "total_concepts": N, "community_summaries": N}`
+- Seeds the hackathon demo corpus through the running backend process, reusing the shared Kuzu engine so it is safe even while FastAPI already owns the Kuzu file lock.
+
 ### `POST /query`
 - Body: `{"question": "..."}`
 - Returns: `{"answer": "...", "source_concepts": [...], "discovery_concepts": [...]}`
 
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
-- Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
+- Current frontend behavior: fetch this route and fall back to local mock data when the backend graph payload is unavailable, invalid, or empty
 - Returns: `{"nodes": [{"id", "type", "name", "colorScore", "community_id"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
 - Full graph for frontend 3D visualization; `community_id` drives community-palette coloring in the 3D brain
 

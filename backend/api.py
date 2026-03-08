@@ -15,6 +15,7 @@ from backend.services.clustering import run_leiden_clustering
 from backend.db.lance import find_existing_document
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
+from backend.sample_data.mock_demo import seed_mock_demo_data
 from backend.session.memory import SessionMemory
 from backend.services.llm import generate_test_answer
 from backend.services.pdf import pdf_to_text
@@ -224,3 +225,13 @@ async def ingest_upload(files: list[UploadFile]):
 
     imported = sum(1 for r in results if not r.get("skipped"))
     return {"imported": imported, "results": results}
+
+
+@app.post("/ingest/demo/mock")
+async def ingest_demo_mock():
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        partial(seed_mock_demo_data, shared_kuzu_db=get_kuzu_engine()),
+    )
+    return result

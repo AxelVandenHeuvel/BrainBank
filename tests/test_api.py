@@ -116,3 +116,28 @@ class TestLlmTestEndpoint:
         response = client.post("/query/test-llm", json={})
         assert response.status_code == 422
 
+
+class TestDemoSeedEndpoint:
+    @patch(
+        "backend.api.seed_mock_demo_data",
+        return_value={
+            "seeded_documents": 84,
+            "skipped_documents": 0,
+            "total_concepts": 98,
+            "community_summaries": 12,
+        },
+    )
+    def test_demo_seed_uses_shared_kuzu_engine(self, mock_seed, monkeypatch):
+        shared_db, conn = real_init_kuzu("/tmp/test-api-demo-seed-kuzu")
+        conn.close()
+        monkeypatch.setattr(
+            "backend.api.get_kuzu_engine",
+            lambda path="./data/kuzu": shared_db,
+        )
+
+        response = client.post("/ingest/demo/mock")
+
+        assert response.status_code == 200
+        assert response.json()["seeded_documents"] == 84
+        mock_seed.assert_called_once_with(shared_kuzu_db=shared_db)
+        shared_db.close()
