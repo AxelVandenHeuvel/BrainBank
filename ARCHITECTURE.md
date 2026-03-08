@@ -102,7 +102,7 @@ frontend/
       chat.ts                - Shared chat message and session types
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
@@ -367,6 +367,13 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 - Returns: `{"imported": N, "pages": [{"title", "doc_id", "chunks", "concepts"}]}`
 - Errors: `400` with `{"error": "..."}` for invalid URLs or Notion API failures
 
+
+### `GET /api/discovery/latent/{concept_name}`
+- Returns: `{"concept_name": "...", "results": [{"doc_name", "similarity_score"}]}`
+- Computes a concept centroid from chunk vectors tagged with `concept_name`.
+- Searches `document_centroids` by vector similarity.
+- Excludes documents that already contain `concept_name`.
+- Returns at most 5 latent-similar documents.
 ### `GET /api/stats`
 - Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`
 
@@ -395,6 +402,7 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
+
 
 
 

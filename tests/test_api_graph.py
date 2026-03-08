@@ -415,3 +415,52 @@ class TestGetStats:
         assert data["total_chunks"] >= 1
         assert data["total_concepts"] >= 1
         assert data["total_relationships"] >= 1
+
+class TestGetLatentDiscovery:
+    def test_returns_top_five_similar_documents_excluding_existing_concept_docs(self, lance_path):
+        db, chunks = real_init_lancedb(lance_path)
+        centroids = db.open_table("document_centroids")
+
+        base_vector = [1.0] + [0.0] * 383
+
+        chunks.add(
+            [
+                {
+                    "chunk_id": "c1",
+                    "doc_id": "doc-calc",
+                    "doc_name": "Calculus Core",
+                    "text": "Calculus basics",
+                    "concepts": ["Calculus"],
+                    "vector": base_vector,
+                }
+            ]
+        )
+
+        centroids.add(
+            [
+                {"doc_id": "doc-calc", "doc_name": "Calculus Core", "centroid_vector": base_vector},
+                {"doc_id": "doc-1", "doc_name": "Doc 1", "centroid_vector": [1.00] + [0.0] * 383},
+                {"doc_id": "doc-2", "doc_name": "Doc 2", "centroid_vector": [0.99] + [0.0] * 383},
+                {"doc_id": "doc-3", "doc_name": "Doc 3", "centroid_vector": [0.98] + [0.0] * 383},
+                {"doc_id": "doc-4", "doc_name": "Doc 4", "centroid_vector": [0.97] + [0.0] * 383},
+                {"doc_id": "doc-5", "doc_name": "Doc 5", "centroid_vector": [0.96] + [0.0] * 383},
+                {"doc_id": "doc-6", "doc_name": "Doc 6", "centroid_vector": [0.95] + [0.0] * 383},
+            ]
+        )
+
+        response = client.get("/api/discovery/latent/Calculus")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["concept_name"] == "Calculus"
+        assert len(data["results"]) == 5
+        assert all(item["doc_name"] != "Calculus Core" for item in data["results"])
+        assert all("doc_name" in item and "similarity_score" in item for item in data["results"])
+        assert all(isinstance(item["similarity_score"], float) for item in data["results"])
+
+    def test_returns_empty_results_when_concept_is_missing(self):
+        response = client.get("/api/discovery/latent/NonExistent")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["concept_name"] == "NonExistent"
+        assert data["results"] == []
