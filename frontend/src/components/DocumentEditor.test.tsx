@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -267,5 +267,28 @@ describe('DocumentEditor', () => {
       '/api/documents/existing-1',
       expect.objectContaining({ method: 'PUT' }),
     );
+  });
+
+  it('contains wheel events inside the document scroll region', async () => {
+    const onWheel = vi.fn();
+
+    render(
+      <div onWheel={onWheel}>
+        <DocumentEditor
+          docId="doc-1"
+          initialTitle="Existing"
+          initialContent=""
+          isNew={false}
+        />
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('milkdown-mock')).toBeInTheDocument();
+    });
+
+    fireEvent.wheel(screen.getByTestId('document-editor-scroll-region'), { deltaY: 120 });
+
+    expect(onWheel).not.toHaveBeenCalled();
   });
 });

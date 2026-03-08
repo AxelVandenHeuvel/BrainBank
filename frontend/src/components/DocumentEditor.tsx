@@ -177,7 +177,13 @@ export function DocumentEditor({
       </div>
 
       {/* Editor */}
-      <div className="flex-1 overflow-auto px-6 py-4">
+      <div
+        data-testid="document-editor-scroll-region"
+        className="flex-1 overflow-auto overscroll-contain px-6 py-4"
+        onWheel={(event) => {
+          event.stopPropagation();
+        }}
+      >
         <div ref={editorRoot} />
       </div>
     </div>
