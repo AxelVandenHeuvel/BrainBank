@@ -35,6 +35,7 @@ import type {
   GraphLink,
   GraphNode,
   GraphSource,
+  DiscoveryResponse,
   RelationshipDocument,
   RelationshipDetails,
 } from '../types/graph';
@@ -119,6 +120,10 @@ const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 const POINTER_ROTATION_SPEED = 0.005;
 const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
+const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.45)';
+const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.52)';
+const GHOST_EDGE_WIDTH = 0.8;
+const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 3.5;
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
   const canvas = document.createElement('canvas');
@@ -187,9 +192,38 @@ export function Graph3D({
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
   const [hasFocusedRotationPivot, setHasFocusedRotationPivot] = useState(false);
   const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
+  const [discoveryModeEnabled, setDiscoveryModeEnabled] = useState(true);
+  const [latentLinks, setLatentLinks] = useState<GraphLink[]>([]);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
-  const displayData = data;
+  const displayData = useMemo<GraphData>(() => {
+    if (!discoveryModeEnabled || latentLinks.length === 0) {
+      return data;
+    }
+
+    const existingNodeIds = new Set(data.nodes.map((node) => node.id));
+    const ghostNodes: GraphNode[] = [];
+
+    for (const link of latentLinks) {
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      if (existingNodeIds.has(targetId)) {
+        continue;
+      }
+
+      existingNodeIds.add(targetId);
+      const targetName = targetId.startsWith('doc:') ? targetId.slice('doc:'.length) : targetId;
+      ghostNodes.push({
+        id: targetId,
+        type: 'Document',
+        name: targetName,
+      });
+    }
+
+    return {
+      nodes: [...data.nodes, ...ghostNodes],
+      links: [...data.links, ...latentLinks],
+    };
+  }, [data, discoveryModeEnabled, latentLinks]);
   const haloDataMapRef = useRef<Record<string, any[]>>({});
 
   const adjacency = buildAdjacencyMap(displayData);
@@ -232,6 +266,10 @@ export function Graph3D({
     const target = typeof link.target === 'string' ? link.target : link.target.id;
 
     return source === focusedEdgeNodeId || target === focusedEdgeNodeId;
+  }
+
+  function isGhostLink(link: GraphLink): boolean {
+    return link.isGhost === true || link.type === 'LATENT_DISCOVERY';
   }
 
   function clearSelectedEdge() {
@@ -484,6 +522,7 @@ export function Graph3D({
 
   function handleReset() {
     setRotationPivotNode(null);
+    setLatentLinks([]);
 
     const brainHomeView = brainHomeViewRef.current;
 
@@ -648,12 +687,40 @@ export function Graph3D({
     }
   }
 
+  async function loadLatentDiscovery(node: GraphNode): Promise<void> {
+    if (!discoveryModeEnabled || graphSource !== 'api' || node.type !== 'Concept') {
+      setLatentLinks([]);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/discovery/latent/' + encodeURIComponent(node.name));
+      if (!response.ok) {
+        throw new Error('Request failed with status ' + response.status);
+      }
+
+      const payload = (await response.json()) as DiscoveryResponse;
+      const sourceId = node.id;
+      const nextLatentLinks: GraphLink[] = payload.results.map((result) => ({
+        source: sourceId,
+        target: 'doc:' + result.doc_name,
+        type: 'LATENT_DISCOVERY',
+        reason: 'latent_tether',
+        weight: Math.max(result.similarity_score, 0.01),
+        isGhost: true,
+      }));
+      setLatentLinks(nextLatentLinks);
+    } catch {
+      setLatentLinks([]);
+    }
+  }
+
   function animateCamera(
     targetPos: { x: number; y: number; z: number },
     targetLookAt: { x: number; y: number; z: number },
     durationMs: number = CAMERA_MOVE_DURATION_MS,
   ) {
-    // Cancel any in-flight camera animation so consecutive moves don't conflict
+    // Cancel any in-flight camera animation so consecutive moves don't conflict.
     if (cameraAnimationRef.current !== null) {
       cancelAnimationFrame(cameraAnimationRef.current);
       cameraAnimationRef.current = null;
@@ -720,6 +787,11 @@ export function Graph3D({
       return;
     }
 
+    if (node.type !== 'Concept') {
+      setLatentLinks([]);
+      return;
+    }
+
     const now = Date.now();
     const nodePoint = {
       x: node.x ?? 0,
@@ -745,9 +817,13 @@ export function Graph3D({
     // Single click: fly to node only
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
     smoothFlyToNode(nodePoint, 160);
+    void loadLatentDiscovery(node);
   }
 
   async function handleLinkClick(link: GraphLink) {
+    if (isGhostLink(link)) {
+      return;
+    }
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
     const targetId = typeof link.target === 'string' ? link.target : link.target.id;
     const sourceConcept = getConceptName(sourceId);
@@ -1142,6 +1218,10 @@ export function Graph3D({
   }
 
   function getLinkColor(link: GraphLink): string {
+    if (isGhostLink(link)) {
+      return GHOST_EDGE_COLOR;
+    }
+
     if (isSelectedLink(link)) {
       return ACTIVE_LINK_COLOR;
     }
@@ -1154,12 +1234,24 @@ export function Graph3D({
       return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
     }
 
-    return 'rgba(56, 189, 248, 0.24)';
+    return BASE_LINK_COLOR;
+  }
+
+  function getLinkLineDash(link: GraphLink): number[] | null {
+    return isGhostLink(link) ? [2, 1] : null;
   }
 
   function getLinkWidth(link: GraphLink): number {
-    void link;
-    return 0.7;
+    if (isGhostLink(link)) {
+      return GHOST_EDGE_WIDTH;
+    }
+
+    const weight =
+      typeof link.weight === 'number' && Number.isFinite(link.weight) && link.weight > 0
+        ? link.weight
+        : 1;
+
+    return Math.log(weight + 1) * ESTABLISHED_LINK_WIDTH_MULTIPLIER;
   }
 
   // Stable callback refs so ForceGraph3D doesn't see new function identity on every render
@@ -1217,6 +1309,19 @@ export function Graph3D({
       onTouchStart={handleInteraction}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
+      <div className="absolute left-4 top-4 z-10 rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            checked={discoveryModeEnabled}
+            onChange={(event) => {
+              setDiscoveryModeEnabled(event.target.checked);
+            }}
+            aria-label="Discovery mode"
+          />
+          <span>Discovery Mode</span>
+        </label>
+      </div>
       <ForceGraph3D
         ref={graphRef as never}
         graphData={displayData}
@@ -1231,6 +1336,7 @@ export function Graph3D({
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
+        linkLineDash={getLinkLineDash}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
         linkOpacity={0.82}
@@ -1302,3 +1408,8 @@ export function Graph3D({
     </div>
   );
 }
+
+
+
+
+

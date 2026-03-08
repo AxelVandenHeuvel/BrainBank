@@ -63,3 +63,13 @@ class TestFindExistingDocument:
 
         result = find_existing_document("Physics Notes", lance_path)
         assert result is None
+
+    def test_creates_document_centroids_table(self, lance_path):
+        db, _ = init_lancedb(lance_path)
+        centroid_table = db.open_table("document_centroids")
+
+        schema = centroid_table.schema
+        field_names = [f.name for f in schema]
+        assert "doc_id" in field_names
+        assert "doc_name" in field_names
+        assert "centroid_vector" in field_names

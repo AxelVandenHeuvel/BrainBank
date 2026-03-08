@@ -44,6 +44,19 @@ class TestInitKuzu:
         with pytest.raises(RuntimeError, match="Another process may already be using it"):
             init_kuzu(kuzu_path)
 
+    def test_surfaces_a_clear_error_for_alternate_kuzu_index_error_message(
+        self,
+        monkeypatch,
+        kuzu_path,
+    ):
+        def raise_index_error(_db_path):
+            raise IndexError("invalid unordered_map<K, T> key")
+
+        monkeypatch.setattr(kuzu_module.kuzu, "Database", raise_index_error)
+
+        with pytest.raises(RuntimeError, match="Another process may already be using it"):
+            init_kuzu(kuzu_path)
+
     # --- Node table tests ---
 
     def test_project_table_exists(self, kuzu_path):
@@ -93,16 +106,17 @@ class TestInitKuzu:
         conn.execute("CREATE (:Concept {name: 'Mathematics'})")
         conn.execute(
             "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Mathematics'}) "
-            "CREATE (a)-[:RELATED_TO {reason: 'subfield'}]->(b)"
+            "CREATE (a)-[:RELATED_TO {reason: 'subfield', weight: 1.0}]->(b)"
         )
         result = conn.execute(
-            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
+            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight"
         )
         assert result.has_next()
         row = result.get_next()
         assert row[0] == "Calculus"
         assert row[1] == "Mathematics"
         assert row[2] == "subfield"
+        assert row[3] == 1.0
 
     def test_has_task_relationship(self, kuzu_path):
         _, conn = init_kuzu(kuzu_path)
@@ -157,3 +171,4 @@ class TestInitKuzu:
         )
         assert result.has_next()
         assert result.get_next()[0] == "Recursion clicked today"
+

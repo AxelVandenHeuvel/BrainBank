@@ -1,6 +1,7 @@
 import asyncio
 import os
 import zipfile
+from contextlib import asynccontextmanager
 from functools import partial
 from io import BytesIO
 
@@ -22,7 +23,15 @@ from backend.services.notion import (
     parse_notion_url,
 )
 
-app = FastAPI(title="BrainBank", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Open the shared Kuzu database during startup to avoid first-request races."""
+    get_kuzu_engine()
+    yield
+
+
+app = FastAPI(title="BrainBank", version="0.1.0", lifespan=lifespan)
 app.include_router(graph_router)
 
 session_memory = SessionMemory()

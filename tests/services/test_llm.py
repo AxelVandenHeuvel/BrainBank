@@ -90,6 +90,27 @@ class TestExtractConcepts:
         assert journal_text in prompt
         assert '"concepts"' in prompt
 
+    @patch("backend.services.llm._get_client")
+    def test_extract_concepts_prompt_enforces_balanced_graph_concept_count(self, mock_get_client):
+        client = Mock()
+        client.models.generate_content.return_value = _mock_response(
+            """
+            {
+              "concepts": ["Calculus", "Derivatives", "Chain Rule", "Product Rule"],
+              "relationships": []
+            }
+            """
+        )
+        mock_get_client.return_value = client
+
+        extract_concepts("Chain rule builds on derivatives and calculus.", "Derivative Notes")
+
+        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        assert "Return between 4 and 8 concepts" in prompt
+        assert "1-2 high-level anchor concepts" in prompt
+        assert "2-6 specific method/entity concepts" in prompt
+        assert '"relationships"' in prompt
+
 
 class TestModelSelection:
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)

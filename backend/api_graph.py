@@ -4,12 +4,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.db.kuzu import get_db_connection
 from backend.db.lance import init_lancedb
 from backend.schemas import (
+    DiscoveryItemResponse,
+    DiscoveryResponse,
     DocumentResponse,
     GraphEdgeResponse,
     RelationshipDetailsResponse,
 )
 
 graph_router = APIRouter(prefix="/api")
+
+
+def _average_vectors(vectors: list[list[float]]) -> list[float]:
+    if not vectors:
+        return []
+
+    size = len(vectors[0])
+    centroid = [0.0] * size
+    for vector in vectors:
+        for index, value in enumerate(vector):
+            centroid[index] += float(value)
+
+    count = float(len(vectors))
+    return [value / count for value in centroid]
 
 
 def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse]:
@@ -41,17 +57,19 @@ def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse
 
 def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
     result = conn.execute(
-        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
+        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight"
     )
     edges = []
     while result.has_next():
-        source, target, reason = result.get_next()
+        source, target, reason, weight = result.get_next()
+        safe_weight = float(weight) if weight is not None else 1.0
         edges.append(
             GraphEdgeResponse(
                 source=f"concept:{source}",
                 target=f"concept:{target}",
                 type="RELATED_TO",
                 reason=reason,
+                weight=safe_weight,
             )
         )
 
@@ -68,7 +86,6 @@ def get_graph(conn: kuzu.Connection = Depends(get_db_connection)):
         nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name, "colorScore": color_score})
 
     edges = [edge.model_dump() for edge in get_related_to_edges(conn)]
-
     return {"nodes": nodes, "edges": edges}
 
 
@@ -106,6 +123,48 @@ def get_relationship_details(
         target_documents=target_documents,
         shared_document_ids=shared_document_ids,
     )
+
+
+@graph_router.get("/discovery/latent/{concept_name}", response_model=DiscoveryResponse)
+def get_latent_discovery(concept_name: str):
+    """Return semantically similar documents that do not already contain concept_name."""
+    db, chunks_table = init_lancedb()
+    centroids_table = db.open_table("document_centroids")
+
+    chunks_df = chunks_table.to_pandas()
+    if chunks_df.empty:
+        return DiscoveryResponse(concept_name=concept_name, results=[])
+
+    exploded = chunks_df[["doc_id", "vector", "concepts"]].explode("concepts")
+    concept_rows = exploded[exploded["concepts"] == concept_name]
+    if concept_rows.empty:
+        return DiscoveryResponse(concept_name=concept_name, results=[])
+
+    concept_centroid = _average_vectors(concept_rows["vector"].tolist())
+    if not concept_centroid:
+        return DiscoveryResponse(concept_name=concept_name, results=[])
+
+    existing_doc_ids = set(concept_rows["doc_id"].astype(str))
+    search_result = centroids_table.search(concept_centroid).limit(50).to_pandas()
+
+    results: list[DiscoveryItemResponse] = []
+    for _, row in search_result.iterrows():
+        if str(row["doc_id"]) in existing_doc_ids:
+            continue
+
+        distance = float(row.get("_distance", 0.0))
+        similarity_score = 1.0 / (1.0 + distance)
+        results.append(
+            DiscoveryItemResponse(
+                doc_name=str(row["doc_name"]),
+                similarity_score=similarity_score,
+            )
+        )
+
+        if len(results) == 5:
+            break
+
+    return DiscoveryResponse(concept_name=concept_name, results=results)
 
 
 @graph_router.get("/concepts")
@@ -190,3 +249,4 @@ def get_stats(conn: kuzu.Connection = Depends(get_db_connection)):
         "total_concepts": concept_result.get_next()[0],
         "total_relationships": rel_result.get_next()[0],
     }
+

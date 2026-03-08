@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { normalizeGraphData } from '../lib/graphData';
 import { mockGraphApiResponse } from '../mock/mockGraph';
 import { useGraphData } from './useGraphData';
 
@@ -15,9 +16,7 @@ describe('useGraphData', () => {
       vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
-          nodes: [
-            { id: 'project:BrainBank', type: 'Project', name: 'BrainBank' },
-          ],
+          nodes: [{ id: 'project:BrainBank', type: 'Project', name: 'BrainBank' }],
           edges: [],
         }),
       }),
@@ -42,10 +41,7 @@ describe('useGraphData', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.source).toBe('mock');
-    expect(result.current.data).toEqual({
-      nodes: mockGraphApiResponse.nodes,
-      links: mockGraphApiResponse.edges,
-    });
+    expect(result.current.data).toEqual(normalizeGraphData(mockGraphApiResponse));
     expect(result.current.error).toBe('offline');
   });
 
@@ -63,7 +59,125 @@ describe('useGraphData', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.source).toBe('mock');
-    expect(result.current.error).toBe('Invalid graph payload');
+    expect(result.current.error).toBe('Empty or invalid graph payload');
+  });
+
+  it('uses api data when related edges include null reason', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          nodes: [
+            { id: 'concept:Calculus', type: 'Concept', name: 'Calculus' },
+            { id: 'concept:Derivatives', type: 'Concept', name: 'Derivatives' },
+          ],
+          edges: [
+            {
+              source: 'concept:Calculus',
+              target: 'concept:Derivatives',
+              type: 'RELATED_TO',
+              reason: null,
+              weight: 2,
+            },
+          ],
+        }),
+      }),
+    );
+
+    const { result } = renderHook(() => useGraphData());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.source).toBe('api');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('uses api data even when some edges are malformed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          nodes: [
+            { id: 'concept:Calculus', type: 'Concept', name: 'Calculus' },
+            { id: 'concept:Derivatives', type: 'Concept', name: 'Derivatives' },
+          ],
+          edges: [
+            {
+              source: 'concept:Calculus',
+              target: 'concept:Derivatives',
+              type: 'RELATED_TO',
+              weight: 2,
+            },
+            {
+              source: 123,
+              target: 'concept:Derivatives',
+              type: 'RELATED_TO',
+            },
+          ],
+        }),
+      }),
+    );
+
+    const { result } = renderHook(() => useGraphData());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.source).toBe('api');
+    expect(result.current.error).toBeNull();
+    expect(result.current.data.links).toHaveLength(1);
+  });
+
+
+  it('preserves edge weight values from the API payload', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          nodes: [
+            { id: 'concept:Calculus', type: 'Concept', name: 'Calculus' },
+            { id: 'concept:Derivatives', type: 'Concept', name: 'Derivatives' },
+          ],
+          edges: [
+            {
+              source: 'concept:Calculus',
+              target: 'concept:Derivatives',
+              type: 'RELATED_TO',
+              weight: 5,
+            },
+          ],
+        }),
+      }),
+    );
+
+    const { result } = renderHook(() => useGraphData());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.source).toBe('api');
+    expect(result.current.data.links[0]?.weight).toBe(5);
+  });
+  it('uses api data when backend returns links instead of edges', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          nodes: [{ id: 'concept:Calculus', type: 'Concept', name: 'Calculus' }],
+          links: [{ source: 'concept:Calculus', target: 'concept:Derivatives', type: 'RELATED_TO' }],
+        }),
+      }),
+    );
+
+    const { result } = renderHook(() => useGraphData());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.source).toBe('api');
+    expect(result.current.error).toBeNull();
+    expect(result.current.data.links).toHaveLength(1);
   });
 });
 
