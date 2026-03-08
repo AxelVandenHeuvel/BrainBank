@@ -178,6 +178,7 @@ export function Graph3D({
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
   const [hasFocusedRotationPivot, setHasFocusedRotationPivot] = useState(false);
+  const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = data;
@@ -207,6 +208,17 @@ export function Graph3D({
     const target = typeof link.target === 'string' ? link.target : link.target.id;
 
     return source === selectedEdge.sourceId && target === selectedEdge.targetId;
+  }
+
+  function isFocusedNodeLink(link: GraphLink): boolean {
+    if (!focusedEdgeNodeId) {
+      return false;
+    }
+
+    const source = typeof link.source === 'string' ? link.source : link.source.id;
+    const target = typeof link.target === 'string' ? link.target : link.target.id;
+
+    return source === focusedEdgeNodeId || target === focusedEdgeNodeId;
   }
 
   function clearSelectedEdge() {
@@ -365,6 +377,7 @@ export function Graph3D({
   function setRotationPivotNode(nodeId: string | null) {
     activeRotationNodeIdRef.current = nodeId;
     setHasFocusedRotationPivot(nodeId !== null);
+    setFocusedEdgeNodeId(nodeId);
   }
 
   function toWorldPoint(point: { x: number; y: number; z: number }) {
@@ -983,6 +996,10 @@ export function Graph3D({
       return ACTIVE_LINK_COLOR;
     }
 
+    if (focusedEdgeNodeId) {
+      return isFocusedNodeLink(link) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
+    }
+
     if (hoveredNode) {
       return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
     }
@@ -993,6 +1010,10 @@ export function Graph3D({
   function getLinkWidth(link: GraphLink): number {
     if (isSelectedLink(link)) {
       return 3.2;
+    }
+
+    if (focusedEdgeNodeId) {
+      return isFocusedNodeLink(link) ? 2.8 : 0.7;
     }
 
     return isDirectHoverLink(link, hoveredNode) ? 2.8 : 0.7;
@@ -1050,8 +1071,7 @@ export function Graph3D({
         linkHoverPrecision={10}
         linkOpacity={0.7}
         nodeRelSize={5}
-        linkDirectionalParticles={hoveredNode ? 2 : 0}
-        linkDirectionalParticleWidth={2}
+        linkDirectionalParticles={0}
         cooldownTicks={120}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}

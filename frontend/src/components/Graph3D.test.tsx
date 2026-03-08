@@ -138,6 +138,8 @@ function getLatestGraphProps() {
     nodeColor: (node: GraphNode) => string;
     linkColor: (link: GraphLink) => string;
     linkWidth: (link: GraphLink) => number;
+    linkDirectionalParticles: number;
+    linkDirectionalParticleWidth?: number;
     width: number;
     height: number;
     enableNavigationControls: boolean;
@@ -627,6 +629,23 @@ describe('Graph3D', () => {
     expect(props.linkHoverPrecision).toBeGreaterThanOrEqual(8);
   });
 
+  it('renders edges as plain lines without directional particles', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+
+    expect(props.linkDirectionalParticles).toBe(0);
+    expect(props.linkDirectionalParticleWidth).toBeUndefined();
+  });
+
   it('double-clicking a node focuses it', async () => {
     render(
       <Graph3D
@@ -989,6 +1008,43 @@ describe('Graph3D', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/relationships/details?source=Calculus&target=Derivatives',
       expect.any(Object),
+    );
+  });
+
+  it('clicking a node persists highlight on its adjacent edges until focus changes', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    const focusedProps = getLatestGraphProps();
+
+    expect(focusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(focusedProps.linkColor(graph.links[1])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(focusedProps.linkWidth(graph.links[0])).toBeGreaterThan(0.7);
+    expect(focusedProps.linkWidth(graph.links[1])).toBeGreaterThan(0.7);
+
+    await act(async () => {
+      getLatestGraphProps().onNodeClick(graph.nodes[1]);
+    });
+
+    const refocusedProps = getLatestGraphProps();
+
+    expect(refocusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(refocusedProps.linkColor(graph.links[1])).toBe('rgba(51, 65, 85, 0.22)');
+    expect(refocusedProps.linkWidth(graph.links[0])).toBeGreaterThan(
+      refocusedProps.linkWidth(graph.links[1]),
     );
   });
 
