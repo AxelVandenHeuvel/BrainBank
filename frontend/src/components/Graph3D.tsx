@@ -191,8 +191,9 @@ function getDeterministicNodeColorScore(node: GraphNode): number {
 }
 
 function getVisualNodeColor(node: GraphNode): THREE.Color {
-  return new THREE.Color(0xff4444).lerp(
-    new THREE.Color(0x4444ff),
+  // Use a cooler, professional spectrum (cyan to indigo) instead of pink/red
+  return new THREE.Color(0x22d3ee).lerp(
+    new THREE.Color(0x6366f1),
     getDeterministicNodeColorScore(node),
   );
 }
@@ -267,9 +268,9 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
 function createNodeMaterial(nodeColor: THREE.Color): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     color: nodeColor,
-    emissive: nodeColor.clone().multiplyScalar(0.15),
-    roughness: 0.6,
-    metalness: 0.1,
+    emissive: new THREE.Color(0x000000), // Remove emissive glow
+    roughness: 0.8,
+    metalness: 0,
     flatShading: true,
     transparent: true,
     opacity: 0.9,
@@ -785,7 +786,7 @@ export function Graph3D({
         const oscillation =
           (Math.sin(
             ((traversalElapsedMs / TRAVERSAL_AMBIENT_BLINK_PERIOD_MS) * Math.PI * 2) +
-              getTraversalBlinkPhase(node.id),
+            getTraversalBlinkPhase(node.id),
           ) + 1) / 2;
         const ambientPulse =
           (TRAVERSAL_AMBIENT_BLINK_BASE + (oscillation * TRAVERSAL_AMBIENT_BLINK_RANGE)) *
@@ -1803,16 +1804,16 @@ export function Graph3D({
             ? TRAVERSAL_INACTIVE_COLOR.clone()
             : traversalIsActive && traversalRevealed
               ? TRAVERSAL_INACTIVE_COLOR.clone().lerp(
-                  normalTargetColor,
-                  Math.max(0, Math.min(1, traversalPulse)),
-                )
+                normalTargetColor,
+                Math.max(0, Math.min(1, traversalPulse)),
+              )
               : normalTargetColor;
         const targetEmissive =
           traversalIsActive && !traversalRevealed
-            ? TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05)
+            ? new THREE.Color(0x000000)
             : isChatSource
-              ? baseColor.clone().multiplyScalar(0.2)
-              : targetColor.clone().multiplyScalar(0.08);
+              ? baseColor.clone().multiplyScalar(0.05)
+              : new THREE.Color(0x000000);
         targetEmissive.add(baseColor.clone().multiplyScalar(0.95 * traversalPulse));
         targetEmissive.add(TRAVERSAL_OUTLINE_COLOR.clone().multiplyScalar(0.25 * traversalPulse));
         const targetOpacity = Math.min(1, (isDimmed ? dimOpacity : 0.9) + traversalPulse * 0.28);
@@ -2099,7 +2100,7 @@ export function Graph3D({
       data-testid="graph-shell"
       data-background-hex={DEFAULT_BACKGROUND_HEX}
       data-brain-mesh-hex={DEFAULT_BRAIN_MESH_HEX}
-      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 lg:min-h-0"
       style={{ backgroundColor: DEFAULT_BACKGROUND_HEX }}
       onContextMenu={(event) => event.preventDefault()}
       onDoubleClick={(event) => {
@@ -2172,25 +2173,47 @@ export function Graph3D({
         enableNavigationControls={false}
         controlType="orbit"
       />
-      <div className="absolute right-4 top-4 flex flex-col gap-2 z-10">
+      {expandedConcept ? (
+        <div className="absolute left-6 top-6 z-10 max-w-[14rem] rounded-xl border border-white/[0.08] bg-neutral-900 px-4 py-3 text-left transition-all duration-300 animate-in fade-in slide-in-from-left-4">
+          <div className="mb-1.5 border-b border-white/[0.06] pb-1">
+            <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-neutral-500">
+              Document View
+            </p>
+          </div>
+          <h2 className="text-base font-semibold tracking-tight text-white mb-1">
+            {expandedConcept.node.name}
+          </h2>
+          <p className="text-[10px] leading-relaxed text-neutral-400">
+            Double click a document node to open it.
+          </p>
+          <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+            <span className="text-[8px] font-medium text-neutral-500 uppercase tracking-widest">Documents</span>
+            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[9px] font-bold text-neutral-300">
+              {expandedConcept.docs.length}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="absolute right-4 top-4 z-10 flex flex-col items-end gap-2">
         <button
           type="button"
           onClick={handleZoomIn}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 transition hover:bg-slate-700/90"
         >
           +
         </button>
         <button
           type="button"
           onClick={handleZoomOut}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 transition hover:bg-slate-700/90"
         >
           −
         </button>
         <button
           type="button"
           onClick={handleReset}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 transition hover:bg-slate-700/90"
         >
           ⟳
         </button>
@@ -2198,11 +2221,10 @@ export function Graph3D({
           type="button"
           aria-label={showBrainMesh ? 'Hide brain mesh' : 'Show brain mesh'}
           onClick={() => setShowBrainMesh((current) => !current)}
-          className={`flex h-11 w-11 items-center justify-center rounded-full text-[0.65rem] font-semibold uppercase tracking-[0.18em] shadow-lg shadow-slate-950/30 transition ${
-            showBrainMesh
-              ? 'bg-slate-800/80 text-slate-100 hover:bg-slate-700/90'
-              : 'bg-slate-900/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
-          }`}
+          className={`flex h-11 w-11 items-center justify-center rounded-full text-[0.65rem] font-semibold uppercase tracking-[0.18em] transition ${showBrainMesh
+            ? 'bg-slate-800/80 text-slate-100 hover:bg-slate-700/90'
+            : 'bg-slate-900/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+            }`}
         >
           BM
         </button>

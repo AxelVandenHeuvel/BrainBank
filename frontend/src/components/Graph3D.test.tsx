@@ -2020,6 +2020,50 @@ describe('Graph3D', () => {
       expect(screen.queryByRole('button', { name: /back to graph/i })).toBeNull();
     });
 
+    it('shows a Document View badge only while the expanded document view is active', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick, onBackgroundClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+        onBackgroundClick: () => void;
+      };
+
+      expect(screen.queryByText('Document View')).toBeNull();
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Document View')).toBeInTheDocument();
+      expect(
+        screen.getByText('Nodes represent documents in this focused view.'),
+      ).toBeInTheDocument();
+
+      act(() => {
+        onBackgroundClick();
+      });
+
+      expect(screen.queryByText('Document View')).toBeNull();
+      expect(
+        screen.queryByText('Nodes represent documents in this focused view.'),
+      ).toBeNull();
+    });
+
     it('double-clicking a doc-expand node opens the document in a tab', async () => {
       const mockDocs = [
         { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
