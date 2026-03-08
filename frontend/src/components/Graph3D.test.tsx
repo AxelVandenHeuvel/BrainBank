@@ -1293,6 +1293,9 @@ describe('Graph3D', () => {
 
       onConceptFocused.mockClear();
 
+      // Advance past the double-click suppression window
+      vi.advanceTimersByTime(400);
+
       // Click background to clear
       const { onBackgroundClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
         onBackgroundClick: () => void;

@@ -925,11 +925,10 @@ export function Graph3D({
         return;
       }
 
-      // Single-click doc node: select and zoom to it
+      // Single-click doc node: select it (no zoom to keep second click reliable)
       lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
       clearSelectedEdge();
       setSelectedNode(node);
-      focusPoint(nodePoint, 35);
       return;
     }
 
@@ -1601,6 +1600,7 @@ export function Graph3D({
         onNodeClick={onNodeClick}
         onNodeHover={onNodeHover}
         onBackgroundClick={() => {
+          if (Date.now() <= suppressBackgroundDoubleClickUntilRef.current) return;
           clearSelectedEdge();
           setSelectedNode(null);
           setRotationPivotNode(null);
