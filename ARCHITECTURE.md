@@ -61,12 +61,13 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell, legend, and search state
+    App.tsx                  - Layout shell, view switching (graph/editor), legend, search
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI for LLM query history
       Graph3D.tsx            - 3D graph scene and interaction behavior
-      IngestPanel.tsx        - Note input + file upload for ingestion
+      IngestPanel.tsx        - New Note button + file upload
+      NoteEditor.tsx         - Full-page markdown note editor
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
@@ -84,6 +85,8 @@ frontend/
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  sample_data/
+    college_math_notes.py   - Loads and seeds the sample college math corpus
   schemas.py                - Shared Pydantic response models (DocumentResponse)
   db/
     lance.py                - LanceDB init + chunks table schema
@@ -98,10 +101,18 @@ backend/
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
     query.py                - Query pipeline: search -> expand -> answer
+sample_data/
+  college_math_notes/
+    catalog.json            - Metadata for the sample math note corpus
+    *.md                    - College student math note documents for document-opening tests
+scripts/
+  seed_college_math_notes.py - Seeds the sample math note corpus into local databases
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
   test_api_graph.py         - Graph export API tests
+  sample_data/
+    test_college_math_notes.py - Sample data loading and seeding tests
   db/
     test_lance.py           - LanceDB init tests
     test_kuzu.py            - Kuzu init tests
@@ -116,6 +127,10 @@ tests/
 ```
 
 Each file has a single responsibility. Tests mirror the source structure.
+
+## Sample Data Seeding
+
+`sample_data/college_math_notes` contains a small college-student math corpus for frontend document-opening tests. `scripts/seed_college_math_notes.py` loads the catalog, splits each markdown file into paragraph chunks, writes deterministic vectors plus chunk text into LanceDB, and upserts the matching Concept and RELATED_TO graph data into Kuzu. The seeder skips any sample `doc_id` values that are already present, so rerunning it does not duplicate the sample documents.
 
 ## Frontend Graph Flow
 
@@ -144,14 +159,14 @@ GLTFLoader -- load human-brain.glb, derive mesh containment, render wireframe sh
 
 ### Ingest Panel
 
-The sidebar includes a collapsible IngestPanel with two modes:
+The sidebar has a "New Note" button and a file upload option:
 
-1. **Quick Note** - user types a title + markdown content, clicks "Add to Brain"
-2. **File Upload** - user picks a `.md` or `.txt` file, contents are read client-side
+1. **New Note** - clicking swaps the main area from the 3D graph to a full-page markdown editor (NoteEditor). The editor has a title field, a large textarea, and a "Save to Brain" button. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
+2. **File Upload** - user picks a `.md` or `.txt` file from the sidebar. Contents are read client-side and sent via `POST /ingest`. Success shows extracted concept count.
 
-Both modes `POST /ingest` with `{title, text}`. On success the panel shows concept count and triggers `useGraphData.refetch()` to reload the 3D graph with new data. Vite proxies `/ingest` to the backend alongside `/api`.
+Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also manages its own camera state: it auto-centers on load, resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also derives a dedicated home-view camera target from the loaded brain bounds, so reset and initial framing center the brain shell in the viewport instead of centering only the node cluster. It resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 ## Frontend Chat Flow
 
@@ -165,16 +180,16 @@ ChatPanel -- controlled input + session message history
 useChat.sendMessage() -- append user message and set loading state
   |
   v
-POST http://localhost:8000/query
+POST /query/test-llm -- proxied by Vite in development to the backend API
   |
   v
-Backend returns { answer, discovery_concepts }
+Backend returns { answer, discovery_concepts, mode }
   |
   v
 ChatPanel -- render assistant answer + discovery concept tags
 ```
 
-Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet. The panel is toggled from a single side-mounted control so it can collapse without adding a second toolbar area.
+Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet. The panel is toggled from a single side-mounted control so it can collapse without adding a second toolbar area. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -283,7 +298,11 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 
 | Variable       | Required | Purpose            |
 |----------------|----------|--------------------|
-| GEMINI_API_KEY | Yes      | Gemini 1.5 Flash   |
+| GEMINI_API_KEY | Yes      | Gemini API authentication |
+| GEMINI_MODEL   | No       | Override model name (default: `gemini-2.5-flash`) |
+| TEST_LLM_PROVIDER | No    | Test route provider: `gemini` or `ollama` |
+| OLLAMA_BASE_URL | No      | Local Ollama base URL (default: `http://localhost:11434`) |
+| OLLAMA_MODEL | No         | Local Ollama model for the test route (default: `llama3.2:3b`) |
 
 Database paths default to `./data/lancedb` and `./data/kuzu`.
 

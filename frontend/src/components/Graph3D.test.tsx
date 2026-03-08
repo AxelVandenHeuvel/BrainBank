@@ -43,9 +43,9 @@ vi.mock('react-force-graph-3d', async () => {
           remove: sceneRemove,
         }),
         getGraphBbox: () => ({
-          x: [-100, 100],
-          y: [-60, 60],
-          z: [-80, 80],
+          x: [80, 200],
+          y: [-30, 90],
+          z: [-20, 100],
         }),
         refresh,
       }));
@@ -112,7 +112,7 @@ describe('Graph3D', () => {
     vi.useRealTimers();
   });
 
-  it('auto-centers the graph on load', () => {
+  it('centers the home view on the brain shell when it loads', () => {
     render(
       <Graph3D
         data={graph}
@@ -124,7 +124,19 @@ describe('Graph3D', () => {
 
     vi.advanceTimersByTime(200);
 
-    expect(zoomToFit).toHaveBeenCalledWith(1200, 120);
+    expect(cameraPosition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(39.05, 2),
+        z: 338,
+      }),
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(12.01, 2),
+        z: 0,
+      }),
+      1200,
+    );
   });
 
   it('zooms the camera to the first matching search result', () => {
@@ -206,7 +218,19 @@ describe('Graph3D', () => {
 
     expect(container.querySelector('.absolute.top-4.right-4.flex.flex-col.gap-2')).not.toBeNull();
     expect(cameraPosition).toHaveBeenCalled();
-    expect(zoomToFit).toHaveBeenCalledWith(1200, 120);
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(39.05, 2),
+        z: 338,
+      }),
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(12.01, 2),
+        z: 0,
+      }),
+      1200,
+    );
   });
 
   it('double-clicking a node focuses it', () => {

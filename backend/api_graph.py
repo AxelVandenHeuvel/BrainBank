@@ -6,7 +6,6 @@ from backend.schemas import DocumentResponse
 
 graph_router = APIRouter(prefix="/api")
 
-db, conn = init_kuzu()
 
 @graph_router.get("/graph")
 def get_graph():
@@ -23,11 +22,6 @@ def get_graph():
         result = conn.execute(
             "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
         )
-        while result.has_next():
-            row = result.get_next()
-            edges.append(
-                {"source": f"concept:{row[0]}", "target": f"concept:{row[1]}", "type": row[2]}
-            )
 
         return {"nodes": nodes, "edges": edges}
     finally:
@@ -37,37 +31,37 @@ def get_graph():
 @graph_router.get("/concepts")
 def get_concepts():
     """Return all concepts with document counts and related concepts."""
-    try:
-        _, table = init_lancedb()
-        df = table.to_pandas()
+    _, conn = init_kuzu()
+    _, table = init_lancedb()
+    df = table.to_pandas()
 
-        concepts = []
-        result = conn.execute("MATCH (c:Concept) RETURN c.name")
-        while result.has_next():
-            name = result.get_next()[0]
+    concepts = []
+    result = conn.execute("MATCH (c:Concept) RETURN c.name")
+    while result.has_next():
+        name = result.get_next()[0]
 
-            # Count distinct documents that have chunks tagged with this concept
-            if df.empty:
-                doc_count = 0
-            else:
-                exploded = df[["doc_id", "concepts"]].explode("concepts")
-                doc_count = int(
-                    exploded[exploded["concepts"] == name]["doc_id"].nunique()
-                )
-
-            # Related concepts from Kuzu
-            rel_result = conn.execute(
-                "MATCH (c:Concept {name: $name})-[:RELATED_TO]-(other:Concept) "
-                "RETURN other.name",
-                parameters={"name": name},
+        # Count distinct documents that have chunks tagged with this concept
+        if df.empty:
+            doc_count = 0
+        else:
+            exploded = df[["doc_id", "concepts"]].explode("concepts")
+            doc_count = int(
+                exploded[exploded["concepts"] == name]["doc_id"].nunique()
             )
-            related = []
-            while rel_result.has_next():
-                related.append(rel_result.get_next()[0])
 
-            concepts.append(
-                {"name": name, "document_count": doc_count, "related_concepts": related}
-            )
+        # Related concepts from Kuzu
+        rel_result = conn.execute(
+            "MATCH (c:Concept {name: $name})-[:RELATED_TO]-(other:Concept) "
+            "RETURN other.name",
+            parameters={"name": name},
+        )
+        related = []
+        while rel_result.has_next():
+            related.append(rel_result.get_next()[0])
+
+        concepts.append(
+            {"name": name, "document_count": doc_count, "related_concepts": related}
+        )
 
         return {"concepts": concepts}
     finally:
@@ -87,7 +81,6 @@ def get_documents():
     for doc_id, group in df.groupby("doc_id", sort=False):
         doc_name = group["doc_name"].iloc[0]
         chunk_count = len(group)
-        # Union of all concepts across chunks, deduplicated
         all_concepts = group["concepts"].explode().dropna().unique().tolist()
         documents.append(
             {"doc_id": doc_id, "name": doc_name, "chunk_count": chunk_count, "concepts": all_concepts}
@@ -105,14 +98,12 @@ def get_concept_documents(concept_name: str):
     if df.empty:
         return []
 
-    # Filter to chunks that mention this concept
     exploded = df[["doc_id", "doc_name", "text", "concepts"]].explode("concepts")
     matching_doc_ids = exploded[exploded["concepts"] == concept_name]["doc_id"].unique()
     matching = df[df["doc_id"].isin(matching_doc_ids)]
     if matching.empty:
         return []
 
-    # Group chunks by document, join text to form the full readable document
     documents = []
     for doc_id, group in matching.groupby("doc_id", sort=False):
         full_text = "\n\n".join(group["text"].tolist())

@@ -4,6 +4,7 @@ import {
   NODE_TYPE_COLORS,
   autoRotateCamera,
   buildAdjacencyMap,
+  centerCameraOnTarget,
   findMatchingNodeIds,
   getConnectionCount,
   zoomToNode,
@@ -113,6 +114,28 @@ describe('graphView helpers', () => {
       { x: 130, y: 35, z: 115 },
       { x: 10, y: 5, z: -5 },
       1200,
+    );
+  });
+
+  it('centers the home view camera on a target', () => {
+    const cameraPosition = vi.fn();
+    const fgRef = {
+      current: {
+        cameraPosition,
+      },
+    };
+
+    centerCameraOnTarget(
+      fgRef,
+      { x: 0, y: 8, z: 0 },
+      300,
+      900,
+    );
+
+    expect(cameraPosition).toHaveBeenCalledWith(
+      { x: 0, y: 32, z: 300 },
+      { x: 0, y: 8, z: 0 },
+      900,
     );
   });
 });
