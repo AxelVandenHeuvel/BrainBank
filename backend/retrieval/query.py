@@ -7,7 +7,7 @@ from backend.retrieval.global_search import run_global_search
 from backend.retrieval.local_search import run_local_search
 from backend.retrieval.provenance import build_local_answer_provenance
 from backend.retrieval.routing import QueryRoute, classify_query_route
-from backend.retrieval.types import QueryResult, RetrievalConfig
+from backend.retrieval.types import DocumentCitation, QueryResult, RetrievalConfig
 from backend.services.embeddings import embed_query
 from backend.services.llm import (
     generate_answer,
@@ -18,6 +18,50 @@ from backend.services.llm import (
 EMPTY_BRAINBANK_MESSAGE = (
     "No ingested documents found. Upload or import notes before querying BrainBank."
 )
+GLOBAL_DOCUMENT_CITATION_LIMIT = 5
+
+
+def _build_documents_for_concepts(table, concepts: tuple[str, ...], limit: int) -> tuple[DocumentCitation, ...]:
+    if not concepts or limit < 1:
+        return ()
+
+    chunks_df = table.to_pandas()
+    if chunks_df.empty:
+        return ()
+
+    ranked_concepts = {concept: index for index, concept in enumerate(concepts)}
+
+    def normalize_chunk_concepts(chunk_concepts) -> list[str]:
+        if chunk_concepts is None:
+            return []
+        if isinstance(chunk_concepts, str):
+            return [chunk_concepts]
+        return [str(concept) for concept in list(chunk_concepts)]
+
+    concept_matches = chunks_df[chunks_df["concepts"].apply(
+        lambda chunk_concepts: any(
+            concept in normalize_chunk_concepts(chunk_concepts)
+            for concept in concepts
+        )
+    )]
+    if concept_matches.empty:
+        return ()
+
+    scored_documents: list[tuple[int, str, str]] = []
+    for doc_id, group in concept_matches.groupby("doc_id", sort=False):
+        best_rank = min(
+            ranked_concepts[concept]
+            for chunk_concepts in group["concepts"]
+            for concept in normalize_chunk_concepts(chunk_concepts)
+            if concept in ranked_concepts
+        )
+        scored_documents.append((best_rank, str(doc_id), str(group["doc_name"].iloc[0])))
+
+    scored_documents.sort(key=lambda item: (item[0], item[2], item[1]))
+    return tuple(
+        DocumentCitation(doc_id=doc_id, name=doc_name)
+        for _, doc_id, doc_name in scored_documents[:limit]
+    )
 
 
 def _get_query_connection(shared_kuzu_db, kuzu_db_path: str):
@@ -58,6 +102,11 @@ def query_brainbank(
                     answer=global_result.answer,
                     source_concepts=global_result.source_concepts,
                     discovery_concepts=global_result.discovery_concepts,
+                    source_documents=_build_documents_for_concepts(
+                        table,
+                        global_result.source_concepts,
+                        GLOBAL_DOCUMENT_CITATION_LIMIT,
+                    ),
                 ).to_response()
 
         search_result = run_local_search(

@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Both routes now surface document provenance in the `/query` response: the local path carries cited source/discovery documents, chunks, and supporting relationships from retrieval-time provenance assembly, while the global path maps cited community concepts back to ranked underlying documents so summary-style answers are not missing note links. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
 
 ## Stack
 
@@ -99,7 +99,7 @@ frontend/
     App.tsx                  - Layout shell with collapsible sidebar, top search bar, permanent Brain tab, fully wired tab system, FileExplorer, TabBar, DocumentEditor, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, deletable sessions, bottom-anchored composer, in-stream loading status bubble, assistant-response graph focus toggles, answer provenance sections, clickable cited documents, and mock-data warning when chat is not grounded in live backend notes
+      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, deletable sessions, bottom-anchored composer, in-stream loading status bubble, assistant-response graph focus toggles, answer provenance sections, inline clickable document hyperlinks inside assistant responses, and mock-data warning when chat is not grounded in live backend notes
       ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
       DocumentEditor.tsx     - Milkdown Crepe editor with explicit manual saves, lightweight draft creation for new notes, and lightweight PUT updates for existing notes
       EdgeDetailPanel.tsx    - Selected relationship panel with a fixed header, bounded height, and internally scrollable evidence documents
@@ -327,7 +327,7 @@ Backend returns answer text plus provenance:
   - `supporting_relationships`
   |
   v
-ChatPanel -- render assistant answer + separate concept/document provenance sections, evidence excerpts, and supporting relationships
+ChatPanel -- render assistant answer + inline clickable document links, concept provenance sections, evidence excerpts, and supporting relationships
   |
   +-- click assistant response -> toggle graph focus selection in App
   |
@@ -503,7 +503,7 @@ route.classify_query_route() -- GLOBAL for overview/theme prompts, otherwise LOC
       Output: { answer, source_concepts, discovery_concepts, source_documents, discovery_documents, source_chunks, discovery_chunks, supporting_relationships }
 ```
 
-The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. Retrieval still preserves the stable `/query` contract, but internally it is now route-aware and GraphRAG-specific. Local retrieval defaults to chunk/document artifacts already produced during ingest and upgrades itself when `concept_centroids` exists. Global retrieval only activates when `community_summaries` exists; otherwise overview-style questions transparently fall back to the local path. When `session_id` and `history` are provided, the API stores turns in `SessionMemory`, and the history turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
+The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. Retrieval still preserves the stable `/query` contract, but internally it is now route-aware and GraphRAG-specific. Local retrieval defaults to chunk/document artifacts already produced during ingest and upgrades itself when `concept_centroids` exists. Global retrieval only activates when `community_summaries` exists; otherwise overview-style questions transparently fall back to the local path. Local answers assemble full provenance from retrieval hits, and global answers map their surfaced source concepts back to ranked documents so both routes can drive clickable note citations in chat. When `session_id` and `history` are provided, the API stores turns in `SessionMemory`, and the history turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
 If LanceDB has zero ingested chunks, `/query` returns a specific empty-database message instead of the generic "No relevant information found." response. That makes it clear the failure is missing ingested data rather than a bad retrieval match.
 
 ## API Endpoints
