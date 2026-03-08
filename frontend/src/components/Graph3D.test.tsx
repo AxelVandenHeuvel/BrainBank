@@ -174,6 +174,7 @@ function getLatestGraphProps() {
     height: number;
     enableNavigationControls: boolean;
     linkHoverPrecision: number;
+    nodeLabel?: (node: GraphNode) => string | null;
   };
 }
 
@@ -1295,7 +1296,75 @@ describe('Graph3D', () => {
       expect(onOpenDocument).not.toHaveBeenCalled();
     });
 
-    it('single-clicking a Concept node pins a node card without an open docs button', async () => {
+    it('renders the hover tooltip as name plus connection count', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(screen.getByText('Calculus (2)')).toBeInTheDocument();
+      expect(screen.queryByText('Concept')).not.toBeInTheDocument();
+      expect(screen.queryByText('2 connections')).not.toBeInTheDocument();
+    });
+
+    it('disables the force-graph cursor-following node label', () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      const nodeLabel = getLatestGraphProps().nodeLabel;
+
+      expect(nodeLabel).toBeTypeOf('function');
+      expect(nodeLabel?.(graph.nodes[0])).toBeNull();
+    });
+
+    it('hides the hovered node sprite label while keeping other node labels visible', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      const props = getLatestGraphProps();
+      const hoveredObject = props.nodeThreeObject(graph.nodes[0]);
+      const relatedObject = props.nodeThreeObject(graph.nodes[1]);
+      const hoveredLabel = hoveredObject?.children.find((child) => child instanceof THREE.Sprite) as
+        | THREE.Sprite
+        | undefined;
+      const relatedLabel = relatedObject?.children.find((child) => child instanceof THREE.Sprite) as
+        | THREE.Sprite
+        | undefined;
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(hoveredLabel).toBeDefined();
+      expect(relatedLabel).toBeDefined();
+      expect((hoveredLabel?.material as THREE.SpriteMaterial).opacity).toBeLessThan(0.01);
+      expect((relatedLabel?.material as THREE.SpriteMaterial).opacity).toBeGreaterThan(0.9);
+    });
+
+    it('single-clicking a Concept node does not pin a node card', async () => {
       render(
         <Graph3D
           data={graph}
@@ -1313,8 +1382,12 @@ describe('Graph3D', () => {
         onNodeClick(graph.nodes[0]);
       });
 
-      expect(screen.getByText('Calculus')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Open docs' })).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(screen.queryByText('Calculus (2)')).not.toBeInTheDocument();
+      expect(screen.queryByText('Calculus')).not.toBeInTheDocument();
     });
 
     it('falls back to mock documents when the API returns empty and injects doc sub-nodes', async () => {

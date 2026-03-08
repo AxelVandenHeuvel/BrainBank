@@ -283,7 +283,6 @@ export function Graph3D({
   onConceptFocused,
 }: Graph3DProps) {
   const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
   const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -481,7 +480,7 @@ export function Graph3D({
     };
   }, [chatFocus, displayData.nodes]);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
-  const activeCardNode = selectedNode ?? hoveredNode;
+  const hoveredNodeId = hoveredNode?.id ?? null;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
@@ -726,7 +725,6 @@ export function Graph3D({
 
   function handleReset() {
     setRotationPivotNode(null);
-    setSelectedNode(null);
     setLatentLinks([]);
     setExpandedConcept(null);
     setIsDiving(false);
@@ -1054,10 +1052,9 @@ export function Graph3D({
         return;
       }
 
-      // Single-click doc node: select it (no zoom to keep second click reliable)
+      // Single-click doc node: record the click without zoom so the second click stays reliable.
       lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
       clearSelectedEdge();
-      setSelectedNode(node);
       return;
     }
 
@@ -1067,7 +1064,6 @@ export function Graph3D({
     }
 
     clearSelectedEdge();
-    setSelectedNode(node);
     setRotationPivotNode(node.id);
     suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
 
@@ -1101,7 +1097,6 @@ export function Graph3D({
     if (isGhostLink(link)) {
       return;
     }
-    setSelectedNode(null);
     setRotationPivotNode(null);
     setLatentLinks([]);
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
@@ -1576,6 +1571,7 @@ export function Graph3D({
         const isChatDiscovery = chatFocusNodeIds.discoveryNodeIds.has(node.id);
         const isChatDimmed = hasChatFocus && !isChatSource && !isChatDiscovery;
         const isExpandHidden = expandedNodeIds !== null && !expandedNodeIds.has(node.id);
+        const isHoveredTooltipNode = expandedConcept === null && hoveredNodeId === node.id;
         const isDocExpand = node.id.startsWith('doc-expand:');
         const dimOpacity = isExpandHidden ? 0 : 0.08;
         const isDimmed = isSearchDimmed || isChatDimmed || isExpandHidden;
@@ -1592,7 +1588,8 @@ export function Graph3D({
             : targetColor.clone().multiplyScalar(0.08);
         const targetOpacity = isDimmed ? dimOpacity : 0.9;
         const targetOutlineOpacity = isChatDiscovery && !isExpandHidden ? 0.95 : 0;
-        const targetSpriteOpacity = isExpandHidden || isSearchDimmed || isChatDimmed ? 0 : 1;
+        const targetSpriteOpacity =
+          isExpandHidden || isSearchDimmed || isChatDimmed || isHoveredTooltipNode ? 0 : 1;
 
         if (obj.userData.currentOpacity === undefined) {
           obj.userData.currentColor = baseColor.clone();
@@ -1640,7 +1637,7 @@ export function Graph3D({
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [chatFocusNodeIds, displayData.nodes, expandedNodeIds, hasChatFocus, matchedNodeIds, query]);
+  }, [chatFocusNodeIds, displayData.nodes, expandedConcept, expandedNodeIds, hasChatFocus, hoveredNodeId, matchedNodeIds, query]);
 
 
   useEffect(() => {
@@ -1665,7 +1662,7 @@ export function Graph3D({
   }, [hasFocusedRotationPivot, selectedEdge, expandedConcept]);
 
   useEffect(() => {
-    if (!activeCardNode) {
+    if (!hoveredNode) {
       setTooltipPosition(null);
       return;
     }
@@ -1674,9 +1671,9 @@ export function Graph3D({
 
     const updatePosition = () => {
       const worldPoint = toWorldPoint({
-        x: activeCardNode.x ?? 0,
-        y: activeCardNode.y ?? 0,
-        z: activeCardNode.z ?? 0,
+        x: hoveredNode.x ?? 0,
+        y: hoveredNode.y ?? 0,
+        z: hoveredNode.z ?? 0,
       });
       const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
@@ -1692,7 +1689,7 @@ export function Graph3D({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [activeCardNode]);
+  }, [hoveredNode]);
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
@@ -1880,7 +1877,6 @@ export function Graph3D({
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
-          setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
           setExpandedConcept(null);
@@ -1930,6 +1926,7 @@ export function Graph3D({
         height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
+        nodeLabel={() => null}
         nodeVal={() => 4}
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
@@ -1952,7 +1949,6 @@ export function Graph3D({
         onBackgroundClick={() => {
           if (Date.now() <= suppressBackgroundDoubleClickUntilRef.current) return;
           clearSelectedEdge();
-          setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
           setExpandedConcept(null);
@@ -1984,10 +1980,10 @@ export function Graph3D({
           ⟳
         </button>
       </div>
-      {activeCardNode && tooltipPosition && !expandedConcept ? (
+      {hoveredNode && tooltipPosition && !expandedConcept ? (
         <NodeTooltip
-          node={activeCardNode}
-          connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
+          node={hoveredNode}
+          connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
         />
