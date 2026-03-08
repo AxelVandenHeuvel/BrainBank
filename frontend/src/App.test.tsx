@@ -40,8 +40,11 @@ describe('App', () => {
 
     render(<App />);
 
+    expect(screen.getByRole('main')).toHaveClass('lg:h-screen', 'lg:overflow-hidden');
     expect(screen.getByTestId('graph-scene')).toBeInTheDocument();
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
+    expect(screen.getByText('BrainBank').closest('aside')).toHaveClass('lg:min-h-0', 'lg:overflow-y-auto');
+    expect(screen.getByTestId('graph-scene').parentElement).toHaveClass('lg:min-h-0', 'lg:overflow-hidden');
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
     expect(screen.getByText('BrainBank')).toBeInTheDocument();
     expect(screen.getByText('Mock data')).toBeInTheDocument();

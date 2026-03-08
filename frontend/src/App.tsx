@@ -46,15 +46,15 @@ export default function App() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-slate-950 text-slate-100 lg:h-screen lg:overflow-hidden">
       <div
-        className={`mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:px-6 ${
+        className={`mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:h-screen lg:overflow-hidden lg:px-6 ${
           isChatOpen
             ? 'lg:grid-cols-[22rem_minmax(0,1fr)_24rem]'
             : 'lg:grid-cols-[22rem_minmax(0,1fr)]'
         }`}
       >
-        <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur">
+        <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:min-h-0 lg:overflow-y-auto">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-200/70">
               Cognitive Map
@@ -138,7 +138,7 @@ export default function App() {
           </section>
         </aside>
 
-        <section className="min-h-[70vh]">
+        <section className="min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
           {view === 'editor' ? (
             <NoteEditor
               onSave={handleNoteSaved}
@@ -155,7 +155,7 @@ export default function App() {
         </section>
 
         {isChatOpen ? (
-          <aside className="relative flex min-h-[70vh]">
+          <aside className="relative flex min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
             <button
               type="button"
               aria-label={getChatToggleLabel(true)}

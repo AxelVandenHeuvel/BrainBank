@@ -19,7 +19,10 @@ export function ChatPanel() {
   }
 
   return (
-    <section className="flex min-h-[24rem] flex-1 flex-col rounded-3xl border border-white/10 bg-slate-900/60 p-4">
+    <section
+      data-testid="chat-panel-shell"
+      className="flex min-h-[24rem] flex-1 flex-col rounded-3xl border border-white/10 bg-slate-900/60 p-4 lg:h-full lg:min-h-0"
+    >
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-medium text-slate-200">Chat</h2>
@@ -32,7 +35,10 @@ export function ChatPanel() {
         ) : null}
       </div>
 
-      <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
+      <div
+        data-testid="chat-panel-messages"
+        className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1 lg:min-h-0"
+      >
         {messages.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-cyan-300/15 bg-slate-950/60 p-4 text-sm leading-6 text-slate-400">
             Ask a question about your projects, tasks, or connections in the graph.
@@ -73,7 +79,11 @@ export function ChatPanel() {
         })}
       </div>
 
-      <form className="mt-4 flex gap-3" onSubmit={handleSubmit}>
+      <form
+        data-testid="chat-panel-form"
+        className="mt-4 flex shrink-0 gap-3"
+        onSubmit={handleSubmit}
+      >
         <label htmlFor="chat-question" className="sr-only">
           Ask BrainBank
         </label>

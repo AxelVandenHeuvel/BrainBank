@@ -15,6 +15,12 @@ interface ForceGraphCameraHandle {
     lookAt?: CameraPosition,
     durationMs?: number,
   ): unknown;
+  controls?: () => {
+    target?: {
+      set: (x: number, y: number, z: number) => void;
+    };
+    update?: () => void;
+  };
 }
 
 interface ForceGraphCameraRef {
@@ -110,6 +116,7 @@ export function isDirectHoverLink(
 
 export function autoRotateCamera(
   fgRef: ForceGraphCameraRef,
+  target: CameraPosition = { x: 0, y: 0, z: 0 },
   speed = 0.002,
 ): void {
   const currentPosition = fgRef.current?.cameraPosition();
@@ -118,14 +125,19 @@ export function autoRotateCamera(
     return;
   }
 
+  const relativeX = currentPosition.x - target.x;
+  const relativeZ = currentPosition.z - target.z;
   const cosine = Math.cos(speed);
   const sine = Math.sin(speed);
 
-  fgRef.current?.cameraPosition({
-    x: currentPosition.x * cosine - currentPosition.z * sine,
-    y: currentPosition.y,
-    z: currentPosition.x * sine + currentPosition.z * cosine,
-  });
+  fgRef.current?.cameraPosition(
+    {
+      x: target.x + relativeX * cosine - relativeZ * sine,
+      y: currentPosition.y,
+      z: target.z + relativeX * sine + relativeZ * cosine,
+    },
+    target,
+  );
 }
 
 export function zoomToNode(
@@ -165,4 +177,14 @@ export function centerCameraOnTarget(
     target,
     durationMs,
   );
+}
+
+export function setOrbitTarget(
+  fgRef: ForceGraphCameraRef,
+  target: CameraPosition,
+): void {
+  const controls = fgRef.current?.controls?.();
+
+  controls?.target?.set(target.x, target.y, target.z);
+  controls?.update?.();
 }

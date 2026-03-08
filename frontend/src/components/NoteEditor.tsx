@@ -38,8 +38,8 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
   }
 
   return (
-    <div className="flex h-full min-h-[70vh] flex-col rounded-[2rem] border border-white/10 bg-slate-950/75 p-6 shadow-2xl shadow-cyan-950/20 backdrop-blur">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="flex h-full min-h-[70vh] flex-col rounded-[2rem] border border-white/10 bg-slate-950/75 p-6 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:min-h-0">
+      <div className="mb-6 flex shrink-0 items-center justify-between">
         <button
           onClick={onCancel}
           className="text-sm text-slate-400 transition hover:text-slate-200"
@@ -60,18 +60,18 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
         placeholder="Untitled"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        className="mb-4 border-none bg-transparent text-3xl font-semibold text-white outline-none placeholder:text-slate-600"
+        className="mb-4 shrink-0 border-none bg-transparent text-3xl font-semibold text-white outline-none placeholder:text-slate-600"
       />
 
       <textarea
         placeholder="Start writing..."
         value={content}
         onChange={(e) => setContent(e.target.value)}
-        className="flex-1 resize-none border-none bg-transparent text-base leading-7 text-slate-200 outline-none placeholder:text-slate-600"
+        className="flex-1 resize-none border-none bg-transparent text-base leading-7 text-slate-200 outline-none placeholder:text-slate-600 lg:min-h-0"
       />
 
       {error && (
-        <p className="mt-4 text-xs text-red-400">{error}</p>
+        <p className="mt-4 shrink-0 text-xs text-red-400">{error}</p>
       )}
     </div>
   );

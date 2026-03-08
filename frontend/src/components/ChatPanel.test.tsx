@@ -27,6 +27,9 @@ describe('ChatPanel', () => {
     isLoading = true;
     render(<ChatPanel />);
 
+    expect(screen.getByTestId('chat-panel-shell')).toHaveClass('lg:h-full', 'lg:min-h-0');
+    expect(screen.getByTestId('chat-panel-messages')).toHaveClass('lg:min-h-0', 'overflow-y-auto');
+    expect(screen.getByTestId('chat-panel-form')).toHaveClass('shrink-0');
     expect(screen.getByText('What am I building?')).toBeInTheDocument();
     expect(screen.getByText('You are building BrainBank.')).toBeInTheDocument();
     expect(screen.getByText('BrainBank')).toBeInTheDocument();
