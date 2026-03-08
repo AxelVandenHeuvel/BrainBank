@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend.
 
 ## Stack
 
@@ -15,7 +15,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
-| LLM         | Gemini 1.5 Flash        | Knowledge extraction + answers   |
+| LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
 
 ## Data Model
 
@@ -75,12 +75,12 @@ frontend/
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
-      useChat.ts             - POST /query hook for chat state and answers
+      useChat.ts             - POST /query hook for chat state, retrieval answers, and concept metadata
       useGraphData.ts        - GET /api/graph with mock fallback
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
-      brainScene.ts          - Brain model centering and scene-rotation helpers
+      brainScene.ts          - Brain model centering plus scene-focus and rotation helpers
       chatStorage.ts         - localStorage helpers for persisted chat sessions
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
@@ -103,7 +103,7 @@ backend/
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
   services/
     embeddings.py           - Sentence-transformer embedding functions
-    llm.py                  - Gemini API for legacy concept extraction, richer knowledge extraction, and answer gen
+    llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
   ingestion/
     chunker.py              - Text splitting by paragraphs
     journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
@@ -160,11 +160,12 @@ Graph3D -- react-force-graph-3d scene
   |         +-- hover -> highlight node + neighbors, tooltip
   |         +-- click RELATED_TO edge -> fetch /api/relationships/details
   |         +-- selected RELATED_TO edge -> persistent highlight + EdgeDetailPanel
-  |         +-- search -> highlight matches, zoom camera
+  |         +-- search -> highlight matches, center the first match in the viewport
   |         +-- load -> zoomToFit for default framing
   |         +-- idle (5s) -> slow in-place scene rotation around the brain center
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
-  |         +-- double-click node -> focus camera on that node
+  |         +-- click node -> move that node to screen center and expand its documents
+  |         +-- double-click node -> center that node more tightly
   |         +-- right-button drag -> rotate the scene object instead of orbiting the camera
   |         +-- panel resize -> recenter the home view when the measured graph viewport changes
   v
@@ -181,6 +182,7 @@ The sidebar has a "New Note" button and a file upload option:
 Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
 The desktop layout locks the app to the viewport and gives the left rail and main graph/editor area their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the bottom of the sidebar. On large screens, the chat UI is positioned as a right-side overlay above the main content instead of taking a dedicated grid column, so opening chat no longer shrinks the graph or editor viewport. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view when the graph panel receives its first non-zero layout size on initial page load and whenever the panel’s measured size changes. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks a `RELATED_TO` edge, the frontend keeps that exact edge selected, dims unrelated nodes, fetches `/api/relationships/details?source=...&target=...`, and renders `EdgeDetailPanel` with the stored reason plus shared, source-only, and target-only supporting documents. That panel can be dismissed either with its close button or by pressing `Escape`. `MENTIONS` edges remain non-interactive.
 
@@ -201,16 +203,17 @@ useChat -- load/create/select persisted sessions and expose active messages
 useChat.sendMessage() -- append user message to active session and set loading state
   |
   v
-POST /query/test-llm -- proxied by Vite in development to the backend API
+POST /query -- proxied by Vite in development to the backend API
   |
   v
-Backend returns { answer, discovery_concepts, mode }
+Backend returns { answer, source_concepts, discovery_concepts }
   |
   v
-ChatPanel -- render assistant answer + discovery concept tags
+ChatPanel -- render assistant answer + separate source/discovery concept sections
 ```
 
 Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
+Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the panel is purely a visibility change and does not reset local component state. The frontend now uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -276,10 +279,10 @@ Kuzu: 1-hop expansion -- for each source Concept, find RELATED_TO
 LanceDB chunk metadata -- get extra chunk texts for discovery concepts
   |
   v
-llm.generate_answer() -- Gemini generates grounded answer from all context
+llm.generate_answer() -- Gemini or Ollama generates grounded answer from all context
   |
   v
-Output: { answer, discovery_concepts }
+Output: { answer, source_concepts, discovery_concepts }
 ```
 
 The 1-hop graph expansion is what surfaces "hidden" connections - concepts not in the original search results but semantically linked through the knowledge graph.

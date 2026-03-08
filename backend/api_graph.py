@@ -79,7 +79,8 @@ def get_graph():
                     {"id": f"doc:{row['doc_id']}", "type": "Document", "name": row["doc_name"]}
                 )
 
-            for _, row in df[["doc_id", "concepts"]].explode("concepts").drop_duplicates().iterrows():
+            exploded = df[["doc_id", "concepts"]].explode("concepts").drop_duplicates()
+            for _, row in exploded.iterrows():
                 if row["concepts"]:
                     edges.append(
                         GraphEdgeResponse(
@@ -132,28 +133,6 @@ def get_relationship_details(source: str, target: str):
     finally:
         conn.close()
         kuzu_db.close()
-    _, conn = init_kuzu()
-
-    nodes = []
-    edges = []
-
-    # Concept nodes from Kuzu
-    result = conn.execute("MATCH (c:Concept) RETURN c.name")
-    while result.has_next():
-        name = result.get_next()[0]
-        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
-
-    # RELATED_TO edges from Kuzu
-    result = conn.execute(
-        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
-    )
-    while result.has_next():
-        row = result.get_next()
-        edges.append(
-            {"source": f"concept:{row[0]}", "target": f"concept:{row[1]}", "type": row[2]}
-        )
-
-    return {"nodes": nodes, "edges": edges}
 
 
 @graph_router.get("/concepts")
@@ -183,41 +162,15 @@ def get_concepts():
             related = []
             while rel_result.has_next():
                 related.append(rel_result.get_next()[0])
-    _, conn = init_kuzu()
-    _, table = init_lancedb()
-    df = table.to_pandas()
 
-    concepts = []
-    result = conn.execute("MATCH (c:Concept) RETURN c.name")
-    while result.has_next():
-        name = result.get_next()[0]
-
-        if df.empty:
-            doc_count = 0
-        else:
-            exploded = df[["doc_id", "concepts"]].explode("concepts")
-            doc_count = int(
-                exploded[exploded["concepts"] == name]["doc_id"].nunique()
+            concepts.append(
+                {"name": name, "document_count": doc_count, "related_concepts": related}
             )
 
         return {"concepts": concepts}
     finally:
         conn.close()
         kuzu_db.close()
-        rel_result = conn.execute(
-            "MATCH (c:Concept {name: $name})-[:RELATED_TO]-(other:Concept) "
-            "RETURN other.name",
-            parameters={"name": name},
-        )
-        related = []
-        while rel_result.has_next():
-            related.append(rel_result.get_next()[0])
-
-        concepts.append(
-            {"name": name, "document_count": doc_count, "related_concepts": related}
-        )
-
-    return {"concepts": concepts}
 
 
 @graph_router.get("/documents")
@@ -235,7 +188,12 @@ def get_documents():
         chunk_count = len(group)
         all_concepts = group["concepts"].explode().dropna().unique().tolist()
         documents.append(
-            {"doc_id": doc_id, "name": doc_name, "chunk_count": chunk_count, "concepts": all_concepts}
+            {
+                "doc_id": doc_id,
+                "name": doc_name,
+                "chunk_count": chunk_count,
+                "concepts": all_concepts,
+            }
         )
 
     return {"documents": documents}
@@ -245,25 +203,6 @@ def get_documents():
 def get_concept_documents(concept_name: str):
     """Return full text of every document whose chunks are tagged with concept_name."""
     return get_concept_documents_from_table(concept_name)
-    _, table = init_lancedb()
-    df = table.to_pandas()
-
-    if df.empty:
-        return []
-
-    exploded = df[["doc_id", "doc_name", "text", "concepts"]].explode("concepts")
-    matching_doc_ids = exploded[exploded["concepts"] == concept_name]["doc_id"].unique()
-    matching = df[df["doc_id"].isin(matching_doc_ids)]
-    if matching.empty:
-        return []
-
-    documents = []
-    for doc_id, group in matching.groupby("doc_id", sort=False):
-        full_text = "\n\n".join(group["text"].tolist())
-        name = group["doc_name"].iloc[0]
-        documents.append(DocumentResponse(doc_id=doc_id, name=name, full_text=full_text))
-
-    return documents
 
 
 @graph_router.get("/stats")
@@ -288,18 +227,3 @@ def get_stats():
     finally:
         conn.close()
         kuzu_db.close()
-    _, conn = init_kuzu()
-    _, table = init_lancedb()
-    df = table.to_pandas()
-
-    concept_result = conn.execute("MATCH (c:Concept) RETURN count(c)")
-    rel_result = conn.execute("MATCH ()-[r:RELATED_TO]->() RETURN count(r)")
-
-    total_documents = int(df["doc_id"].nunique()) if not df.empty else 0
-
-    return {
-        "total_documents": total_documents,
-        "total_chunks": len(df),
-        "total_concepts": concept_result.get_next()[0],
-        "total_relationships": rel_result.get_next()[0],
-    }

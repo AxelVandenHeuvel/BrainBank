@@ -27,6 +27,10 @@ def _get_model_name() -> str:
     return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 
 
+def _get_llm_provider() -> str:
+    return os.environ.get("BRAINBANK_LLM_PROVIDER", "gemini").lower()
+
+
 def _get_test_llm_provider() -> str:
     return os.environ.get("TEST_LLM_PROVIDER", "gemini").lower()
 
@@ -114,7 +118,6 @@ def extract_knowledge(text: str, doc_name: str) -> dict:
 
 
 def generate_answer(query: str, context: str, concepts: list[str]) -> str:
-    client = _get_client()
     prompt = (
         "Answer the following question based on the provided context.\n\n"
         f"Question: {query}\n\n"
@@ -122,6 +125,11 @@ def generate_answer(query: str, context: str, concepts: list[str]) -> str:
         f"Related concepts: {', '.join(concepts)}\n\n"
         "Provide a grounded answer based only on the context provided."
     )
+
+    if _get_llm_provider() == "ollama":
+        return _generate_ollama_response(prompt)
+
+    client = _get_client()
     response = client.models.generate_content(
         model=_get_model_name(), contents=prompt
     )

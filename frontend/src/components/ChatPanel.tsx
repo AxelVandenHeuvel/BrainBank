@@ -34,14 +34,10 @@ export function ChatPanel() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-medium text-slate-200">Chat</h2>
-          <p className="mt-1 text-xs uppercase tracking-[0.24em] text-cyan-200/70">
-            LLM test route
-          </p>
+          <p className="mt-1 text-xs uppercase tracking-[0.24em] text-cyan-200/70">GraphRAG</p>
         </div>
         <div className="flex items-center gap-3">
-          {isLoading ? (
-            <span className="text-xs font-semibold text-cyan-200">Thinking...</span>
-          ) : null}
+          {isLoading ? <span className="text-xs font-semibold text-cyan-200">Thinking...</span> : null}
           <button
             type="button"
             onClick={createSession}
@@ -83,7 +79,7 @@ export function ChatPanel() {
         <div className="flex flex-col overflow-hidden">
           <div
             data-testid="chat-panel-messages"
-            className="flex-1 space-y-3 overflow-y-auto pr-1"
+            className="flex-1 space-y-3 overflow-y-auto pr-1 lg:min-h-0"
           >
             {messages.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-cyan-300/15 bg-slate-950/60 p-4 text-sm leading-6 text-slate-400">
@@ -107,16 +103,17 @@ export function ChatPanel() {
                     }`}
                   >
                     <p>{message.content}</p>
-                    {isAssistant && message.discoveryConcepts?.length ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {message.discoveryConcepts.map((concept) => (
-                          <span
-                            key={concept}
-                            className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[11px] font-semibold tracking-[0.16em] text-cyan-100"
-                          >
-                            {concept}
-                          </span>
-                        ))}
+                    {isAssistant ? (
+                      <div className="mt-3 space-y-3">
+                        {message.sourceConcepts?.length ? (
+                          <ConceptSection title="Source concepts" concepts={message.sourceConcepts} />
+                        ) : null}
+                        {message.discoveryConcepts?.length ? (
+                          <ConceptSection
+                            title="Discovery concepts"
+                            concepts={message.discoveryConcepts}
+                          />
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -150,6 +147,31 @@ export function ChatPanel() {
             </button>
           </form>
         </div>
+      </div>
+    </section>
+  );
+}
+
+interface ConceptSectionProps {
+  title: string;
+  concepts: string[];
+}
+
+function ConceptSection({ title, concepts }: ConceptSectionProps) {
+  return (
+    <section>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+        {title}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {concepts.map((concept) => (
+          <span
+            key={`${title}-${concept}`}
+            className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[11px] font-semibold tracking-[0.16em] text-cyan-100"
+          >
+            {concept}
+          </span>
+        ))}
       </div>
     </section>
   );

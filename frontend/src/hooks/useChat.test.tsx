@@ -9,11 +9,12 @@ describe('useChat', () => {
     localStorage.clear();
   });
 
-  it('sends the question and appends the assistant answer with discovery concepts', async () => {
+  it('sends the question and appends the assistant answer with retrieval concepts', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         answer: 'Calculus is the study of change.',
+        source_concepts: ['Calculus'],
         discovery_concepts: ['Derivatives', 'Integrals'],
       }),
     });
@@ -27,7 +28,7 @@ describe('useChat', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(fetchMock).toHaveBeenCalledWith('/query/test-llm', {
+    expect(fetchMock).toHaveBeenCalledWith('/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: 'What is calculus?' }),
@@ -37,6 +38,7 @@ describe('useChat', () => {
       {
         role: 'assistant',
         content: 'Calculus is the study of change.',
+        sourceConcepts: ['Calculus'],
         discoveryConcepts: ['Derivatives', 'Integrals'],
       },
     ]);
@@ -58,6 +60,7 @@ describe('useChat', () => {
       {
         role: 'assistant',
         content: 'I could not reach BrainBank right now.',
+        sourceConcepts: [],
         discoveryConcepts: [],
       },
     ]);
