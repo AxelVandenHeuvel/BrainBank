@@ -206,6 +206,9 @@ function getTraversalBlinkPhase(nodeId: string): number {
   return (((hash >>> 0) % 360) / 360) * Math.PI * 2;
 }
 
+function formatStatLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
   const font = 'bold 52px "Inter", "Roboto", sans-serif';
@@ -498,6 +501,18 @@ export function Graph3D({
 
   const displayDataRef = useRef(displayData);
   displayDataRef.current = displayData;
+
+  const graphStatsSummary = useMemo(() => {
+    const conceptCount = displayData.nodes.filter((node) => node.type === 'Concept').length;
+    const documentCount = displayData.nodes.filter((node) => node.type === 'Document').length;
+
+    return [
+      formatStatLabel(displayData.nodes.length, 'node', 'nodes'),
+      formatStatLabel(displayData.links.length, 'edge', 'edges'),
+      formatStatLabel(conceptCount, 'concept', 'concepts'),
+      formatStatLabel(documentCount, 'document', 'documents'),
+    ].join(' • ');
+  }, [displayData]);
 
   useEffect(() => {
     traversalPulseWindowsRef.current = new Map();
@@ -2176,6 +2191,14 @@ export function Graph3D({
         >
           BM
         </button>
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-[linear-gradient(180deg,rgba(14,15,16,0)_0%,rgba(14,15,16,0.92)_30%,rgba(14,15,16,1)_100%)] px-6 pb-4 pt-8">
+        <div
+          data-testid="graph-stats-footer"
+          className="max-w-full truncate text-center text-[10px] font-medium uppercase tracking-widest text-neutral-500"
+        >
+          {graphStatsSummary}
+        </div>
       </div>
       {hoveredNode && tooltipPosition && !expandedConcept ? (
         <NodeTooltip

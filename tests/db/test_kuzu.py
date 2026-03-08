@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import backend.db.kuzu as kuzu_module
-from backend.db.kuzu import init_kuzu
+from backend.db.kuzu import init_kuzu, merge_concepts
 from backend.db.lance import init_lancedb
 
 
@@ -262,3 +262,51 @@ class TestInitKuzu:
 
         backups = list(Path(kuzu_path).parent.glob(f"{Path(kuzu_path).name}.invalid.*"))
         assert backups
+
+    def test_merge_concepts_moves_edges_sums_weights_and_deletes_source(self, kuzu_path):
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Definite Integrals'})")
+        conn.execute("CREATE (:Concept {name: 'Integrals'})")
+        conn.execute("CREATE (:Concept {name: 'Chain Rule'})")
+        conn.execute("CREATE (:Concept {name: 'Calculus'})")
+
+        conn.execute(
+            "MATCH (a:Concept {name: 'Definite Integrals'}), (b:Concept {name: 'Chain Rule'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 2.0, edge_type: 'RELATED_TO'}]->(b)"
+        )
+        conn.execute(
+            "MATCH (a:Concept {name: 'Integrals'}), (b:Concept {name: 'Chain Rule'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 1.5, edge_type: 'RELATED_TO'}]->(b)"
+        )
+        conn.execute(
+            "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Definite Integrals'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 1.0, edge_type: 'RELATED_TO'}]->(b)"
+        )
+
+        merge_concepts(conn, "Definite Integrals", "Integrals")
+
+        source = conn.execute("MATCH (c:Concept {name: 'Definite Integrals'}) RETURN count(c)")
+        assert source.get_next()[0] == 0
+
+        outgoing = conn.execute(
+            "MATCH (a:Concept {name: 'Integrals'})-[r:RELATED_TO]->(b:Concept {name: 'Chain Rule'}) "
+            "RETURN r.weight"
+        )
+        assert outgoing.has_next()
+        assert outgoing.get_next()[0] == 3.5
+
+        incoming = conn.execute(
+            "MATCH (a:Concept {name: 'Calculus'})-[r:RELATED_TO]->(b:Concept {name: 'Integrals'}) "
+            "RETURN r.weight"
+        )
+        assert incoming.has_next()
+        assert incoming.get_next()[0] == 1.0
+
+    def test_merge_concepts_noops_when_source_equals_target(self, kuzu_path):
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Integrals'})")
+
+        merge_concepts(conn, "Integrals", "Integrals")
+
+        result = conn.execute("MATCH (c:Concept {name: 'Integrals'}) RETURN count(c)")
+        assert result.get_next()[0] == 1

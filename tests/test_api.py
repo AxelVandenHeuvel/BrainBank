@@ -345,3 +345,27 @@ class TestDemoSeedEndpoint:
         assert response.json()["seeded_documents"] == 84
         mock_seed.assert_called_once_with(shared_kuzu_db=shared_db)
         shared_db.close()
+
+class TestIngestOrphanTrigger:
+    def test_ingest_runs_forced_orphan_consolidation_every_fifth_manual_ingest(self, monkeypatch):
+        monkeypatch.setattr("backend.api._manual_ingest_count", 0, raising=False)
+
+        forced_calls = []
+
+        def _fake_ingest(_text, _title, shared_kuzu_db=None):
+            return {"doc_id": "d", "chunks": 1, "concepts": ["Calculus"]}
+
+        def _fake_force():
+            forced_calls.append(1)
+
+        monkeypatch.setattr("backend.api.ingest_markdown", _fake_ingest)
+        monkeypatch.setattr("backend.api._run_periodic_orphan_consolidation", _fake_force, raising=False)
+
+        for i in range(5):
+            response = client.post(
+                "/ingest",
+                json={"text": f"Note {i}", "title": f"Title {i}"},
+            )
+            assert response.status_code == 200
+
+        assert len(forced_calls) == 1

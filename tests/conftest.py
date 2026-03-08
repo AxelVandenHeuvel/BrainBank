@@ -39,7 +39,7 @@ def mock_embed_query(query: str) -> list[float]:
     return mock_embed_texts([query])[0]
 
 
-def mock_extract_concepts(text: str, doc_name: str) -> dict:
+def mock_extract_concepts(text: str, doc_name: str, existing_concepts: list[str] | None = None) -> dict:
     """Mock LLM concept extraction."""
     return {
         "concepts": ["Calculus", "Derivatives", "Integrals"],
@@ -53,3 +53,4 @@ def mock_extract_concepts(text: str, doc_name: str) -> dict:
 
 def mock_generate_answer(query: str, context: str, concepts: list[str], history: list[dict] | None = None) -> str:
     return f"Mock answer for: {query}. Based on {len(concepts)} concepts."
+

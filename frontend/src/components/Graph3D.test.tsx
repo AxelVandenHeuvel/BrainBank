@@ -1303,6 +1303,25 @@ describe('Graph3D', () => {
     );
   });
 
+  it('renders bottom graph stats instead of control helper copy', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const statsFooter = screen.getByTestId('graph-stats-footer');
+    expect(statsFooter).toHaveTextContent('3 nodes');
+    expect(statsFooter).toHaveTextContent('2 edges');
+    expect(statsFooter).toHaveTextContent('2 concepts');
+    expect(statsFooter).toHaveTextContent('1 document');
+    expect(screen.queryByText(/left-click:\s*rotate/i)).not.toBeInTheDocument();
+  });
+
   it('locks the graph shell and brain mesh to the chosen default colors without debug controls', async () => {
     render(
       <Graph3D
@@ -1690,6 +1709,48 @@ describe('Graph3D', () => {
       const latestData = getLatestGraphProps().graphData;
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:abc123')).toBe(true);
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
+    });
+
+    it('updates the footer stats from the graph that is actually visible after concept expansion', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
+        { doc_id: 'def456', name: 'Other Notes', full_text: 'other content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
+      const statsFooter = screen.getByTestId('graph-stats-footer');
+      expect(statsFooter).toHaveTextContent('5 nodes');
+      expect(statsFooter).toHaveTextContent('3 edges');
+      expect(statsFooter).toHaveTextContent('2 concepts');
+      expect(statsFooter).toHaveTextContent('3 documents');
     });
 
     it('frames the expanded visible set instead of zooming all the way into just the clicked node', async () => {

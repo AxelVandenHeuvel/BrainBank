@@ -1,5 +1,7 @@
 import asyncio
+import logging
 import os
+import threading
 import zipfile
 from contextlib import asynccontextmanager
 from functools import partial
@@ -11,22 +13,28 @@ from pydantic import BaseModel
 
 from backend.api_graph import graph_router
 from backend.db.kuzu import get_kuzu_engine, update_node_communities
-from backend.services.clustering import run_leiden_clustering
-from backend.db.lance import find_existing_document
+from backend.db.lance import find_existing_document, init_lancedb
+from backend.ingestion.consolidator import ConceptConsolidator
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
 from backend.retrieval.query import prepare_brainbank_query, answer_prepared_local_query
 from backend.retrieval.routing import QueryRoute
 from backend.session.prepared_query_store import PreparedQueryStore
 from backend.sample_data.mock_demo import seed_mock_demo_data
-from backend.session.memory import SessionMemory
+from backend.services.clustering import run_leiden_clustering
 from backend.services.llm import generate_test_answer
-from backend.services.pdf import pdf_to_text
 from backend.services.notion import (
     fetch_database_page_ids,
     fetch_page_markdown,
     parse_notion_url,
 )
+from backend.services.pdf import pdf_to_text
+from backend.session.memory import SessionMemory
+
+
+logger = logging.getLogger(__name__)
+_manual_ingest_count = 0
+_manual_ingest_lock = threading.Lock()
 
 
 @asynccontextmanager
@@ -42,10 +50,38 @@ def _run_startup_clustering(db) -> None:
     if db is None:
         return
     import kuzu as _kuzu
+
     conn = _kuzu.Connection(db)
     try:
         community_map = run_leiden_clustering(conn)
         update_node_communities(conn, community_map)
+    finally:
+        conn.close()
+
+
+def _run_periodic_orphan_consolidation(
+    lance_db_path: str = "./data/lancedb",
+) -> dict[str, int]:
+    db, chunks_table = init_lancedb(lance_db_path)
+    concept_centroids_table = db.open_table("concept_centroids")
+
+    kuzu_db = get_kuzu_engine()
+    import kuzu as _kuzu
+
+    conn = _kuzu.Connection(kuzu_db)
+    try:
+        consolidator = ConceptConsolidator(
+            chunks_table=chunks_table,
+            concept_centroids_table=concept_centroids_table,
+            lance_db=db,
+        )
+        summary = consolidator.force_consolidate_orphans(conn)
+        logger.info(
+            "Periodic orphan consolidation summary: forced_merges=%d orphans_seen=%d",
+            summary.get("forced_merges", 0),
+            summary.get("orphans_seen", 0),
+        )
+        return summary
     finally:
         conn.close()
 
@@ -86,11 +122,22 @@ class PreparedQueryAnswerRequest(BaseModel):
 
 @app.post("/ingest")
 async def ingest(req: IngestRequest):
+    global _manual_ingest_count
+
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
         partial(ingest_markdown, req.text, req.title, shared_kuzu_db=get_kuzu_engine()),
     )
+
+    run_orphan_cleanup = False
+    with _manual_ingest_lock:
+        _manual_ingest_count += 1
+        run_orphan_cleanup = (_manual_ingest_count % 5) == 0
+
+    if run_orphan_cleanup:
+        await loop.run_in_executor(None, _run_periodic_orphan_consolidation)
+
     return result
 
 

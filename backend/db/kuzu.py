@@ -12,6 +12,8 @@ import kuzu
 _db_instance = None
 _db_instance_lock = threading.Lock()
 logger = logging.getLogger(__name__)
+_open_databases_by_path: dict[str, kuzu.Database] = {}
+
 REPAIRED_COLOR_SCORE = 0.5
 REPAIRED_EDGE_REASON = "shared_document"
 
@@ -60,6 +62,32 @@ def _backup_invalid_database(db_path: str) -> str | None:
     backup_path = _next_invalid_backup_path(db_path)
     shutil.move(db_path, backup_path)
     return backup_path
+
+
+def _normalized_db_path(db_path: str) -> str:
+    return os.path.abspath(db_path)
+
+
+def _register_open_database(db_path: str, db: kuzu.Database) -> None:
+    normalized_path = _normalized_db_path(db_path)
+    _open_databases_by_path.clear()
+    _open_databases_by_path[normalized_path] = db
+
+
+def get_open_database_for_path(db_path: str) -> kuzu.Database | None:
+    normalized_path = _normalized_db_path(db_path)
+    db = _open_databases_by_path.get(normalized_path)
+    if db is None:
+        return None
+
+    try:
+        probe_conn = kuzu.Connection(db)
+        probe_conn.close()
+    except Exception:
+        _open_databases_by_path.pop(normalized_path, None)
+        return None
+
+    return db
 
 
 def _init_schema(conn: kuzu.Connection) -> None:
@@ -209,6 +237,7 @@ def get_kuzu_engine(
                 os.makedirs(parent_dir, exist_ok=True)
             try:
                 _db_instance = _open_database(db_path)
+                _register_open_database(db_path, _db_instance)
                 conn = kuzu.Connection(_db_instance)
                 _init_schema(conn)
                 conn.close()
@@ -216,6 +245,7 @@ def get_kuzu_engine(
                 if not _is_repairable_catalog_error(error):
                     raise
                 _db_instance = _repair_database(db_path, lance_db_path)
+                _register_open_database(db_path, _db_instance)
 
     return _db_instance
 
@@ -250,6 +280,99 @@ def init_kuzu(db_path: str = "./data/kuzu"):
         os.makedirs(parent_dir, exist_ok=True)
 
     db = _open_database(db_path)
+    _register_open_database(db_path, db)
     conn = kuzu.Connection(db)
     _init_schema(conn)
     return db, conn
+
+
+def _edge_weight(value) -> float:
+    if value is None:
+        return 1.0
+    return float(value)
+
+
+def merge_concepts(conn: kuzu.Connection, source_name: str, target_name: str) -> None:
+    """Merge one concept node into another and preserve RELATED_TO edge weights."""
+    source = str(source_name).strip()
+    target = str(target_name).strip()
+    if not source or not target or source == target:
+        return
+
+    source_exists = conn.execute(
+        "MATCH (c:Concept {name: $source}) RETURN count(c)",
+        parameters={"source": source},
+    )
+    if source_exists.get_next()[0] == 0:
+        return
+
+    conn.execute(
+        "MERGE (:Concept {name: $target})",
+        parameters={"target": target},
+    )
+
+    outgoing = conn.execute(
+        "MATCH (s:Concept {name: $source})-[r:RELATED_TO]->(n:Concept) "
+        "RETURN n.name, COALESCE(r.weight, 1.0), r.reason, COALESCE(r.edge_type, 'RELATED_TO')",
+        parameters={"source": source},
+    )
+    outgoing_rows = []
+    while outgoing.has_next():
+        outgoing_rows.append(outgoing.get_next())
+
+    incoming = conn.execute(
+        "MATCH (n:Concept)-[r:RELATED_TO]->(s:Concept {name: $source}) "
+        "RETURN n.name, COALESCE(r.weight, 1.0), r.reason, COALESCE(r.edge_type, 'RELATED_TO')",
+        parameters={"source": source},
+    )
+    incoming_rows = []
+    while incoming.has_next():
+        incoming_rows.append(incoming.get_next())
+
+    for neighbor_name, weight, reason, edge_type in outgoing_rows:
+        neighbor = str(neighbor_name)
+        if neighbor in {source, target}:
+            continue
+
+        conn.execute(
+            "MATCH (a:Concept {name: $from_name}), (b:Concept {name: $to_name}) "
+            "MERGE (a)-[r:RELATED_TO]->(b) "
+            "ON CREATE SET r.weight = $weight, r.reason = $reason, r.edge_type = $edge_type "
+            "ON MATCH SET r.weight = COALESCE(r.weight, 1.0) + $weight",
+            parameters={
+                "from_name": target,
+                "to_name": neighbor,
+                "weight": _edge_weight(weight),
+                "reason": reason,
+                "edge_type": edge_type,
+            },
+        )
+
+    for neighbor_name, weight, reason, edge_type in incoming_rows:
+        neighbor = str(neighbor_name)
+        if neighbor in {source, target}:
+            continue
+
+        conn.execute(
+            "MATCH (a:Concept {name: $from_name}), (b:Concept {name: $to_name}) "
+            "MERGE (a)-[r:RELATED_TO]->(b) "
+            "ON CREATE SET r.weight = $weight, r.reason = $reason, r.edge_type = $edge_type "
+            "ON MATCH SET r.weight = COALESCE(r.weight, 1.0) + $weight",
+            parameters={
+                "from_name": neighbor,
+                "to_name": target,
+                "weight": _edge_weight(weight),
+                "reason": reason,
+                "edge_type": edge_type,
+            },
+        )
+
+    conn.execute(
+        "MATCH (c:Concept {name: $source}) DETACH DELETE c",
+        parameters={"source": source},
+    )
+
+
+
+
+

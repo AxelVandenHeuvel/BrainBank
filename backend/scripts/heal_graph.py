@@ -21,6 +21,8 @@ from backend.db.lance import init_lancedb
 SEMANTIC_BRIDGE_REASON = "High semantic similarity discovered via embeddings"
 SEMANTIC_BRIDGE_TYPE = "SEMANTIC_BRIDGE"
 
+BRIDGE_MIN_THRESHOLD = 0.60
+BRIDGE_MAX_THRESHOLD = 0.90
 
 def _compute_concept_centroids(chunks_table) -> dict[str, list[float]]:
     """Average chunk vectors per concept name."""
@@ -91,14 +93,25 @@ def heal_graph(
         for concept in concept_names:
             centroid = centroids[concept]
 
+            # Calculate similarities for ALL other concepts
             similarities = [
                 (other, _cosine_similarity(centroid, centroids[other]))
                 for other in concept_names
                 if other != concept
             ]
-            top_k = sorted(similarities, key=lambda x: x[1], reverse=True)[:k_neighbors]
+            
+            # NEW LOGIC: Filter for the "Sweet Spot" before picking top_k
+            # This ensures we don't bridge things that are essentially identical 
+            # and don't bridge things that are totally unrelated.
+            candidates = [
+                (other, sim) for other, sim in similarities 
+                if BRIDGE_MIN_THRESHOLD <= sim <= BRIDGE_MAX_THRESHOLD
+            ]
+
+            top_k = sorted(candidates, key=lambda x: x[1], reverse=True)[:k_neighbors]
 
             for neighbor, similarity in top_k:
+                # Still check if an edge exists (we don't want to double-bridge)
                 if _edge_exists(conn, concept, neighbor):
                     continue
 
@@ -108,7 +121,7 @@ def heal_graph(
                     parameters={
                         "a": concept,
                         "b": neighbor,
-                        "reason": SEMANTIC_BRIDGE_REASON,
+                        "reason": f"{SEMANTIC_BRIDGE_REASON} (Score: {similarity:.2f})",
                         "weight": similarity,
                         "edge_type": SEMANTIC_BRIDGE_TYPE,
                     },
