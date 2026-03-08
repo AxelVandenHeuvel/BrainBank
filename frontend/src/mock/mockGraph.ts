@@ -1,90 +1,518 @@
 import type { GraphApiResponse, RelationshipDetails } from '../types/graph';
 
-export const mockGraphApiResponse: GraphApiResponse = {
-  nodes: [
-    // ── Calculus ──
-    { id: 'concept:Calculus', type: 'Concept', name: 'Calculus' },
-    { id: 'concept:Limits', type: 'Concept', name: 'Limits' },
-    { id: 'concept:Derivatives', type: 'Concept', name: 'Derivatives' },
-    { id: 'concept:Integrals', type: 'Concept', name: 'Integrals' },
-    { id: 'concept:Chain Rule', type: 'Concept', name: 'Chain Rule' },
-    { id: 'concept:Fundamental Theorem of Calculus', type: 'Concept', name: 'Fundamental Theorem of Calculus' },
-
-    // ── Physics ──
-    { id: 'concept:Classical Mechanics', type: 'Concept', name: 'Classical Mechanics' },
-    { id: 'concept:Newton\'s Laws', type: 'Concept', name: 'Newton\'s Laws' },
-    { id: 'concept:Conservation of Energy', type: 'Concept', name: 'Conservation of Energy' },
-    { id: 'concept:Electromagnetism', type: 'Concept', name: 'Electromagnetism' },
-    { id: 'concept:Maxwell\'s Equations', type: 'Concept', name: 'Maxwell\'s Equations' },
-    { id: 'concept:Thermodynamics', type: 'Concept', name: 'Thermodynamics' },
-    { id: 'concept:Entropy', type: 'Concept', name: 'Entropy' },
-
-    // ── Philosophy ──
-    { id: 'concept:Epistemology', type: 'Concept', name: 'Epistemology' },
-    { id: 'concept:Rationalism', type: 'Concept', name: 'Rationalism' },
-    { id: 'concept:Empiricism', type: 'Concept', name: 'Empiricism' },
-    { id: 'concept:Ethics', type: 'Concept', name: 'Ethics' },
-    { id: 'concept:Utilitarianism', type: 'Concept', name: 'Utilitarianism' },
-    { id: 'concept:Existentialism', type: 'Concept', name: 'Existentialism' },
-    { id: 'concept:Free Will', type: 'Concept', name: 'Free Will' },
-
-    // ── Personal / Journal ──
-    { id: 'concept:Study Habits', type: 'Concept', name: 'Study Habits' },
-    { id: 'concept:Time Management', type: 'Concept', name: 'Time Management' },
-    { id: 'concept:Motivation', type: 'Concept', name: 'Motivation' },
-    { id: 'concept:Career Goals', type: 'Concept', name: 'Career Goals' },
-
-    // ── Cross-domain bridges ──
-    { id: 'concept:Differential Equations', type: 'Concept', name: 'Differential Equations' },
-    { id: 'concept:Determinism', type: 'Concept', name: 'Determinism' },
-  ],
-  edges: [
-    // ── Calculus cluster ──
-    { source: 'concept:Calculus', target: 'concept:Limits', type: 'RELATED_TO' },
-    { source: 'concept:Calculus', target: 'concept:Derivatives', type: 'RELATED_TO' },
-    { source: 'concept:Calculus', target: 'concept:Integrals', type: 'RELATED_TO' },
-    { source: 'concept:Derivatives', target: 'concept:Chain Rule', type: 'RELATED_TO' },
-    { source: 'concept:Integrals', target: 'concept:Fundamental Theorem of Calculus', type: 'RELATED_TO' },
-    { source: 'concept:Derivatives', target: 'concept:Fundamental Theorem of Calculus', type: 'RELATED_TO' },
-    { source: 'concept:Limits', target: 'concept:Derivatives', type: 'RELATED_TO' },
-
-    // ── Physics cluster ──
-    { source: 'concept:Classical Mechanics', target: 'concept:Newton\'s Laws', type: 'RELATED_TO' },
-    { source: 'concept:Classical Mechanics', target: 'concept:Conservation of Energy', type: 'RELATED_TO' },
-    { source: 'concept:Electromagnetism', target: 'concept:Maxwell\'s Equations', type: 'RELATED_TO' },
-    { source: 'concept:Thermodynamics', target: 'concept:Entropy', type: 'RELATED_TO' },
-    { source: 'concept:Thermodynamics', target: 'concept:Conservation of Energy', type: 'RELATED_TO' },
-
-    // ── Philosophy cluster ──
-    { source: 'concept:Epistemology', target: 'concept:Rationalism', type: 'RELATED_TO' },
-    { source: 'concept:Epistemology', target: 'concept:Empiricism', type: 'RELATED_TO' },
-    { source: 'concept:Ethics', target: 'concept:Utilitarianism', type: 'RELATED_TO' },
-    { source: 'concept:Existentialism', target: 'concept:Free Will', type: 'RELATED_TO' },
-    { source: 'concept:Rationalism', target: 'concept:Empiricism', type: 'RELATED_TO' },
-
-    // ── Personal cluster ──
-    { source: 'concept:Study Habits', target: 'concept:Time Management', type: 'RELATED_TO' },
-    { source: 'concept:Motivation', target: 'concept:Study Habits', type: 'RELATED_TO' },
-    { source: 'concept:Career Goals', target: 'concept:Motivation', type: 'RELATED_TO' },
-
-    // ── Cross-domain bridges ──
-    { source: 'concept:Calculus', target: 'concept:Classical Mechanics', type: 'RELATED_TO' },
-    { source: 'concept:Differential Equations', target: 'concept:Calculus', type: 'RELATED_TO' },
-    { source: 'concept:Differential Equations', target: 'concept:Classical Mechanics', type: 'RELATED_TO' },
-    { source: 'concept:Derivatives', target: 'concept:Newton\'s Laws', type: 'RELATED_TO' },
-    { source: 'concept:Entropy', target: 'concept:Determinism', type: 'RELATED_TO' },
-    { source: 'concept:Free Will', target: 'concept:Determinism', type: 'RELATED_TO' },
-    { source: 'concept:Determinism', target: 'concept:Classical Mechanics', type: 'RELATED_TO' },
-    { source: 'concept:Existentialism', target: 'concept:Motivation', type: 'RELATED_TO' },
-    { source: 'concept:Ethics', target: 'concept:Career Goals', type: 'RELATED_TO' },
-  ],
-};
-
 interface MockDocument {
   doc_id: string;
   name: string;
   full_text: string;
 }
+
+type MockPair = readonly [string, string];
+
+interface MockEdgeDefinition {
+  source: string;
+  target: string;
+  reason?: string;
+  weight?: number;
+}
+
+interface MockDomainDefinition {
+  root: string;
+  concepts: string[];
+  internalPairs: MockPair[];
+  summary: string;
+  application: string;
+}
+
+interface GeneratedConceptContext {
+  domain: string;
+  domainNeighbors: string[];
+  bridgeNeighbors: string[];
+  summary: string;
+  application: string;
+}
+
+function createConceptNode(name: string) {
+  return {
+    id: `concept:${name}`,
+    type: 'Concept' as const,
+    name,
+  };
+}
+
+function createRelatedEdge({ source, target, reason, weight }: MockEdgeDefinition) {
+  return {
+    source: `concept:${source}`,
+    target: `concept:${target}`,
+    type: 'RELATED_TO',
+    reason,
+    weight,
+  };
+}
+
+function addNeighbor(map: Map<string, Set<string>>, source: string, target: string) {
+  if (!map.has(source)) {
+    map.set(source, new Set());
+  }
+
+  map.get(source)?.add(target);
+}
+
+function connectBidirectionally(map: Map<string, Set<string>>, left: string, right: string) {
+  addNeighbor(map, left, right);
+  addNeighbor(map, right, left);
+}
+
+const CURATED_CONCEPTS = [
+  'Calculus',
+  'Limits',
+  'Derivatives',
+  'Integrals',
+  'Chain Rule',
+  'Fundamental Theorem of Calculus',
+  'Classical Mechanics',
+  'Newton\'s Laws',
+  'Conservation of Energy',
+  'Electromagnetism',
+  'Maxwell\'s Equations',
+  'Thermodynamics',
+  'Entropy',
+  'Epistemology',
+  'Rationalism',
+  'Empiricism',
+  'Ethics',
+  'Utilitarianism',
+  'Existentialism',
+  'Free Will',
+  'Study Habits',
+  'Time Management',
+  'Motivation',
+  'Career Goals',
+  'Differential Equations',
+  'Determinism',
+] as const;
+
+const CURATED_EDGE_DEFINITIONS: ReadonlyArray<MockEdgeDefinition> = [
+  { source: 'Calculus', target: 'Limits' },
+  { source: 'Calculus', target: 'Derivatives' },
+  { source: 'Calculus', target: 'Integrals' },
+  { source: 'Derivatives', target: 'Chain Rule' },
+  { source: 'Integrals', target: 'Fundamental Theorem of Calculus' },
+  { source: 'Derivatives', target: 'Fundamental Theorem of Calculus' },
+  { source: 'Limits', target: 'Derivatives' },
+  { source: 'Classical Mechanics', target: 'Newton\'s Laws' },
+  { source: 'Classical Mechanics', target: 'Conservation of Energy' },
+  { source: 'Electromagnetism', target: 'Maxwell\'s Equations' },
+  { source: 'Thermodynamics', target: 'Entropy' },
+  { source: 'Thermodynamics', target: 'Conservation of Energy' },
+  { source: 'Epistemology', target: 'Rationalism' },
+  { source: 'Epistemology', target: 'Empiricism' },
+  { source: 'Ethics', target: 'Utilitarianism' },
+  { source: 'Existentialism', target: 'Free Will' },
+  { source: 'Rationalism', target: 'Empiricism' },
+  { source: 'Study Habits', target: 'Time Management' },
+  { source: 'Motivation', target: 'Study Habits' },
+  { source: 'Career Goals', target: 'Motivation' },
+  {
+    source: 'Calculus',
+    target: 'Classical Mechanics',
+    reason: 'Classical mechanics uses calculus to model motion and change.',
+  },
+  { source: 'Differential Equations', target: 'Calculus' },
+  { source: 'Differential Equations', target: 'Classical Mechanics' },
+  {
+    source: 'Derivatives',
+    target: 'Newton\'s Laws',
+    reason: 'Acceleration is the derivative of velocity, so mechanics depends on derivatives.',
+  },
+  { source: 'Entropy', target: 'Determinism' },
+  { source: 'Free Will', target: 'Determinism' },
+  { source: 'Determinism', target: 'Classical Mechanics' },
+  {
+    source: 'Existentialism',
+    target: 'Motivation',
+    reason: 'Existentialist writing reframes meaning-making as a source of motivation.',
+  },
+  {
+    source: 'Ethics',
+    target: 'Career Goals',
+    reason: 'Ethical tradeoffs shape what kind of work feels worth pursuing.',
+  },
+] as const;
+
+const GENERATED_DOMAINS: ReadonlyArray<MockDomainDefinition> = [
+  {
+    root: 'Computer Science',
+    concepts: [
+      'Algorithms',
+      'Data Structures',
+      'Distributed Systems',
+      'Databases',
+      'Machine Learning',
+      'Neural Networks',
+      'Information Theory',
+      'Computer Networks',
+    ],
+    internalPairs: [
+      ['Algorithms', 'Data Structures'],
+      ['Distributed Systems', 'Databases'],
+      ['Machine Learning', 'Neural Networks'],
+      ['Information Theory', 'Computer Networks'],
+    ],
+    summary:
+      'This cluster tracks how software systems represent information, learn patterns, and coordinate work across many machines.',
+    application:
+      'These concepts are the backbone for building products, training models, and reasoning about how information moves through a system.',
+  },
+  {
+    root: 'Biology',
+    concepts: [
+      'Cell Biology',
+      'Genetics',
+      'Evolution',
+      'Ecology',
+      'Neuroscience',
+      'Homeostasis',
+      'Microbiology',
+      'Immunology',
+    ],
+    internalPairs: [
+      ['Cell Biology', 'Genetics'],
+      ['Genetics', 'Evolution'],
+      ['Ecology', 'Homeostasis'],
+      ['Microbiology', 'Immunology'],
+    ],
+    summary:
+      'The biology cluster captures living systems from molecules and cells up through ecosystems and nervous systems.',
+    application:
+      'It helps show how mechanisms at one scale cascade into adaptation, behavior, and system-level stability.',
+  },
+  {
+    root: 'Economics',
+    concepts: [
+      'Microeconomics',
+      'Macroeconomics',
+      'Game Theory',
+      'Inflation',
+      'Supply and Demand',
+      'Monetary Policy',
+      'Behavioral Economics',
+      'Market Design',
+    ],
+    internalPairs: [
+      ['Microeconomics', 'Supply and Demand'],
+      ['Macroeconomics', 'Inflation'],
+      ['Monetary Policy', 'Inflation'],
+      ['Game Theory', 'Market Design'],
+    ],
+    summary:
+      'Economics models incentives, scarcity, and coordination from individual choices to system-wide policy effects.',
+    application:
+      'These nodes make it easier to show how decisions compound into markets, institutions, and long-run outcomes.',
+  },
+  {
+    root: 'Psychology',
+    concepts: [
+      'Cognitive Biases',
+      'Memory Consolidation',
+      'Learning Theory',
+      'Attention',
+      'Decision Making',
+      'Social Identity',
+      'Emotional Regulation',
+      'Habit Formation',
+    ],
+    internalPairs: [
+      ['Cognitive Biases', 'Decision Making'],
+      ['Memory Consolidation', 'Learning Theory'],
+      ['Attention', 'Emotional Regulation'],
+      ['Learning Theory', 'Habit Formation'],
+    ],
+    summary:
+      'Psychology explains how people perceive, remember, decide, and regulate behavior under real constraints.',
+    application:
+      'This area gives the graph human behavior anchors that connect naturally to studying, product design, and economics.',
+  },
+  {
+    root: 'Product Design',
+    concepts: [
+      'Product Strategy',
+      'User Research',
+      'Information Architecture',
+      'Design Systems',
+      'Prototyping',
+      'Accessibility',
+      'Feedback Loops',
+      'Metrics',
+    ],
+    internalPairs: [
+      ['Product Strategy', 'Metrics'],
+      ['User Research', 'Information Architecture'],
+      ['Design Systems', 'Accessibility'],
+      ['Prototyping', 'Feedback Loops'],
+    ],
+    summary:
+      'Product design sits at the intersection of user needs, interface structure, iteration speed, and measurable outcomes.',
+    application:
+      'These concepts create practical bridges from theory into how teams build software and evaluate whether it works.',
+  },
+  {
+    root: 'History',
+    concepts: [
+      'Enlightenment',
+      'Industrial Revolution',
+      'Colonialism',
+      'Democratic Institutions',
+      'Civil Rights',
+      'Cold War',
+      'Propaganda',
+      'Public Policy',
+    ],
+    internalPairs: [
+      ['Enlightenment', 'Democratic Institutions'],
+      ['Industrial Revolution', 'Colonialism'],
+      ['Civil Rights', 'Public Policy'],
+      ['Cold War', 'Propaganda'],
+    ],
+    summary:
+      'History shows how ideas, institutions, and power struggles evolve over time rather than appearing in isolation.',
+    application:
+      'It gives the mock graph a way to connect political choices, technological change, and ethical debates across eras.',
+  },
+  {
+    root: 'Arts',
+    concepts: [
+      'Narrative Structure',
+      'Poetry Analysis',
+      'Symbolism',
+      'Harmony',
+      'Rhythm',
+      'Composition',
+      'Visual Storytelling',
+      'Creative Process',
+    ],
+    internalPairs: [
+      ['Narrative Structure', 'Symbolism'],
+      ['Poetry Analysis', 'Symbolism'],
+      ['Harmony', 'Rhythm'],
+      ['Composition', 'Creative Process'],
+    ],
+    summary:
+      'The arts cluster focuses on how creators shape meaning through structure, pacing, sound, image, and revision.',
+    application:
+      'It adds a creative lane to the graph so interpretation and expression can connect to design, history, and motivation.',
+  },
+  {
+    root: 'Data Science',
+    concepts: [
+      'Probability',
+      'Bayesian Inference',
+      'Linear Algebra',
+      'Optimization',
+      'Statistics',
+      'Causal Inference',
+      'Signal Processing',
+      'Control Theory',
+    ],
+    internalPairs: [
+      ['Probability', 'Bayesian Inference'],
+      ['Linear Algebra', 'Optimization'],
+      ['Statistics', 'Causal Inference'],
+      ['Signal Processing', 'Control Theory'],
+    ],
+    summary:
+      'Data science connects mathematical modeling, inference, and systems thinking into one applied analytic toolkit.',
+    application:
+      'This cluster is where quantitative reasoning meets experimentation, forecasting, and feedback-driven control.',
+  },
+] as const;
+
+const BRIDGE_EDGE_DEFINITIONS: ReadonlyArray<MockEdgeDefinition> = [
+  {
+    source: 'Entropy',
+    target: 'Information Theory',
+    reason: 'Entropy links thermodynamics and information theory through uncertainty and state counting.',
+  },
+  {
+    source: 'Machine Learning',
+    target: 'Statistics',
+    reason: 'Machine learning depends on statistical estimation, evaluation, and generalization.',
+  },
+  {
+    source: 'Machine Learning',
+    target: 'Linear Algebra',
+    reason: 'Most model representations and training updates are expressed with linear algebra.',
+  },
+  {
+    source: 'Neural Networks',
+    target: 'Neuroscience',
+    reason: 'Neural networks borrow their language and intuition from neuroscience.',
+  },
+  {
+    source: 'Behavioral Economics',
+    target: 'Cognitive Biases',
+    reason: 'Behavioral economics studies how cognitive biases bend classical incentive models.',
+  },
+  {
+    source: 'Behavioral Economics',
+    target: 'Decision Making',
+    reason: 'Behavioral economics explains real-world decision making under bounded rationality.',
+  },
+  {
+    source: 'Ethics',
+    target: 'Accessibility',
+    reason: 'Accessibility is both a design practice and an ethical commitment to inclusion.',
+  },
+  {
+    source: 'Ethics',
+    target: 'Public Policy',
+    reason: 'Ethical frameworks shape how public policy evaluates fairness and harm.',
+  },
+  {
+    source: 'Motivation',
+    target: 'Habit Formation',
+    reason: 'Motivation spikes are fragile, so habit formation makes progress sustainable.',
+  },
+  {
+    source: 'Study Habits',
+    target: 'Learning Theory',
+    reason: 'Better study habits are usually applied learning theory in disguise.',
+  },
+  {
+    source: 'Epistemology',
+    target: 'Bayesian Inference',
+    reason: 'Bayesian inference is a formal way to update beliefs in light of evidence.',
+  },
+  {
+    source: 'Empiricism',
+    target: 'Statistics',
+    reason: 'Empiricism depends on evidence, and statistics helps turn observations into claims.',
+  },
+  {
+    source: 'Calculus',
+    target: 'Optimization',
+    reason: 'Optimization uses derivatives and curvature to locate better solutions.',
+  },
+  {
+    source: 'Differential Equations',
+    target: 'Control Theory',
+    reason: 'Control theory models system response with differential equations and feedback.',
+  },
+  {
+    source: 'Thermodynamics',
+    target: 'Homeostasis',
+    reason: 'Homeostasis is a biological version of managing energy flow and equilibrium.',
+  },
+  {
+    source: 'Classical Mechanics',
+    target: 'Control Theory',
+    reason: 'Control systems often begin with classical mechanics models of motion and force.',
+  },
+  {
+    source: 'Career Goals',
+    target: 'Product Strategy',
+    reason: 'Career planning and product strategy both force explicit tradeoffs and prioritization.',
+  },
+  {
+    source: 'Existentialism',
+    target: 'Creative Process',
+    reason: 'Existentialism often frames creative work as an act of choosing meaning.',
+  },
+  {
+    source: 'Civil Rights',
+    target: 'Ethics',
+    reason: 'Civil rights debates turn abstract ethical commitments into concrete institutional demands.',
+  },
+  {
+    source: 'Public Policy',
+    target: 'Market Design',
+    reason: 'Policy choices often reshape incentives by redesigning the rules of a market.',
+  },
+  {
+    source: 'Information Architecture',
+    target: 'Narrative Structure',
+    reason: 'Both information architecture and narrative structure shape how people move through meaning.',
+  },
+  {
+    source: 'Visual Storytelling',
+    target: 'User Research',
+    reason: 'Visual storytelling becomes stronger when it responds to audience attention and comprehension.',
+  },
+  {
+    source: 'Probability',
+    target: 'Game Theory',
+    reason: 'Strategic reasoning often depends on probabilistic expectations about other agents.',
+  },
+] as const;
+
+function createDomainEdges(domain: MockDomainDefinition) {
+  return [
+    ...domain.concepts.map((concept) =>
+      createRelatedEdge({
+        source: domain.root,
+        target: concept,
+        reason: `${domain.root} provides the umbrella context for ${concept}.`,
+      }),
+    ),
+    ...domain.internalPairs.map(([source, target]) =>
+      createRelatedEdge({
+        source,
+        target,
+        reason: `${source} and ${target} reinforce each other inside the ${domain.root} cluster.`,
+      }),
+    ),
+  ];
+}
+
+const generatedConceptNodes = GENERATED_DOMAINS.flatMap((domain) => [
+  createConceptNode(domain.root),
+  ...domain.concepts.map(createConceptNode),
+]);
+
+const generatedDomainEdges = GENERATED_DOMAINS.flatMap(createDomainEdges);
+const generatedBridgeEdges = BRIDGE_EDGE_DEFINITIONS.map(createRelatedEdge);
+
+const generatedDomainNeighborMap = new Map<string, Set<string>>();
+GENERATED_DOMAINS.forEach((domain) => {
+  domain.concepts.forEach((concept) => {
+    connectBidirectionally(generatedDomainNeighborMap, domain.root, concept);
+  });
+
+  domain.internalPairs.forEach(([left, right]) => {
+    connectBidirectionally(generatedDomainNeighborMap, left, right);
+  });
+});
+
+const generatedBridgeNeighborMap = new Map<string, Set<string>>();
+BRIDGE_EDGE_DEFINITIONS.forEach(({ source, target }) => {
+  connectBidirectionally(generatedBridgeNeighborMap, source, target);
+});
+
+const generatedConceptContext = new Map<string, GeneratedConceptContext>();
+GENERATED_DOMAINS.forEach((domain) => {
+  const domainConcepts = [domain.root, ...domain.concepts];
+
+  domainConcepts.forEach((conceptName) => {
+    generatedConceptContext.set(conceptName, {
+      domain: domain.root,
+      domainNeighbors: Array.from(generatedDomainNeighborMap.get(conceptName) ?? []),
+      bridgeNeighbors: Array.from(generatedBridgeNeighborMap.get(conceptName) ?? []),
+      summary: domain.summary,
+      application: domain.application,
+    });
+  });
+});
+
+export const mockGraphApiResponse: GraphApiResponse = {
+  nodes: [
+    ...CURATED_CONCEPTS.map(createConceptNode),
+    ...generatedConceptNodes,
+  ],
+  edges: [
+    ...CURATED_EDGE_DEFINITIONS.map(createRelatedEdge),
+    ...generatedDomainEdges,
+    ...generatedBridgeEdges,
+  ],
+};
 
 const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
   // ── Calculus ──
@@ -445,14 +873,65 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
   },
 };
 
+function buildGeneratedMockDocument(conceptName: string): MockDocument | null {
+  const context = generatedConceptContext.get(conceptName);
+
+  if (!context) {
+    return null;
+  }
+
+  const nearbyConcepts = context.domainNeighbors
+    .filter((neighbor) => neighbor !== conceptName)
+    .slice(0, 3);
+  const bridgeConcepts = context.bridgeNeighbors
+    .filter((neighbor) => neighbor !== conceptName)
+    .slice(0, 3);
+
+  const nearbyLines =
+    nearbyConcepts.length > 0
+      ? nearbyConcepts
+          .map(
+            (neighbor) =>
+              `- ${neighbor} stays close to ${conceptName} inside the ${context.domain} cluster.`,
+          )
+          .join('\n')
+      : `- ${context.domain} is the main anchor concept for ${conceptName} in this mock graph.`;
+
+  const bridgeLines =
+    bridgeConcepts.length > 0
+      ? bridgeConcepts
+          .map(
+            (neighbor) =>
+              `- ${conceptName} also reaches into ${neighbor}, which helps the mock graph show cross-domain structure.`,
+          )
+          .join('\n')
+      : `- ${conceptName} mostly reinforces the internal shape of the ${context.domain} cluster.`;
+
+  return {
+    doc_id: `mock-${conceptName.toLowerCase().replace(/\s+/g, '-')}`,
+    name: `${conceptName} Field Notes`,
+    full_text: `# ${conceptName}\n\n${conceptName} sits inside the ${context.domain} cluster of the BrainBank mock graph. ${context.summary}\n\n## Why it matters\n${context.application}\n\n## Nearby concepts\n${nearbyLines}\n\n## Cross-domain links\n${bridgeLines}`,
+  };
+}
+
 export function getMockDocumentsForConcept(conceptName: string): MockDocument[] {
-  return (
-    MOCK_CONCEPT_DOCUMENTS[conceptName] ?? [
-      {
-        doc_id: `mock-${conceptName.toLowerCase().replace(/\s+/g, '-')}`,
-        name: `${conceptName} Notes.md`,
-        full_text: `Research notes and observations about ${conceptName}.`,
-      },
-    ]
-  );
+  const curatedDocuments = MOCK_CONCEPT_DOCUMENTS[conceptName];
+
+  if (curatedDocuments) {
+    return curatedDocuments;
+  }
+
+  const generatedDocument = buildGeneratedMockDocument(conceptName);
+
+  if (generatedDocument) {
+    return [generatedDocument];
+  }
+
+  return [
+    {
+      doc_id: `mock-${conceptName.toLowerCase().replace(/\s+/g, '-')}`,
+      name: `${conceptName} Notes.md`,
+      full_text: `Research notes and observations about ${conceptName}.`,
+    },
+  ];
 }
