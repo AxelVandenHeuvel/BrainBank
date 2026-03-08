@@ -23,6 +23,7 @@ import {
 } from '../lib/brainModel';
 import {
   centerObject3DAtOrigin,
+  keepLocalPointAtWorldOrigin,
   rotateObjectFromPointerDelta,
 } from '../lib/brainScene';
 import {
@@ -37,7 +38,6 @@ import type {
   RelationshipDetails,
 } from '../types/graph';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
-import { getMockDocumentsForConcept } from '../mock/mockGraph';
 import { NodeTooltip } from './NodeTooltip';
 
 interface OrbitControlsLike {
@@ -81,7 +81,7 @@ interface TooltipPosition {
 
 interface BrainHomeView {
   distance: number;
-  target: {
+  focusPoint: {
     x: number;
     y: number;
     z: number;
@@ -110,14 +110,13 @@ const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 const POINTER_ROTATION_SPEED = 0.005;
 const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
 const CONTAINER_SPHERE_RADIUS = 22;
 const DOC_ORBIT_RADIUS = 15;
-const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
-const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
-const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
 
 export function Graph3D({
   data,
@@ -134,6 +133,7 @@ export function Graph3D({
   const idleRotationIntervalRef = useRef<number | null>(null);
   const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
+  const sceneFocusPointRef = useRef({ x: 0, y: 0, z: 0 });
   const isRightDragRotatingRef = useRef(false);
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
@@ -261,7 +261,7 @@ export function Graph3D({
     return graphRef.current?.scene() ?? null;
   }
 
-  function resetSceneRotation() {
+  function resetSceneTransform() {
     const rotationRoot = getRotationRoot();
 
     if (!rotationRoot) {
@@ -269,6 +269,7 @@ export function Graph3D({
     }
 
     rotationRoot.rotation.set(0, 0, 0);
+    rotationRoot.position.set(0, 0, 0);
     rotationRoot.updateMatrixWorld(true);
   }
 
@@ -284,21 +285,25 @@ export function Graph3D({
     return rotationRoot.localToWorld(worldPoint);
   }
 
-  function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
-    const worldPoint = toWorldPoint(point);
+  function applySceneFocusPoint() {
+    const rotationRoot = getRotationRoot();
 
-    lookAtTargetRef.current = {
-      x: worldPoint.x,
-      y: worldPoint.y,
-      z: worldPoint.z,
-    };
-    graphRef.current?.cameraPosition(
-      {
-        x: worldPoint.x + distance,
-        y: worldPoint.y + distance * 0.25,
-        z: worldPoint.z + distance,
-      },
+    if (!rotationRoot) {
+      return;
+    }
+
+    keepLocalPointAtWorldOrigin(rotationRoot, sceneFocusPointRef.current);
+    rotationRoot.updateMatrixWorld(true);
+    lookAtTargetRef.current = { x: 0, y: 0, z: 0 };
+  }
+
+  function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
+    sceneFocusPointRef.current = point;
+    applySceneFocusPoint();
+    centerCameraOnTarget(
+      graphRef,
       lookAtTargetRef.current,
+      distance,
       CAMERA_MOVE_DURATION_MS,
     );
   }
@@ -326,7 +331,7 @@ export function Graph3D({
 
         rotationRoot.rotation.order = 'YXZ';
         rotationRoot.rotation.y += IDLE_ROTATION_SPEED;
-        rotationRoot.updateMatrixWorld(true);
+        applySceneFocusPoint();
       }, IDLE_ROTATE_INTERVAL_MS);
     }, IDLE_ROTATE_DELAY_MS);
   }
@@ -340,17 +345,20 @@ export function Graph3D({
     const brainHomeView = brainHomeViewRef.current;
 
     if (brainHomeView) {
-      resetSceneRotation();
-      lookAtTargetRef.current = brainHomeView.target;
+      resetSceneTransform();
+      sceneFocusPointRef.current = brainHomeView.focusPoint;
+      applySceneFocusPoint();
       centerCameraOnTarget(
         graphRef,
-        brainHomeView.target,
+        lookAtTargetRef.current,
         brainHomeView.distance,
         CAMERA_MOVE_DURATION_MS,
       );
       return;
     }
 
+    resetSceneTransform();
+    sceneFocusPointRef.current = { x: 0, y: 0, z: 0 };
     lookAtTargetRef.current = getGraphCenter();
     graphRef.current?.zoomToFit(CAMERA_MOVE_DURATION_MS, AUTO_CENTER_PADDING);
   }
@@ -405,7 +413,7 @@ export function Graph3D({
       POINTER_ROTATION_SPEED,
       MAX_SCENE_TILT,
     );
-    rotationRoot.updateMatrixWorld(true);
+    applySceneFocusPoint();
   }
 
   function handleMouseEnd() {
@@ -654,16 +662,15 @@ export function Graph3D({
         }
       });
 
-      const framedSize = centeredBrain.bounds.getSize(new THREE.Vector3());
       brainContainmentRef.current = createBrainContainment(brainGroup);
       brainHomeViewRef.current = {
         distance: Math.max(
           centeredBrain.sphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
           MIN_BRAIN_HOME_VIEW_DISTANCE,
         ),
-        target: {
+        focusPoint: {
           x: centeredBrain.orbitTarget.x,
-          y: centeredBrain.orbitTarget.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
+          y: centeredBrain.orbitTarget.y,
           z: centeredBrain.orbitTarget.z,
         },
       };
@@ -854,7 +861,6 @@ export function Graph3D({
           clearSelectedEdge();
         }
       }}
-      onContextMenu={(event) => event.preventDefault()}
       onMouseMove={handleMouseMove}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseEnd}

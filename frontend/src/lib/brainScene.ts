@@ -7,6 +7,12 @@ export interface CenteredObject3D {
   orbitTarget: THREE.Vector3;
 }
 
+interface Point3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export function centerObject3DAtOrigin(
   model: THREE.Object3D,
   targetDiagonal = 260,
@@ -57,4 +63,15 @@ export function rotateObjectFromPointerDelta(
     -maxTilt,
     maxTilt,
   );
+}
+
+export function keepLocalPointAtWorldOrigin(
+  target: THREE.Object3D,
+  point: Point3D,
+): void {
+  const rotatedPoint = new THREE.Vector3(point.x, point.y, point.z).applyQuaternion(
+    target.quaternion,
+  );
+
+  target.position.copy(rotatedPoint.multiplyScalar(-1));
 }
