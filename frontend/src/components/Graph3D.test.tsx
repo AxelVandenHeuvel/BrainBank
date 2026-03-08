@@ -7,11 +7,19 @@ import type { GraphData, GraphLink, GraphNode, RelationshipDetails } from '../ty
 import { Graph3D } from './Graph3D';
 
 const graphPropsSpy = vi.fn();
+let sceneObject = new THREE.Scene();
+let resizeObserverCallback:
+  | ((entries: Array<{ contentRect: { width: number; height: number } }>) => void)
+  | null = null;
 const controls = {
   autoRotate: false,
   autoRotateSpeed: 0,
   addEventListener: vi.fn(),
   removeEventListener: vi.fn(),
+  target: {
+    set: vi.fn(),
+  },
+  update: vi.fn(),
 };
 let currentCameraPosition = { x: 200, y: 60, z: 200 };
 const cameraPosition = vi.fn((position?: typeof currentCameraPosition) => {
@@ -23,10 +31,21 @@ const cameraPosition = vi.fn((position?: typeof currentCameraPosition) => {
   return currentCameraPosition;
 });
 const graph2ScreenCoords = vi.fn(() => ({ x: 160, y: 120 }));
-const sceneAdd = vi.fn();
-const sceneRemove = vi.fn();
 const zoomToFit = vi.fn();
 const refresh = vi.fn();
+
+class MockResizeObserver {
+  constructor(
+    callback: (
+      entries: Array<{ contentRect: { width: number; height: number } }>,
+    ) => void,
+  ) {
+    resizeObserverCallback = callback;
+  }
+
+  observe = vi.fn();
+  disconnect = vi.fn();
+}
 
 vi.mock('react-force-graph-3d', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
@@ -38,10 +57,7 @@ vi.mock('react-force-graph-3d', async () => {
         cameraPosition,
         graph2ScreenCoords,
         zoomToFit,
-        scene: () => ({
-          add: sceneAdd,
-          remove: sceneRemove,
-        }),
+        scene: () => sceneObject,
         getGraphBbox: () => ({
           x: [80, 200],
           y: [-30, 90],
@@ -59,7 +75,9 @@ vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
     load(_url: string, onLoad: (value: { scene: THREE.Object3D }) => void) {
       const scene = new THREE.Group();
-      scene.add(new THREE.Mesh(new THREE.SphereGeometry(50, 8, 8)));
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(50, 8, 8));
+      mesh.position.set(40, -20, 10);
+      scene.add(mesh);
       onLoad({
         scene,
       });
@@ -115,12 +133,28 @@ const hoveredNode: GraphNode = {
 describe('Graph3D', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.stubGlobal('ResizeObserver', MockResizeObserver);
+    sceneObject = new THREE.Scene();
+    resizeObserverCallback = null;
     currentCameraPosition = { x: 200, y: 60, z: 200 };
+    controls.target.set.mockClear();
+    controls.update.mockClear();
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => relationshipDetails,
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith('/api/relationships/details')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => relationshipDetails,
+          });
+        }
+
+        return Promise.resolve({
+          ok: true,
+          json: async () => [],
+        });
       }),
     );
   });
@@ -147,12 +181,55 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(39.05, 2),
-        z: 338,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(12.01, 2),
+        y: expect.closeTo(22.52, 2),
+        z: 0,
+      }),
+      1200,
+    );
+    expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      enableNavigationControls: boolean;
+    }).enableNavigationControls).toBe(false);
+  });
+
+  it('re-centers the brain when the graph panel reports its initial measured size', () => {
+    render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+    cameraPosition.mockClear();
+
+    act(() => {
+      resizeObserverCallback?.([{ contentRect: { width: 1260, height: 820 } }]);
+    });
+
+    expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      width: number;
+      height: number;
+    }).width).toBe(1260);
+    expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      width: number;
+      height: number;
+    }).height).toBe(820);
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
+      }),
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(22.52, 2),
         z: 0,
       }),
       1200,
@@ -177,7 +254,7 @@ describe('Graph3D', () => {
     );
   });
 
-  it('starts rotating after 5 seconds of idle time and stops on mouse movement', () => {
+  it('starts rotating the scene in place after 5 seconds of idle time and stops on mouse movement', () => {
     const { container } = render(
       <Graph3D
         data={graph}
@@ -188,17 +265,133 @@ describe('Graph3D', () => {
       />,
     );
 
+    vi.advanceTimersByTime(200);
+
     const callCountBeforeIdle = cameraPosition.mock.calls.length;
     vi.advanceTimersByTime(5000);
     vi.advanceTimersByTime(32);
 
-    expect(cameraPosition.mock.calls.length).toBeGreaterThan(callCountBeforeIdle);
+    expect(sceneObject.rotation.y).not.toBe(0);
+    expect(cameraPosition.mock.calls.length).toBe(callCountBeforeIdle);
 
     const callCountAfterIdle = cameraPosition.mock.calls.length;
     fireEvent.mouseMove(container.firstChild as HTMLElement);
     vi.advanceTimersByTime(100);
 
     expect(cameraPosition.mock.calls.length).toBe(callCountAfterIdle);
+  });
+
+  it('rotates the scene on pointer drag without moving the camera', () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    const root = container.firstChild as HTMLElement;
+    const callCountBeforeDrag = cameraPosition.mock.calls.length;
+
+    fireEvent.mouseDown(root, {
+      button: 2,
+      buttons: 2,
+      clientX: 100,
+      clientY: 120,
+    });
+    fireEvent.mouseMove(root, {
+      buttons: 2,
+      clientX: 140,
+      clientY: 90,
+    });
+    fireEvent.mouseUp(root, { button: 2 });
+
+    expect(sceneObject.rotation.x).not.toBe(0);
+    expect(sceneObject.rotation.y).not.toBe(0);
+    expect(cameraPosition.mock.calls.length).toBe(callCountBeforeDrag);
+  });
+
+  it('does not rotate the scene on left-button drag so node interaction stays available', () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    const root = container.firstChild as HTMLElement;
+
+    fireEvent.mouseDown(root, {
+      button: 0,
+      buttons: 1,
+      clientX: 100,
+      clientY: 120,
+    });
+    fireEvent.mouseMove(root, {
+      buttons: 1,
+      clientX: 140,
+      clientY: 90,
+    });
+    fireEvent.mouseUp(root, { button: 0 });
+
+    expect(sceneObject.rotation.x).toBe(0);
+    expect(sceneObject.rotation.y).toBe(0);
+  });
+
+  it('re-centers the home view when the graph panel size changes', () => {
+    render(
+      <Graph3D
+        data={graph}
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+    cameraPosition.mockClear();
+
+    act(() => {
+      resizeObserverCallback?.([{ contentRect: { width: 1200, height: 760 } }]);
+    });
+
+    const callsAfterFirstResize = cameraPosition.mock.calls.length;
+
+    act(() => {
+      resizeObserverCallback?.([{ contentRect: { width: 900, height: 760 } }]);
+    });
+
+    expect(callsAfterFirstResize).toBeGreaterThan(0);
+    expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      width: number;
+      height: number;
+    }).width).toBe(900);
+    expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      width: number;
+      height: number;
+    }).height).toBe(760);
+    expect(cameraPosition.mock.calls.length).toBeGreaterThan(callsAfterFirstResize);
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
+      }),
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(22.52, 2),
+        z: 0,
+      }),
+      1200,
+    );
   });
 
   it('highlights connected neighbors while dimming unrelated nodes on hover', () => {
@@ -245,12 +438,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(39.05, 2),
-        z: 338,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(12.01, 2),
+        y: expect.closeTo(22.52, 2),
         z: 0,
       }),
       1200,
@@ -299,6 +492,145 @@ describe('Graph3D', () => {
       expect.objectContaining({ x: -10, y: 0, z: 0 }),
       1200,
     );
+  });
+
+  describe('Concept node document expansion', () => {
+    it('clicking a Document node is a no-op and does not fetch', async () => {
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[2]); // Document node
+      });
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('clicking a Concept node fetches its documents from the API', async () => {
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // Calculus
+      });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/concepts/Calculus/documents',
+      );
+    });
+
+    it('fetched documents are injected as extra nodes and links into the graph', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // Calculus
+      });
+
+      const { graphData } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        graphData: GraphData;
+      };
+      expect(graphData.nodes).toHaveLength(graph.nodes.length + 1);
+      const injected = graphData.nodes.find((n) => n.id === 'doc:abc123');
+      expect(injected?.name).toBe('Math Notes');
+      expect(injected?.type).toBe('Document');
+      expect(graphData.links.some((l) => l.target === 'doc:abc123')).toBe(true);
+    });
+
+    it('clicking the same Concept node again collapses the document nodes', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+
+      // First click — expand
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[0]);
+      });
+      expect(graphPropsSpy.mock.calls.at(-1)?.[0].graphData.nodes).toHaveLength(
+        graph.nodes.length + 1,
+      );
+
+      // Advance past double-click threshold so second click is not treated as zoom
+      vi.advanceTimersByTime(400);
+
+      // Second click — collapse
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[0]);
+      });
+      expect(graphPropsSpy.mock.calls.at(-1)?.[0].graphData.nodes).toHaveLength(
+        graph.nodes.length,
+      );
+    });
+
+    it('clicking a different Concept node replaces the previous document nodes', async () => {
+      const docsA = [{ doc_id: 'docA', name: 'Doc A', full_text: 'a' }];
+      const docsB = [{ doc_id: 'docB', name: 'Doc B', full_text: 'b' }];
+      let call = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(call++ === 0 ? docsA : docsB),
+        }),
+      );
+
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+
+      // Click Calculus
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[0]);
+      });
+
+      vi.advanceTimersByTime(400);
+
+      // Click Derivatives
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[1]);
+      });
+
+      const { graphData } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        graphData: GraphData;
+      };
+      expect(graphData.nodes.find((n) => n.id === 'doc:docA')).toBeUndefined();
+      expect(graphData.nodes.find((n) => n.id === 'doc:docB')).toBeDefined();
+    });
   });
 
   it('keeps simulated nodes inside the brain containment volume', () => {

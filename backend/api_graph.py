@@ -79,7 +79,8 @@ def get_graph():
                     {"id": f"doc:{row['doc_id']}", "type": "Document", "name": row["doc_name"]}
                 )
 
-            for _, row in df[["doc_id", "concepts"]].explode("concepts").drop_duplicates().iterrows():
+            exploded = df[["doc_id", "concepts"]].explode("concepts").drop_duplicates()
+            for _, row in exploded.iterrows():
                 if row["concepts"]:
                     edges.append(
                         GraphEdgeResponse(
@@ -187,7 +188,12 @@ def get_documents():
         chunk_count = len(group)
         all_concepts = group["concepts"].explode().dropna().unique().tolist()
         documents.append(
-            {"doc_id": doc_id, "name": doc_name, "chunk_count": chunk_count, "concepts": all_concepts}
+            {
+                "doc_id": doc_id,
+                "name": doc_name,
+                "chunk_count": chunk_count,
+                "concepts": all_concepts,
+            }
         )
 
     return {"documents": documents}

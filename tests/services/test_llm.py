@@ -142,6 +142,7 @@ class TestExtractConcepts:
 
 
 class TestModelSelection:
+    @patch.dict("backend.services.llm.os.environ", {}, clear=True)
     @patch("backend.services.llm._get_client")
     def test_generate_answer_uses_current_default_model(self, mock_get_client):
         client = Mock()

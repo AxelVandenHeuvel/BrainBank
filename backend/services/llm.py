@@ -2,7 +2,10 @@ import json
 import os
 from urllib.request import Request, urlopen
 
+from dotenv import load_dotenv
 from google import genai
+
+load_dotenv()
 
 _client = None
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"

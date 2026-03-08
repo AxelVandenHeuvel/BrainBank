@@ -1,29 +1,34 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import {
   ACTIVE_LINK_COLOR,
-  autoRotateCamera,
+  DIMMED_LINK_COLOR,
+  DIMMED_NODE_COLOR,
+  DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
   centerCameraOnTarget,
   createFocusSet,
-  DIMMED_LINK_COLOR,
-  DIMMED_NODE_COLOR,
-  DIMMED_SEARCH_COLOR,
   findMatchingNodeIds,
   getConnectionCount,
   isDirectHoverLink,
-  zoomToNode,
 } from '../lib/graphView';
 import {
   clampNodesToContainment,
   createBrainContainment,
   type BrainContainment,
 } from '../lib/brainModel';
-import { mockRelationshipDetailsByEdge } from '../mock/mockGraph';
+import {
+  centerObject3DAtOrigin,
+  rotateObjectFromPointerDelta,
+} from '../lib/brainScene';
+import {
+  getMockDocumentsForConcept,
+  mockRelationshipDetailsByEdge,
+} from '../mock/mockGraph';
 import type {
   GraphData,
   GraphLink,
@@ -39,6 +44,10 @@ interface OrbitControlsLike {
   autoRotateSpeed: number;
   addEventListener: (event: string, callback: () => void) => void;
   removeEventListener: (event: string, callback: () => void) => void;
+  target: {
+    set: (x: number, y: number, z: number) => void;
+  };
+  update: () => void;
 }
 
 interface ForceGraphHandle {
@@ -100,9 +109,14 @@ const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
-const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
-const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.08;
-const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
+const POINTER_ROTATION_SPEED = 0.005;
+const IDLE_ROTATION_SPEED = 0.002;
+const MAX_SCENE_TILT = Math.PI / 3;
+const CONTAINER_SPHERE_RADIUS = 22;
+const DOC_ORBIT_RADIUS = 15;
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
+const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
 
 export function Graph3D({
   data,
@@ -111,27 +125,42 @@ export function Graph3D({
   hoveredNode,
   onHoverNode,
 }: Graph3DProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
   const brainHomeViewRef = useRef<BrainHomeView | null>(null);
   const idleTimeoutRef = useRef<number | null>(null);
   const idleRotationIntervalRef = useRef<number | null>(null);
-  const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(
-    null,
-  );
+  const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
-  const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(
-    null,
-  );
-  const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(
-    null,
-  );
-  const [relationshipDetails, setRelationshipDetails] =
-    useState<RelationshipDetails | null>(null);
+  const isRightDragRotatingRef = useRef(false);
+  const lastDragPositionRef = useRef({ x: 0, y: 0 });
+  const containerSizeRef = useRef({ width: 0, height: 0 });
+  const expandedConceptIdRef = useRef<string | null>(null);
+
+  const [expandedConceptId, setExpandedConceptId] = useState<string | null>(null);
+  const [injectedNodes, setInjectedNodes] = useState<GraphNode[]>([]);
+  const [injectedLinks, setInjectedLinks] = useState<GraphLink[]>([]);
+  const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(null);
+  const [relationshipDetails, setRelationshipDetails] = useState<RelationshipDetails | null>(null);
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
-  const adjacency = buildAdjacencyMap(data);
-  const matchedNodeIds = findMatchingNodeIds(data.nodes, query);
+
+  const displayData = useMemo(
+    () =>
+      injectedNodes.length === 0
+        ? data
+        : {
+            nodes: [...data.nodes, ...injectedNodes],
+            links: [...data.links, ...injectedLinks],
+          },
+    [data, injectedLinks, injectedNodes],
+  );
+
+  const adjacency = buildAdjacencyMap(displayData);
+  const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
@@ -163,6 +192,42 @@ export function Graph3D({
     setIsRelationshipLoading(false);
   }
 
+  function getNodeThreeObject(node: GraphNode): THREE.Object3D | null {
+    if (node.id !== expandedConceptId) {
+      return null;
+    }
+
+    const color = new THREE.Color(NODE_TYPE_COLORS[node.type]);
+    const group = new THREE.Group();
+
+    group.add(
+      new THREE.Mesh(
+        new THREE.SphereGeometry(CONTAINER_SPHERE_RADIUS, 20, 20),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.06,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      ),
+    );
+
+    group.add(
+      new THREE.Mesh(
+        new THREE.SphereGeometry(CONTAINER_SPHERE_RADIUS, 10, 10),
+        new THREE.MeshBasicMaterial({
+          color,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.28,
+        }),
+      ),
+    );
+
+    return group;
+  }
+
   function clampNodesWithinBrain(refresh = false) {
     const containment = brainContainmentRef.current;
 
@@ -170,7 +235,7 @@ export function Graph3D({
       return;
     }
 
-    const changed = clampNodesToContainment(data.nodes, containment);
+    const changed = clampNodesToContainment(displayData.nodes, containment);
 
     if (changed && refresh) {
       graphRef.current?.refresh();
@@ -191,6 +256,52 @@ export function Graph3D({
     };
   }
 
+  function getRotationRoot() {
+    return graphRef.current?.scene() ?? null;
+  }
+
+  function resetSceneRotation() {
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    rotationRoot.rotation.set(0, 0, 0);
+    rotationRoot.updateMatrixWorld(true);
+  }
+
+  function toWorldPoint(point: { x: number; y: number; z: number }) {
+    const worldPoint = new THREE.Vector3(point.x, point.y, point.z);
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return worldPoint;
+    }
+
+    rotationRoot.updateMatrixWorld(true);
+    return rotationRoot.localToWorld(worldPoint);
+  }
+
+  function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
+    const worldPoint = toWorldPoint(point);
+
+    lookAtTargetRef.current = {
+      x: worldPoint.x,
+      y: worldPoint.y,
+      z: worldPoint.z,
+    };
+    graphRef.current?.cameraPosition(
+      {
+        x: worldPoint.x + distance,
+        y: worldPoint.y + distance * 0.25,
+        z: worldPoint.z + distance,
+      },
+      lookAtTargetRef.current,
+      CAMERA_MOVE_DURATION_MS,
+    );
+  }
+
   function stopIdleRotation() {
     if (idleRotationIntervalRef.current !== null) {
       window.clearInterval(idleRotationIntervalRef.current);
@@ -206,7 +317,15 @@ export function Graph3D({
     idleTimeoutRef.current = window.setTimeout(() => {
       stopIdleRotation();
       idleRotationIntervalRef.current = window.setInterval(() => {
-        autoRotateCamera(graphRef);
+        const rotationRoot = getRotationRoot();
+
+        if (!rotationRoot) {
+          return;
+        }
+
+        rotationRoot.rotation.order = 'YXZ';
+        rotationRoot.rotation.y += IDLE_ROTATION_SPEED;
+        rotationRoot.updateMatrixWorld(true);
       }, IDLE_ROTATE_INTERVAL_MS);
     }, IDLE_ROTATE_DELAY_MS);
   }
@@ -220,6 +339,7 @@ export function Graph3D({
     const brainHomeView = brainHomeViewRef.current;
 
     if (brainHomeView) {
+      resetSceneRotation();
       lookAtTargetRef.current = brainHomeView.target;
       centerCameraOnTarget(
         graphRef,
@@ -232,6 +352,63 @@ export function Graph3D({
 
     lookAtTargetRef.current = getGraphCenter();
     graphRef.current?.zoomToFit(CAMERA_MOVE_DURATION_MS, AUTO_CENTER_PADDING);
+  }
+
+  function handleMouseDown(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 2) {
+      return;
+    }
+
+    if (event.target instanceof HTMLElement && event.target.closest('button')) {
+      return;
+    }
+
+    isRightDragRotatingRef.current = true;
+    lastDragPositionRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    handleInteraction();
+    event.preventDefault();
+  }
+
+  function handleMouseMove(event: React.MouseEvent<HTMLDivElement>) {
+    handleInteraction();
+
+    if (!isRightDragRotatingRef.current) {
+      return;
+    }
+
+    if ((event.buttons & 2) !== 2) {
+      isRightDragRotatingRef.current = false;
+      return;
+    }
+
+    const deltaX = event.clientX - lastDragPositionRef.current.x;
+    const deltaY = event.clientY - lastDragPositionRef.current.y;
+    lastDragPositionRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    rotateObjectFromPointerDelta(
+      rotationRoot,
+      deltaX,
+      deltaY,
+      POINTER_ROTATION_SPEED,
+      MAX_SCENE_TILT,
+    );
+    rotationRoot.updateMatrixWorld(true);
+  }
+
+  function handleMouseEnd() {
+    isRightDragRotatingRef.current = false;
   }
 
   function handleZoom(scale: number) {
@@ -262,7 +439,71 @@ export function Graph3D({
     handleZoom(BUTTON_ZOOM_OUT_FACTOR);
   }
 
+  async function handleConceptExpansion(node: GraphNode) {
+    const conceptNodeId = node.id;
+    const conceptPos = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
+
+    if (expandedConceptIdRef.current === conceptNodeId) {
+      expandedConceptIdRef.current = null;
+      setExpandedConceptId(null);
+      setInjectedNodes([]);
+      setInjectedLinks([]);
+      return;
+    }
+
+    expandedConceptIdRef.current = conceptNodeId;
+    setExpandedConceptId(conceptNodeId);
+    setInjectedNodes([]);
+    setInjectedLinks([]);
+
+    let docs: Array<{ doc_id: string; name: string; full_text: string }> = [];
+
+    try {
+      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`);
+      if (response.ok) {
+        docs = (await response.json()) as typeof docs;
+      }
+    } catch {
+      // Fall back to bundled mock data when the backend is unavailable.
+    }
+
+    if (docs.length === 0) {
+      docs = getMockDocumentsForConcept(node.name);
+    }
+
+    if (expandedConceptIdRef.current !== conceptNodeId) {
+      return;
+    }
+
+    const count = docs.length;
+    setInjectedNodes(
+      docs.map((doc, index) => {
+        const theta = (2 * Math.PI * index) / count;
+        const phi = Math.PI * (0.35 + 0.3 * (index % 2 === 0 ? 1 : -1));
+        return {
+          id: `doc:${doc.doc_id}`,
+          type: 'Document' as const,
+          name: doc.name,
+          fx: conceptPos.x + DOC_ORBIT_RADIUS * Math.sin(phi) * Math.cos(theta),
+          fy: conceptPos.y + DOC_ORBIT_RADIUS * Math.cos(phi),
+          fz: conceptPos.z + DOC_ORBIT_RADIUS * Math.sin(phi) * Math.sin(theta),
+        };
+      }),
+    );
+    setInjectedLinks(
+      docs.map((doc) => ({
+        source: conceptNodeId,
+        target: `doc:${doc.doc_id}`,
+        type: 'MENTIONS',
+      })),
+    );
+  }
+
   function handleNodeClick(node: GraphNode) {
+    if (node.type === 'Document') {
+      return;
+    }
+
     const now = Date.now();
 
     if (
@@ -270,20 +511,28 @@ export function Graph3D({
       lastNodeClickRef.current.nodeId === node.id &&
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
-      zoomToNode(graphRef, node);
-      lookAtTargetRef.current = {
-        x: node.x ?? 0,
-        y: node.y ?? 0,
-        z: node.z ?? 0,
-      };
+      focusPoint(
+        {
+          x: node.x ?? 0,
+          y: node.y ?? 0,
+          z: node.z ?? 0,
+        },
+        100,
+      );
       lastNodeClickRef.current = null;
       return;
     }
 
-    lastNodeClickRef.current = {
-      nodeId: node.id,
-      timestamp: now,
-    };
+    lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
+    focusPoint(
+      {
+        x: node.x ?? 0,
+        y: node.y ?? 0,
+        z: node.z ?? 0,
+      },
+      160,
+    );
+    void handleConceptExpansion(node);
   }
 
   async function handleLinkClick(link: GraphLink) {
@@ -382,61 +631,44 @@ export function Graph3D({
 
     const loader = new GLTFLoader();
     let cancelled = false;
-    let brainGroup: THREE.Object3D | null = null;
+    let brainGroup: THREE.Group | null = null;
 
     loader.load(BRAIN_MODEL_URL, (gltf) => {
       if (cancelled) {
         return;
       }
 
-      const loadedScene = gltf.scene;
+      const centeredBrain = centerObject3DAtOrigin(gltf.scene, 260);
+      brainGroup = centeredBrain.pivot;
 
-      if (loadedScene instanceof THREE.Object3D) {
-        brainGroup = loadedScene;
+      brainGroup.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.material = new THREE.MeshBasicMaterial({
+            color: '#7dd3fc',
+            wireframe: true,
+            transparent: true,
+            opacity: 0.12,
+            side: THREE.DoubleSide,
+          });
+        }
+      });
 
-        const bounds = new THREE.Box3().setFromObject(brainGroup);
-        const center = bounds.getCenter(new THREE.Vector3());
-        const size = bounds.getSize(new THREE.Vector3()).length() || 1;
-        const scale = 260 / size;
-
-        brainGroup.position.sub(center);
-        brainGroup.scale.setScalar(scale);
-
-        brainGroup.traverse((node) => {
-          if (node instanceof THREE.Mesh) {
-            node.material = new THREE.MeshBasicMaterial({
-              color: '#7dd3fc',
-              wireframe: true,
-              transparent: true,
-              opacity: 0.12,
-              side: THREE.DoubleSide,
-            });
-          }
-        });
-
-        brainGroup.updateMatrixWorld(true);
-        const framedBounds = new THREE.Box3().setFromObject(brainGroup);
-        const framedSize = framedBounds.getSize(new THREE.Vector3());
-        const framedSphere = framedBounds.getBoundingSphere(new THREE.Sphere());
-        brainContainmentRef.current = createBrainContainment(brainGroup);
-        brainHomeViewRef.current = {
-          distance: Math.max(
-            framedSphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
-            MIN_BRAIN_HOME_VIEW_DISTANCE,
-          ),
-          target: {
-            x: framedSphere.center.x,
-            y: framedSphere.center.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
-            z: framedSphere.center.z,
-          },
-        };
-        clampNodesWithinBrain(true);
-        scene.add(brainGroup);
-        handleReset();
-        return;
-      }
-
-      scene.add(loadedScene as unknown as THREE.Object3D);
+      const framedSize = centeredBrain.bounds.getSize(new THREE.Vector3());
+      brainContainmentRef.current = createBrainContainment(brainGroup);
+      brainHomeViewRef.current = {
+        distance: Math.max(
+          centeredBrain.sphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
+          MIN_BRAIN_HOME_VIEW_DISTANCE,
+        ),
+        target: {
+          x: centeredBrain.orbitTarget.x,
+          y: centeredBrain.orbitTarget.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
+          z: centeredBrain.orbitTarget.z,
+        },
+      };
+      clampNodesWithinBrain(true);
+      scene.add(brainGroup);
+      handleReset();
     });
 
     return () => {
@@ -452,7 +684,7 @@ export function Graph3D({
 
   useEffect(() => {
     clampNodesWithinBrain(true);
-  }, [data.nodes]);
+  }, [displayData.nodes]);
 
   useEffect(() => {
     if (!data.nodes.length) {
@@ -469,24 +701,81 @@ export function Graph3D({
   }, [data.nodes.length]);
 
   useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      const nextSize = {
+        width: container.clientWidth,
+        height: container.clientHeight,
+      };
+      const previousSize = containerSizeRef.current;
+
+      if (
+        nextSize.width > 0 &&
+        nextSize.height > 0 &&
+        (nextSize.width !== previousSize.width || nextSize.height !== previousSize.height)
+      ) {
+        containerSizeRef.current = nextSize;
+        setViewportSize(nextSize);
+        handleReset();
+      }
+
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextSize = {
+        width: entry?.contentRect.width ?? container.clientWidth,
+        height: entry?.contentRect.height ?? container.clientHeight,
+      };
+      const previousSize = containerSizeRef.current;
+
+      if (
+        nextSize.width <= 0 ||
+        nextSize.height <= 0 ||
+        (nextSize.width === previousSize.width && nextSize.height === previousSize.height)
+      ) {
+        return;
+      }
+
+      containerSizeRef.current = nextSize;
+      setViewportSize(nextSize);
+      handleReset();
+    });
+
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!query.trim()) {
       return;
     }
 
-    const firstMatchId = findMatchingNodeIds(data.nodes, query).values().next().value;
-    const firstMatch = data.nodes.find((node) => node.id === firstMatchId);
+    const firstMatchId = findMatchingNodeIds(displayData.nodes, query).values().next().value;
+    const firstMatch = displayData.nodes.find((node) => node.id === firstMatchId);
 
     if (!firstMatch) {
       return;
     }
 
-    lookAtTargetRef.current = {
-      x: firstMatch.x ?? 0,
-      y: firstMatch.y ?? 0,
-      z: firstMatch.z ?? 0,
-    };
-    zoomToNode(graphRef, firstMatch, 140);
-  }, [data.nodes, query]);
+    focusPoint(
+      {
+        x: firstMatch.x ?? 0,
+        y: firstMatch.y ?? 0,
+        z: firstMatch.z ?? 0,
+      },
+      140,
+    );
+  }, [displayData.nodes, query]);
 
   useEffect(() => {
     if (!hoveredNode) {
@@ -497,11 +786,12 @@ export function Graph3D({
     let frameId = 0;
 
     const updatePosition = () => {
-      const coords = graphRef.current?.graph2ScreenCoords(
-        hoveredNode.x ?? 0,
-        hoveredNode.y ?? 0,
-        hoveredNode.z ?? 0,
-      );
+      const worldPoint = toWorldPoint({
+        x: hoveredNode.x ?? 0,
+        y: hoveredNode.y ?? 0,
+        z: hoveredNode.z ?? 0,
+      });
+      const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
       if (coords) {
         setTooltipPosition(coords);
@@ -519,21 +809,15 @@ export function Graph3D({
 
   function getNodeColor(node: GraphNode): string {
     if (selectedEdge) {
-      return selectedNodeIds.has(node.id)
-        ? NODE_TYPE_COLORS[node.type]
-        : DIMMED_NODE_COLOR;
+      return selectedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
     if (hoveredNode) {
-      return focusedNodeIds.has(node.id)
-        ? NODE_TYPE_COLORS[node.type]
-        : DIMMED_NODE_COLOR;
+      return focusedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
     if (query.trim()) {
-      return matchedNodeIds.has(node.id)
-        ? NODE_TYPE_COLORS[node.type]
-        : DIMMED_SEARCH_COLOR;
+      return matchedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_SEARCH_COLOR;
     }
 
     return NODE_TYPE_COLORS[node.type];
@@ -545,9 +829,7 @@ export function Graph3D({
     }
 
     if (hoveredNode) {
-      return isDirectHoverLink(link, hoveredNode)
-        ? ACTIVE_LINK_COLOR
-        : DIMMED_LINK_COLOR;
+      return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
     }
 
     return 'rgba(56, 189, 248, 0.24)';
@@ -563,23 +845,35 @@ export function Graph3D({
 
   return (
     <div
-      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)]"
+      ref={containerRef}
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
         }
       }}
-      onMouseMove={handleInteraction}
-      onMouseDown={handleInteraction}
+      onContextMenu={(event) => event.preventDefault()}
+      onMouseMove={handleMouseMove}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseEnd}
+      onMouseLeave={handleMouseEnd}
       onWheel={handleInteraction}
       onTouchStart={handleInteraction}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
       <ForceGraph3D
         ref={graphRef as never}
-        graphData={data}
+        graphData={displayData}
+        width={viewportSize.width || undefined}
+        height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
+        nodeVal={(node) => {
+          const candidate = node as GraphNode;
+          return candidate.fx !== undefined ? 0.5 : 1;
+        }}
+        nodeThreeObject={(node) => getNodeThreeObject(node as GraphNode) as THREE.Object3D}
+        nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
@@ -595,6 +889,7 @@ export function Graph3D({
         onNodeClick={(node) => handleNodeClick(node as GraphNode)}
         onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
         enableNodeDrag={false}
+        enableNavigationControls={false}
         controlType="orbit"
       />
       <div className="absolute right-4 top-4 flex flex-col gap-2">

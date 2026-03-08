@@ -61,13 +61,17 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell, legend, and search state
+    App.tsx                  - Layout shell, view switching (graph/editor), legend, search
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
       Graph3D.tsx            - 3D graph scene, edge selection, and interaction behavior
       IngestPanel.tsx        - Note input + file upload for ingestion
+      ChatPanel.tsx          - Right-side chat UI for LLM query history
+      Graph3D.tsx            - 3D graph scene and interaction behavior
+      IngestPanel.tsx        - New Note button + file upload
+      NoteEditor.tsx         - Full-page markdown note editor
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
@@ -76,6 +80,7 @@ frontend/
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
+      brainScene.ts          - Brain model centering and scene-rotation helpers
       chatStorage.ts         - localStorage helpers for persisted chat sessions
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
@@ -89,6 +94,10 @@ backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
+  api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  sample_data/
+    college_math_notes.py   - Loads and seeds the sample college math corpus
+  schemas.py                - Shared Pydantic response models (DocumentResponse)
   db/
     lance.py                - LanceDB init + chunks table schema
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
@@ -102,10 +111,18 @@ backend/
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
     query.py                - Query pipeline: search -> expand -> answer
+sample_data/
+  college_math_notes/
+    catalog.json            - Metadata for the sample math note corpus
+    *.md                    - College student math note documents for document-opening tests
+scripts/
+  seed_college_math_notes.py - Seeds the sample math note corpus into local databases
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
   test_api_graph.py         - Graph export API tests
+  sample_data/
+    test_college_math_notes.py - Sample data loading and seeding tests
   db/
     test_lance.py           - LanceDB init tests
     test_kuzu.py            - Kuzu init tests
@@ -120,6 +137,10 @@ tests/
 ```
 
 Each file has a single responsibility. Tests mirror the source structure.
+
+## Sample Data Seeding
+
+`sample_data/college_math_notes` contains a small college-student math corpus for frontend document-opening tests. `scripts/seed_college_math_notes.py` loads the catalog, splits each markdown file into paragraph chunks, writes deterministic vectors plus chunk text into LanceDB, and upserts the matching Concept and RELATED_TO graph data into Kuzu. The seeder skips any sample `doc_id` values that are already present, so rerunning it does not duplicate the sample documents.
 
 ## Frontend Graph Flow
 
@@ -141,23 +162,25 @@ Graph3D -- react-force-graph-3d scene
   |         +-- selected RELATED_TO edge -> persistent highlight + EdgeDetailPanel
   |         +-- search -> highlight matches, zoom camera
   |         +-- load -> zoomToFit for default framing
-  |         +-- idle (5s) -> slow camera auto-rotation
+  |         +-- idle (5s) -> slow in-place scene rotation around the brain center
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
   |         +-- double-click node -> focus camera on that node
+  |         +-- right-button drag -> rotate the scene object instead of orbiting the camera
+  |         +-- panel resize -> recenter the home view for chat-open/chat-closed layouts
   v
-GLTFLoader -- load human-brain.glb, derive mesh containment, render wireframe shell
+GLTFLoader -- load human-brain.glb, center the model at the scene origin, derive mesh containment, render wireframe shell
 ```
 
 ### Ingest Panel
 
-The sidebar includes a collapsible IngestPanel with two modes:
+The sidebar has a "New Note" button and a file upload option:
 
-1. **Quick Note** - user types a title + markdown content, clicks "Add to Brain"
-2. **File Upload** - user picks a `.md` or `.txt` file, contents are read client-side
+1. **New Note** - clicking swaps the main area from the 3D graph to a full-page markdown editor (NoteEditor). The editor has a title field, a large textarea, and a "Save to Brain" button. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
+2. **File Upload** - user picks a `.md` or `.txt` file from the sidebar. Contents are read client-side and sent via `POST /ingest`. Success shows extracted concept count.
 
-Both modes `POST /ingest` with `{title, text}`. On success the panel shows concept count and triggers `useGraphData.refetch()` to reload the 3D graph with new data. Vite proxies `/ingest` to the backend alongside `/api`.
+Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also derives a dedicated home-view camera target from the loaded brain bounds, so reset and initial framing center the brain shell in the viewport instead of centering only the node cluster. It resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks a `RELATED_TO` edge, the frontend keeps that exact edge selected, dims unrelated nodes, fetches `/api/relationships/details?source=...&target=...`, and renders `EdgeDetailPanel` with the stored reason plus shared, source-only, and target-only supporting documents. `MENTIONS` edges remain non-interactive.
 
