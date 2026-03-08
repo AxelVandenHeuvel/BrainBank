@@ -33,3 +33,8 @@ class DiscoveryItemResponse(BaseModel):
 class DiscoveryResponse(BaseModel):
     concept_name: str
     results: list[DiscoveryItemResponse]
+
+
+class UpdateDocumentRequest(BaseModel):
+    text: str
+    title: str

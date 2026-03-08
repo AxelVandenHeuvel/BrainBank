@@ -1,42 +1,128 @@
-import { Component, lazy, startTransition, Suspense, useDeferredValue, useState } from 'react';
-import type { ReactNode } from 'react';
+import { startTransition, useCallback, useDeferredValue, useState } from 'react';
 
 import { ChatPanel } from './components/ChatPanel';
+import { EditorArea } from './components/EditorArea';
+import { FileExplorer } from './components/FileExplorer';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
 import { SearchBar } from './components/SearchBar';
-
-const NoteEditor = lazy(() =>
-  import('./components/NoteEditor').then((m) => ({ default: m.NoteEditor })),
-);
-
-class EditorErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { error: string | null }> {
-  state = { error: null as string | null };
-  static getDerivedStateFromError(err: Error) { return { error: err.message }; }
-  componentDidCatch() { this.props.onError(); }
-  render() {
-    if (this.state.error) return <div className="p-8 text-red-400">Editor failed to load: {this.state.error}</div>;
-    return this.props.children;
-  }
-}
 import { useGraphData } from './hooks/useGraphData';
 import { findMatchingNodeIds } from './lib/graphView';
-
-function formatSourceLabel(source: 'api' | 'mock'): string {
-  return source === 'api' ? 'Live API' : 'Mock data';
-}
+import { getMockDocumentsForConcept } from './mock/mockGraph';
+import type { OpenTab } from './types/notes';
 
 function getChatToggleLabel(isChatOpen: boolean): string {
   return isChatOpen ? 'Close chat panel' : 'Open chat panel';
 }
 
+let nextNewNoteId = 1;
+function generateNewNoteId(): string {
+  return `new-note-${Date.now()}-${nextNewNoteId++}`;
+}
+
 export default function App() {
-  const { data, source, error, refetch } = useGraphData();
+  const { data, source, refetch } = useGraphData();
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
-  const [view, setView] = useState<'graph' | 'editor'>('graph');
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
+
+  // Tab system state
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [highlightedConcept, setHighlightedConcept] = useState<string | null>(null);
+  const [fileTreeRefetchSignal, setFileTreeRefetchSignal] = useState(0);
+
+  // --- Tab management ---
+
+  const openDocument = useCallback((docId: string, name: string, content: string) => {
+    setOpenTabs((prev) => {
+      if (prev.find((t) => t.id === docId)) return prev;
+      return [...prev, { id: docId, title: name, content, isNew: false }];
+    });
+    setActiveTabId(docId);
+  }, []);
+
+  function closeTab(tabId: string) {
+    setOpenTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === tabId);
+      if (idx === -1) return prev;
+      const next = prev.filter((t) => t.id !== tabId);
+      if (tabId === activeTabId) {
+        if (next.length === 0) {
+          setActiveTabId(null);
+        } else if (idx < next.length) {
+          setActiveTabId(next[idx].id);
+        } else {
+          setActiveTabId(next[next.length - 1].id);
+        }
+      }
+      return next;
+    });
+  }
+
+  function selectTab(tabId: string) {
+    setActiveTabId(tabId);
+  }
+
+  function handleTabTitleChange(tabId: string, newTitle: string) {
+    setOpenTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t)),
+    );
+  }
+
+  function handleDocSaved(docId: string, newDocId?: string, currentContent?: string) {
+    setOpenTabs((prev) =>
+      prev.map((t) => {
+        if (t.id !== docId) return t;
+        // Update the tab id, preserve content so remount doesn't lose it, mark as not new
+        return {
+          ...t,
+          id: newDocId ?? docId,
+          isNew: false,
+          content: currentContent ?? t.content,
+        };
+      }),
+    );
+    if (newDocId && activeTabId === docId) {
+      setActiveTabId(newDocId);
+    }
+    refetch();
+    setFileTreeRefetchSignal((n) => n + 1);
+  }
+
+  function handleNewNote() {
+    const id = generateNewNoteId();
+    const newTab: OpenTab = { id, title: 'Untitled', content: '', isNew: true };
+    setOpenTabs((prev) => [...prev, newTab]);
+    setActiveTabId(id);
+  }
+
+  // FileExplorer: open doc tab immediately with mock content, then try API
+  function handleFileExplorerOpenDocument(docId: string, name: string, conceptName: string) {
+    const mockDocs = getMockDocumentsForConcept(conceptName);
+    const mockDoc = mockDocs.find((d) => d.doc_id === docId);
+    const content = mockDoc?.full_text ?? '';
+    openDocument(docId, name, content);
+
+    if (source === 'api') {
+      fetch(`/api/concepts/${encodeURIComponent(conceptName)}/documents`)
+        .then((res) => {
+          if (!res.ok) throw new Error('fetch failed');
+          return res.json();
+        })
+        .then((docs: { doc_id: string; name: string; full_text: string }[]) => {
+          const doc = docs.find((d) => d.doc_id === docId);
+          if (doc) {
+            setOpenTabs((prev) =>
+              prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
+            );
+          }
+        })
+        .catch(() => { /* already showing mock content */ });
+    }
+  }
 
   function handleQueryChange(nextQuery: string) {
     startTransition(() => {
@@ -44,80 +130,116 @@ export default function App() {
     });
   }
 
-  function handleNoteSaved() {
-    refetch();
-    setView('graph');
-  }
-
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 lg:h-screen lg:overflow-hidden">
+    <main className="min-h-screen bg-black text-neutral-100 lg:h-screen lg:overflow-hidden">
       <div
         data-testid="app-shell"
-        className="relative mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:h-screen lg:grid-cols-[22rem_minmax(0,1fr)] lg:overflow-hidden lg:px-6"
+        className="relative mx-auto flex min-h-screen w-full max-w-[1800px] gap-0 px-3 py-3 lg:h-screen lg:overflow-hidden lg:px-4"
       >
-        <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:min-h-0 lg:overflow-y-auto">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-200/70">
-              Cognitive Map
-            </p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white">BrainBank</h1>
-            <p className="mt-3 text-sm leading-6 text-slate-300">
-              Explore your knowledge graph as a living neural landscape.
-            </p>
+        {/* Collapsible sidebar */}
+        <aside
+          data-testid="sidebar"
+          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 lg:overflow-y-auto ${
+            sidebarCollapsed ? 'w-[3rem]' : 'w-[22rem] p-4'
+          }`}
+        >
+          {/* Branding + toggle */}
+          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} mb-4`}>
+            {!sidebarCollapsed && (
+              <span className="text-sm font-bold tracking-tight text-white">braen.</span>
+            )}
+            <button
+              type="button"
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="text-neutral-500 transition hover:text-pink-400"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className={`h-4 w-4 transition-transform duration-300 ${
+                  sidebarCollapsed ? 'rotate-180' : ''
+                }`}
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
           </div>
 
-          <SearchBar query={query} matchCount={matchCount} onQueryChange={handleQueryChange} />
+          {/* Sidebar content - hidden when collapsed */}
+          <div
+            data-testid="sidebar-content"
+            className={`flex flex-col gap-4 overflow-hidden transition-opacity duration-300 ${
+              sidebarCollapsed ? 'pointer-events-none h-0 opacity-0' : 'opacity-100'
+            }`}
+          >
+            <IngestPanel onIngestComplete={() => { refetch(); setFileTreeRefetchSignal((n) => n + 1); }} onNewNote={handleNewNote} />
 
-          <IngestPanel onIngestComplete={refetch} onNewNote={() => setView('editor')} />
-
-          <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-200">Data source</span>
-              <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold text-cyan-200">
-                {formatSourceLabel(source)}
-              </span>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-300">
-              <div className="rounded-2xl bg-slate-950/70 p-3">
-                <p className="text-slate-500">Nodes</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{data.nodes.length}</p>
-              </div>
-              <div className="rounded-2xl bg-slate-950/70 p-3">
-                <p className="text-slate-500">Edges</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{data.links.length}</p>
-              </div>
-            </div>
-            {error ? (
-              <p className="mt-4 text-xs leading-5 text-amber-300/90">
-                Using mock graph because the API was unavailable: {error}
+            <section className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] pt-3">
+              <p className="mb-2 px-1 text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+                Files
               </p>
-            ) : null}
-          </section>
-
+              <FileExplorer
+                highlightedConcept={highlightedConcept}
+                onOpenDocument={handleFileExplorerOpenDocument}
+                refetchSignal={fileTreeRefetchSignal}
+                graphData={data}
+              />
+            </section>
+          </div>
         </aside>
 
-        <section className="min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
-          {view === 'editor' ? (
-            <EditorErrorBoundary onError={() => setView('graph')}>
-              <Suspense fallback={<div className="flex h-full items-center justify-center text-slate-400">Loading editor...</div>}>
-                <NoteEditor
-                  onSave={handleNoteSaved}
-                  onCancel={() => setView('graph')}
-                />
-              </Suspense>
-            </EditorErrorBoundary>
-          ) : (
+        {/* Main content area: top bar + graph */}
+        <div className="flex h-full min-w-0 flex-1 flex-col">
+          {/* Top bar with search */}
+          <div
+            data-testid="top-bar"
+            className="border-b border-white/[0.06] bg-black px-4 py-2.5"
+          >
+            <SearchBar query={query} matchCount={matchCount} onQueryChange={handleQueryChange} />
+          </div>
+
+          {/* Graph area - always mounted, hidden via CSS when a tab is active */}
+          <section
+            className={
+              activeTabId !== null
+                ? 'invisible absolute -z-10 h-0 w-0 overflow-hidden'
+                : 'relative min-h-0 flex-1 overflow-hidden border-b border-white/[0.06]'
+            }
+          >
             <Graph3D
               data={data}
               source={source}
               query={deferredQuery}
+              onOpenDocument={openDocument}
+              onConceptFocused={setHighlightedConcept}
             />
-          )}
-        </section>
+          </section>
 
+          {/* Editor area - rendered when activeTabId is set */}
+          {activeTabId !== null && (
+            <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <EditorArea
+                tabs={openTabs}
+                activeTabId={activeTabId}
+                onSelectTab={selectTab}
+                onCloseTab={closeTab}
+                onTabTitleChange={handleTabTitleChange}
+                onSaved={handleDocSaved}
+              />
+            </section>
+          )}
+        </div>
+
+        {/* Chat overlay */}
         <aside
           data-testid="chat-overlay"
-          className={`relative min-h-[70vh] lg:absolute lg:inset-y-4 lg:right-0 lg:z-20 lg:w-[24rem] lg:min-h-0 ${
+          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[24rem] lg:min-h-0 ${
             isChatOpen ? 'flex lg:pointer-events-auto' : 'hidden lg:flex lg:pointer-events-none'
           }`}
           aria-hidden={!isChatOpen}
@@ -126,7 +248,7 @@ export default function App() {
             type="button"
             aria-label={getChatToggleLabel(true)}
             onClick={() => setIsChatOpen(false)}
-            className={`absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl] ${
+            className={`absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-md rounded-r-none border border-pink-500/20 border-r-0 bg-black px-2.5 py-4 text-[10px] font-semibold uppercase tracking-widest text-pink-400 transition hover:border-pink-500/40 hover:text-pink-300 [writing-mode:vertical-rl] ${
               isChatOpen ? '' : 'pointer-events-none opacity-0'
             }`}
           >
@@ -149,7 +271,7 @@ export default function App() {
             type="button"
             aria-label={getChatToggleLabel(false)}
             onClick={() => setIsChatOpen(true)}
-            className="fixed right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl]"
+            className="fixed right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-md rounded-r-none border border-pink-500/20 border-r-0 bg-black px-2.5 py-4 text-[10px] font-semibold uppercase tracking-widest text-pink-400 transition hover:border-pink-500/40 hover:text-pink-300 [writing-mode:vertical-rl]"
           >
             Chat
           </button>

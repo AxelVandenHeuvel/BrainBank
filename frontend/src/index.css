@@ -2,11 +2,8 @@
 
 :root {
   color-scheme: dark;
-  font-family: "Avenir Next", "Trebuchet MS", sans-serif;
-  background:
-    radial-gradient(circle at top, rgba(14, 165, 233, 0.16), transparent 34%),
-    radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.14), transparent 28%),
-    #020617;
+  font-family: "Inter", "Avenir Next", "Trebuchet MS", sans-serif;
+  background: #000;
 }
 
 html,
@@ -18,28 +15,25 @@ body,
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top, rgba(14, 165, 233, 0.16), transparent 34%),
-    radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.14), transparent 28%),
-    #020617;
+  background: #000;
 }
 
 /* Milkdown dark theme overrides */
 .milkdown {
   --crepe-color-background: transparent !important;
-  --crepe-color-surface: #0f172a !important;
-  --crepe-color-surface-low: #1e293b !important;
-  --crepe-color-on-background: #e2e8f0 !important;
-  --crepe-color-on-surface: #cbd5e1 !important;
-  --crepe-color-on-surface-variant: #94a3b8 !important;
-  --crepe-color-outline: #334155 !important;
-  --crepe-color-primary: #22d3ee !important;
-  --crepe-color-secondary: #1e293b !important;
-  --crepe-color-on-secondary: #e2e8f0 !important;
-  --crepe-color-inline-code: #67e8f9 !important;
-  --crepe-color-hover: #1e293b !important;
-  --crepe-color-selected: #164e63 !important;
-  --crepe-color-inline-area: #1e293b !important;
+  --crepe-color-surface: #111 !important;
+  --crepe-color-surface-low: #1a1a1a !important;
+  --crepe-color-on-background: #e5e5e5 !important;
+  --crepe-color-on-surface: #d4d4d4 !important;
+  --crepe-color-on-surface-variant: #737373 !important;
+  --crepe-color-outline: #262626 !important;
+  --crepe-color-primary: #ec4899 !important;
+  --crepe-color-secondary: #1a1a1a !important;
+  --crepe-color-on-secondary: #e5e5e5 !important;
+  --crepe-color-inline-code: #f472b6 !important;
+  --crepe-color-hover: #1a1a1a !important;
+  --crepe-color-selected: #831843 !important;
+  --crepe-color-inline-area: #1a1a1a !important;
   --crepe-font-default: inherit !important;
   background: transparent !important;
 }

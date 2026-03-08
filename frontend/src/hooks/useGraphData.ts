@@ -14,6 +14,30 @@ interface UseGraphDataResult {
 
 const fallbackGraphData = normalizeGraphData(mockGraphApiResponse);
 
+/** Merge API graph data on top of mock data. API nodes/edges override mock by id. */
+function mergeWithMock(apiData: GraphData): GraphData {
+  const apiNodeIds = new Set(apiData.nodes.map((n) => n.id));
+  const mockOnlyNodes = fallbackGraphData.nodes.filter((n) => !apiNodeIds.has(n.id));
+
+  const apiEdgeKeys = new Set(
+    apiData.links.map((l) => {
+      const s = typeof l.source === 'string' ? l.source : l.source.id;
+      const t = typeof l.target === 'string' ? l.target : l.target.id;
+      return `${s}->${t}`;
+    }),
+  );
+  const mockOnlyEdges = fallbackGraphData.links.filter((l) => {
+    const s = typeof l.source === 'string' ? l.source : l.source.id;
+    const t = typeof l.target === 'string' ? l.target : l.target.id;
+    return !apiEdgeKeys.has(`${s}->${t}`);
+  });
+
+  return {
+    nodes: [...mockOnlyNodes, ...apiData.nodes],
+    links: [...mockOnlyEdges, ...apiData.links],
+  };
+}
+
 export function useGraphData(): UseGraphDataResult {
   const [result, setResult] = useState<Omit<UseGraphDataResult, 'refetch'>>({
     data: fallbackGraphData,
@@ -47,13 +71,16 @@ export function useGraphData(): UseGraphDataResult {
             ? { ...payload, edges: (payload as { links: unknown[] }).links }
             : payload;
 
-        if (!validateGraphApiResponse(graphPayload) || graphPayload.nodes.length === 0) {
-          throw new Error('Empty or invalid graph payload');
+        if (!validateGraphApiResponse(graphPayload)) {
+          throw new Error('Invalid graph payload');
         }
 
+        const apiData = normalizeGraphData(graphPayload);
+        const merged = mergeWithMock(apiData);
+
         setResult({
-          data: normalizeGraphData(graphPayload),
-          source: 'api',
+          data: merged,
+          source: apiData.nodes.length > 0 ? 'api' : 'mock',
           isLoading: false,
           error: null,
         });

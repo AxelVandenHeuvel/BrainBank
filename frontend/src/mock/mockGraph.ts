@@ -6,76 +6,30 @@ interface MockDocument {
   full_text: string;
 }
 
-type MockPair = readonly [string, string];
+// ─── Concept nodes ───────────────────────────────────────────────
 
-interface MockEdgeDefinition {
-  source: string;
-  target: string;
-  reason?: string;
-  weight?: number;
-}
-
-interface MockDomainDefinition {
-  root: string;
-  concepts: string[];
-  internalPairs: MockPair[];
-  summary: string;
-  application: string;
-}
-
-interface GeneratedConceptContext {
-  domain: string;
-  domainNeighbors: string[];
-  bridgeNeighbors: string[];
-  summary: string;
-  application: string;
-}
-
-function createConceptNode(name: string) {
-  return {
-    id: `concept:${name}`,
-    type: 'Concept' as const,
-    name,
-  };
-}
-
-function createRelatedEdge({ source, target, reason, weight }: MockEdgeDefinition) {
-  return {
-    source: `concept:${source}`,
-    target: `concept:${target}`,
-    type: 'RELATED_TO',
-    reason,
-    weight,
-  };
-}
-
-function addNeighbor(map: Map<string, Set<string>>, source: string, target: string) {
-  if (!map.has(source)) {
-    map.set(source, new Set());
-  }
-
-  map.get(source)?.add(target);
-}
-
-function connectBidirectionally(map: Map<string, Set<string>>, left: string, right: string) {
-  addNeighbor(map, left, right);
-  addNeighbor(map, right, left);
-}
-
-const CURATED_CONCEPTS = [
+const CONCEPTS = [
+  // Math
   'Calculus',
   'Limits',
   'Derivatives',
   'Integrals',
   'Chain Rule',
   'Fundamental Theorem of Calculus',
+  'Differential Equations',
+  'Linear Algebra',
+  'Probability',
+
+  // Physics
   'Classical Mechanics',
-  'Newton\'s Laws',
+  "Newton's Laws",
   'Conservation of Energy',
   'Electromagnetism',
-  'Maxwell\'s Equations',
+  "Maxwell's Equations",
   'Thermodynamics',
   'Entropy',
+
+  // Philosophy
   'Epistemology',
   'Rationalism',
   'Empiricism',
@@ -83,439 +37,80 @@ const CURATED_CONCEPTS = [
   'Utilitarianism',
   'Existentialism',
   'Free Will',
+  'Determinism',
+
+  // Personal
   'Study Habits',
   'Time Management',
   'Motivation',
   'Career Goals',
-  'Differential Equations',
-  'Determinism',
 ] as const;
 
-const CURATED_EDGE_DEFINITIONS: ReadonlyArray<MockEdgeDefinition> = [
-  { source: 'Calculus', target: 'Limits' },
-  { source: 'Calculus', target: 'Derivatives' },
-  { source: 'Calculus', target: 'Integrals' },
-  { source: 'Derivatives', target: 'Chain Rule' },
-  { source: 'Integrals', target: 'Fundamental Theorem of Calculus' },
-  { source: 'Derivatives', target: 'Fundamental Theorem of Calculus' },
-  { source: 'Limits', target: 'Derivatives' },
-  { source: 'Classical Mechanics', target: 'Newton\'s Laws' },
-  { source: 'Classical Mechanics', target: 'Conservation of Energy' },
-  { source: 'Electromagnetism', target: 'Maxwell\'s Equations' },
-  { source: 'Thermodynamics', target: 'Entropy' },
-  { source: 'Thermodynamics', target: 'Conservation of Energy' },
-  { source: 'Epistemology', target: 'Rationalism' },
-  { source: 'Epistemology', target: 'Empiricism' },
-  { source: 'Ethics', target: 'Utilitarianism' },
-  { source: 'Existentialism', target: 'Free Will' },
-  { source: 'Rationalism', target: 'Empiricism' },
-  { source: 'Study Habits', target: 'Time Management' },
-  { source: 'Motivation', target: 'Study Habits' },
-  { source: 'Career Goals', target: 'Motivation' },
-  {
-    source: 'Calculus',
-    target: 'Classical Mechanics',
-    reason: 'Classical mechanics uses calculus to model motion and change.',
-  },
-  { source: 'Differential Equations', target: 'Calculus' },
-  { source: 'Differential Equations', target: 'Classical Mechanics' },
-  {
-    source: 'Derivatives',
-    target: 'Newton\'s Laws',
-    reason: 'Acceleration is the derivative of velocity, so mechanics depends on derivatives.',
-  },
-  { source: 'Entropy', target: 'Determinism' },
-  { source: 'Free Will', target: 'Determinism' },
-  { source: 'Determinism', target: 'Classical Mechanics' },
-  {
-    source: 'Existentialism',
-    target: 'Motivation',
-    reason: 'Existentialist writing reframes meaning-making as a source of motivation.',
-  },
-  {
-    source: 'Ethics',
-    target: 'Career Goals',
-    reason: 'Ethical tradeoffs shape what kind of work feels worth pursuing.',
-  },
-] as const;
+// ─── Edges ───────────────────────────────────────────────────────
 
-const GENERATED_DOMAINS: ReadonlyArray<MockDomainDefinition> = [
-  {
-    root: 'Computer Science',
-    concepts: [
-      'Algorithms',
-      'Data Structures',
-      'Distributed Systems',
-      'Databases',
-      'Machine Learning',
-      'Neural Networks',
-      'Information Theory',
-      'Computer Networks',
-    ],
-    internalPairs: [
-      ['Algorithms', 'Data Structures'],
-      ['Distributed Systems', 'Databases'],
-      ['Machine Learning', 'Neural Networks'],
-      ['Information Theory', 'Computer Networks'],
-    ],
-    summary:
-      'This cluster tracks how software systems represent information, learn patterns, and coordinate work across many machines.',
-    application:
-      'These concepts are the backbone for building products, training models, and reasoning about how information moves through a system.',
-  },
-  {
-    root: 'Biology',
-    concepts: [
-      'Cell Biology',
-      'Genetics',
-      'Evolution',
-      'Ecology',
-      'Neuroscience',
-      'Homeostasis',
-      'Microbiology',
-      'Immunology',
-    ],
-    internalPairs: [
-      ['Cell Biology', 'Genetics'],
-      ['Genetics', 'Evolution'],
-      ['Ecology', 'Homeostasis'],
-      ['Microbiology', 'Immunology'],
-    ],
-    summary:
-      'The biology cluster captures living systems from molecules and cells up through ecosystems and nervous systems.',
-    application:
-      'It helps show how mechanisms at one scale cascade into adaptation, behavior, and system-level stability.',
-  },
-  {
-    root: 'Economics',
-    concepts: [
-      'Microeconomics',
-      'Macroeconomics',
-      'Game Theory',
-      'Inflation',
-      'Supply and Demand',
-      'Monetary Policy',
-      'Behavioral Economics',
-      'Market Design',
-    ],
-    internalPairs: [
-      ['Microeconomics', 'Supply and Demand'],
-      ['Macroeconomics', 'Inflation'],
-      ['Monetary Policy', 'Inflation'],
-      ['Game Theory', 'Market Design'],
-    ],
-    summary:
-      'Economics models incentives, scarcity, and coordination from individual choices to system-wide policy effects.',
-    application:
-      'These nodes make it easier to show how decisions compound into markets, institutions, and long-run outcomes.',
-  },
-  {
-    root: 'Psychology',
-    concepts: [
-      'Cognitive Biases',
-      'Memory Consolidation',
-      'Learning Theory',
-      'Attention',
-      'Decision Making',
-      'Social Identity',
-      'Emotional Regulation',
-      'Habit Formation',
-    ],
-    internalPairs: [
-      ['Cognitive Biases', 'Decision Making'],
-      ['Memory Consolidation', 'Learning Theory'],
-      ['Attention', 'Emotional Regulation'],
-      ['Learning Theory', 'Habit Formation'],
-    ],
-    summary:
-      'Psychology explains how people perceive, remember, decide, and regulate behavior under real constraints.',
-    application:
-      'This area gives the graph human behavior anchors that connect naturally to studying, product design, and economics.',
-  },
-  {
-    root: 'Product Design',
-    concepts: [
-      'Product Strategy',
-      'User Research',
-      'Information Architecture',
-      'Design Systems',
-      'Prototyping',
-      'Accessibility',
-      'Feedback Loops',
-      'Metrics',
-    ],
-    internalPairs: [
-      ['Product Strategy', 'Metrics'],
-      ['User Research', 'Information Architecture'],
-      ['Design Systems', 'Accessibility'],
-      ['Prototyping', 'Feedback Loops'],
-    ],
-    summary:
-      'Product design sits at the intersection of user needs, interface structure, iteration speed, and measurable outcomes.',
-    application:
-      'These concepts create practical bridges from theory into how teams build software and evaluate whether it works.',
-  },
-  {
-    root: 'History',
-    concepts: [
-      'Enlightenment',
-      'Industrial Revolution',
-      'Colonialism',
-      'Democratic Institutions',
-      'Civil Rights',
-      'Cold War',
-      'Propaganda',
-      'Public Policy',
-    ],
-    internalPairs: [
-      ['Enlightenment', 'Democratic Institutions'],
-      ['Industrial Revolution', 'Colonialism'],
-      ['Civil Rights', 'Public Policy'],
-      ['Cold War', 'Propaganda'],
-    ],
-    summary:
-      'History shows how ideas, institutions, and power struggles evolve over time rather than appearing in isolation.',
-    application:
-      'It gives the mock graph a way to connect political choices, technological change, and ethical debates across eras.',
-  },
-  {
-    root: 'Arts',
-    concepts: [
-      'Narrative Structure',
-      'Poetry Analysis',
-      'Symbolism',
-      'Harmony',
-      'Rhythm',
-      'Composition',
-      'Visual Storytelling',
-      'Creative Process',
-    ],
-    internalPairs: [
-      ['Narrative Structure', 'Symbolism'],
-      ['Poetry Analysis', 'Symbolism'],
-      ['Harmony', 'Rhythm'],
-      ['Composition', 'Creative Process'],
-    ],
-    summary:
-      'The arts cluster focuses on how creators shape meaning through structure, pacing, sound, image, and revision.',
-    application:
-      'It adds a creative lane to the graph so interpretation and expression can connect to design, history, and motivation.',
-  },
-  {
-    root: 'Data Science',
-    concepts: [
-      'Probability',
-      'Bayesian Inference',
-      'Linear Algebra',
-      'Optimization',
-      'Statistics',
-      'Causal Inference',
-      'Signal Processing',
-      'Control Theory',
-    ],
-    internalPairs: [
-      ['Probability', 'Bayesian Inference'],
-      ['Linear Algebra', 'Optimization'],
-      ['Statistics', 'Causal Inference'],
-      ['Signal Processing', 'Control Theory'],
-    ],
-    summary:
-      'Data science connects mathematical modeling, inference, and systems thinking into one applied analytic toolkit.',
-    application:
-      'This cluster is where quantitative reasoning meets experimentation, forecasting, and feedback-driven control.',
-  },
-] as const;
-
-const BRIDGE_EDGE_DEFINITIONS: ReadonlyArray<MockEdgeDefinition> = [
-  {
-    source: 'Entropy',
-    target: 'Information Theory',
-    reason: 'Entropy links thermodynamics and information theory through uncertainty and state counting.',
-  },
-  {
-    source: 'Machine Learning',
-    target: 'Statistics',
-    reason: 'Machine learning depends on statistical estimation, evaluation, and generalization.',
-  },
-  {
-    source: 'Machine Learning',
-    target: 'Linear Algebra',
-    reason: 'Most model representations and training updates are expressed with linear algebra.',
-  },
-  {
-    source: 'Neural Networks',
-    target: 'Neuroscience',
-    reason: 'Neural networks borrow their language and intuition from neuroscience.',
-  },
-  {
-    source: 'Behavioral Economics',
-    target: 'Cognitive Biases',
-    reason: 'Behavioral economics studies how cognitive biases bend classical incentive models.',
-  },
-  {
-    source: 'Behavioral Economics',
-    target: 'Decision Making',
-    reason: 'Behavioral economics explains real-world decision making under bounded rationality.',
-  },
-  {
-    source: 'Ethics',
-    target: 'Accessibility',
-    reason: 'Accessibility is both a design practice and an ethical commitment to inclusion.',
-  },
-  {
-    source: 'Ethics',
-    target: 'Public Policy',
-    reason: 'Ethical frameworks shape how public policy evaluates fairness and harm.',
-  },
-  {
-    source: 'Motivation',
-    target: 'Habit Formation',
-    reason: 'Motivation spikes are fragile, so habit formation makes progress sustainable.',
-  },
-  {
-    source: 'Study Habits',
-    target: 'Learning Theory',
-    reason: 'Better study habits are usually applied learning theory in disguise.',
-  },
-  {
-    source: 'Epistemology',
-    target: 'Bayesian Inference',
-    reason: 'Bayesian inference is a formal way to update beliefs in light of evidence.',
-  },
-  {
-    source: 'Empiricism',
-    target: 'Statistics',
-    reason: 'Empiricism depends on evidence, and statistics helps turn observations into claims.',
-  },
-  {
-    source: 'Calculus',
-    target: 'Optimization',
-    reason: 'Optimization uses derivatives and curvature to locate better solutions.',
-  },
-  {
-    source: 'Differential Equations',
-    target: 'Control Theory',
-    reason: 'Control theory models system response with differential equations and feedback.',
-  },
-  {
-    source: 'Thermodynamics',
-    target: 'Homeostasis',
-    reason: 'Homeostasis is a biological version of managing energy flow and equilibrium.',
-  },
-  {
-    source: 'Classical Mechanics',
-    target: 'Control Theory',
-    reason: 'Control systems often begin with classical mechanics models of motion and force.',
-  },
-  {
-    source: 'Career Goals',
-    target: 'Product Strategy',
-    reason: 'Career planning and product strategy both force explicit tradeoffs and prioritization.',
-  },
-  {
-    source: 'Existentialism',
-    target: 'Creative Process',
-    reason: 'Existentialism often frames creative work as an act of choosing meaning.',
-  },
-  {
-    source: 'Civil Rights',
-    target: 'Ethics',
-    reason: 'Civil rights debates turn abstract ethical commitments into concrete institutional demands.',
-  },
-  {
-    source: 'Public Policy',
-    target: 'Market Design',
-    reason: 'Policy choices often reshape incentives by redesigning the rules of a market.',
-  },
-  {
-    source: 'Information Architecture',
-    target: 'Narrative Structure',
-    reason: 'Both information architecture and narrative structure shape how people move through meaning.',
-  },
-  {
-    source: 'Visual Storytelling',
-    target: 'User Research',
-    reason: 'Visual storytelling becomes stronger when it responds to audience attention and comprehension.',
-  },
-  {
-    source: 'Probability',
-    target: 'Game Theory',
-    reason: 'Strategic reasoning often depends on probabilistic expectations about other agents.',
-  },
-] as const;
-
-function createDomainEdges(domain: MockDomainDefinition) {
-  return [
-    ...domain.concepts.map((concept) =>
-      createRelatedEdge({
-        source: domain.root,
-        target: concept,
-        reason: `${domain.root} provides the umbrella context for ${concept}.`,
-      }),
-    ),
-    ...domain.internalPairs.map(([source, target]) =>
-      createRelatedEdge({
-        source,
-        target,
-        reason: `${source} and ${target} reinforce each other inside the ${domain.root} cluster.`,
-      }),
-    ),
-  ];
+interface EdgeDef {
+  source: string;
+  target: string;
+  reason?: string;
+  weight?: number;
 }
 
-const generatedConceptNodes = GENERATED_DOMAINS.flatMap((domain) => [
-  createConceptNode(domain.root),
-  ...domain.concepts.map(createConceptNode),
-]);
+const EDGES: EdgeDef[] = [
+  // Math internal — high weights for tightly coupled concepts
+  { source: 'Calculus', target: 'Limits', weight: 5 },
+  { source: 'Calculus', target: 'Derivatives', weight: 6 },
+  { source: 'Calculus', target: 'Integrals', weight: 6 },
+  { source: 'Derivatives', target: 'Chain Rule', weight: 4 },
+  { source: 'Integrals', target: 'Fundamental Theorem of Calculus', weight: 5 },
+  { source: 'Derivatives', target: 'Fundamental Theorem of Calculus', weight: 4 },
+  { source: 'Limits', target: 'Derivatives', weight: 3 },
+  { source: 'Differential Equations', target: 'Calculus', weight: 4 },
+  { source: 'Linear Algebra', target: 'Calculus', weight: 2, reason: 'Linear algebra provides the matrix framework for multivariable calculus.' },
+  { source: 'Probability', target: 'Calculus', weight: 2, reason: 'Continuous probability distributions require integration.' },
+  { source: 'Probability', target: 'Linear Algebra', weight: 2, reason: 'Covariance matrices and Markov chains sit in linear algebra.' },
 
-const generatedDomainEdges = GENERATED_DOMAINS.flatMap(createDomainEdges);
-const generatedBridgeEdges = BRIDGE_EDGE_DEFINITIONS.map(createRelatedEdge);
+  // Physics internal
+  { source: 'Classical Mechanics', target: "Newton's Laws", weight: 5 },
+  { source: 'Classical Mechanics', target: 'Conservation of Energy', weight: 4 },
+  { source: 'Electromagnetism', target: "Maxwell's Equations", weight: 5 },
+  { source: 'Thermodynamics', target: 'Entropy', weight: 4 },
+  { source: 'Thermodynamics', target: 'Conservation of Energy', weight: 3 },
 
-const generatedDomainNeighborMap = new Map<string, Set<string>>();
-GENERATED_DOMAINS.forEach((domain) => {
-  domain.concepts.forEach((concept) => {
-    connectBidirectionally(generatedDomainNeighborMap, domain.root, concept);
-  });
+  // Philosophy internal
+  { source: 'Epistemology', target: 'Rationalism', weight: 4 },
+  { source: 'Epistemology', target: 'Empiricism', weight: 4 },
+  { source: 'Ethics', target: 'Utilitarianism', weight: 3 },
+  { source: 'Existentialism', target: 'Free Will', weight: 4 },
+  { source: 'Rationalism', target: 'Empiricism', weight: 3 },
+  { source: 'Free Will', target: 'Determinism', weight: 3 },
 
-  domain.internalPairs.forEach(([left, right]) => {
-    connectBidirectionally(generatedDomainNeighborMap, left, right);
-  });
-});
+  // Personal internal
+  { source: 'Study Habits', target: 'Time Management', weight: 3 },
+  { source: 'Motivation', target: 'Study Habits', weight: 2 },
+  { source: 'Career Goals', target: 'Motivation', weight: 2 },
 
-const generatedBridgeNeighborMap = new Map<string, Set<string>>();
-BRIDGE_EDGE_DEFINITIONS.forEach(({ source, target }) => {
-  connectBidirectionally(generatedBridgeNeighborMap, source, target);
-});
+  // Cross-domain: Math ↔ Physics (strong links — student studies both)
+  { source: 'Calculus', target: 'Classical Mechanics', weight: 4, reason: 'Classical mechanics uses calculus to model motion and change.' },
+  { source: 'Differential Equations', target: 'Classical Mechanics', weight: 3, reason: 'F=ma is a differential equation in disguise.' },
+  { source: 'Derivatives', target: "Newton's Laws", weight: 3, reason: 'Acceleration is the derivative of velocity.' },
+  { source: 'Linear Algebra', target: 'Electromagnetism', weight: 1, reason: 'Maxwell\'s equations use vector fields and linear operators.' },
 
-const generatedConceptContext = new Map<string, GeneratedConceptContext>();
-GENERATED_DOMAINS.forEach((domain) => {
-  const domainConcepts = [domain.root, ...domain.concepts];
+  // Cross-domain: Physics ↔ Philosophy (weaker, conceptual links)
+  { source: 'Entropy', target: 'Determinism', weight: 2, reason: 'The second law gives time a direction, complicating pure determinism.' },
+  { source: 'Determinism', target: 'Classical Mechanics', weight: 1, reason: 'Laplace\'s demon: if you know every particle, you can predict the future.' },
 
-  domainConcepts.forEach((conceptName) => {
-    generatedConceptContext.set(conceptName, {
-      domain: domain.root,
-      domainNeighbors: Array.from(generatedDomainNeighborMap.get(conceptName) ?? []),
-      bridgeNeighbors: Array.from(generatedBridgeNeighborMap.get(conceptName) ?? []),
-      summary: domain.summary,
-      application: domain.application,
-    });
-  });
-});
+  // Cross-domain: Philosophy ↔ Personal (personal reflections)
+  { source: 'Existentialism', target: 'Motivation', weight: 2, reason: 'Camus reframes the struggle for meaning as a source of motivation.' },
+  { source: 'Ethics', target: 'Career Goals', weight: 1, reason: 'Ethical tradeoffs shape what kind of work feels worth pursuing.' },
 
-export const mockGraphApiResponse: GraphApiResponse = {
-  nodes: [
-    ...CURATED_CONCEPTS.map(createConceptNode),
-    ...generatedConceptNodes,
-  ],
-  edges: [
-    ...CURATED_EDGE_DEFINITIONS.map(createRelatedEdge),
-    ...generatedDomainEdges,
-    ...generatedBridgeEdges,
-  ],
-};
+  // Cross-domain: Math ↔ Philosophy (intellectual bridges)
+  { source: 'Epistemology', target: 'Probability', weight: 1, reason: 'Bayesian reasoning is formal epistemology — updating beliefs with evidence.' },
+  { source: 'Empiricism', target: 'Probability', weight: 1, reason: 'Empiricism needs statistics to turn observations into claims.' },
+];
 
-const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
-  // ── Calculus ──
+// ─── Documents ───────────────────────────────────────────────────
+
+const DOCUMENTS: Record<string, MockDocument[]> = {
   Calculus: [
     {
       doc_id: 'calc-limits',
@@ -564,8 +159,30 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         '# Fundamental Theorem of Calculus\n\nPart 1: d/dx ∫[a,x] f(t)dt = f(x). Differentiation undoes integration.\nPart 2: ∫[a,b] f(x)dx = F(b) - F(a). To evaluate a definite integral, find any antiderivative and subtract.\n\nThis theorem is why calculus works as a unified subject instead of two disconnected topics.',
     },
   ],
-
-  // ── Physics ──
+  'Differential Equations': [
+    {
+      doc_id: 'math-diffeq',
+      name: 'Differential Equations Overview',
+      full_text:
+        '# Differential Equations in Mechanics\n\nF = ma is really m·d²x/dt² = F(x,v,t) — a second-order differential equation. Simple harmonic motion (springs, pendulums) gives x\'\' = -ω²x, which has sin and cos solutions.\n\nThis is where calculus and physics merge. The math I\'m learning in calc class is literally the tool for solving physics problems.\n\n## Separable equations\nIf you can write dy/dx = f(x)g(y), separate and integrate both sides. These show up everywhere in population growth and radioactive decay.',
+    },
+  ],
+  'Linear Algebra': [
+    {
+      doc_id: 'math-linalg',
+      name: 'Matrix Transformations Notes',
+      full_text:
+        '# Matrix Transformations Notes\n\n## Why matrices matter\nA matrix is a linear transformation. When I multiply a vector by a matrix, I\'m rotating, scaling, or projecting it.\n\n## Key ideas\n- Eigenvalues tell you the scaling factor along each eigenvector direction\n- The determinant tells you how much the transformation stretches or squishes area\n- Singular matrices squish everything down a dimension — that\'s why they\'re not invertible\n\n## Connection to diff eq\nSystems of differential equations become matrix equations. The eigenvalues of the coefficient matrix determine whether solutions grow, decay, or oscillate.',
+    },
+  ],
+  Probability: [
+    {
+      doc_id: 'math-probability',
+      name: 'Probability Midterm Review',
+      full_text:
+        '# Probability Midterm Review\n\n## Bayes\' Theorem\nP(A|B) = P(B|A)P(A) / P(B). This keeps showing up. The intuition: update your belief about A after observing B.\n\n## Distributions I need to know\n- Binomial: n independent yes/no trials\n- Poisson: counting rare events in a fixed interval\n- Normal: the bell curve, central limit theorem says everything converges to it\n\n## Connection to philosophy\nBayesian reasoning is basically formal epistemology — you start with a prior belief and update it with evidence. Hume would approve.',
+    },
+  ],
   'Classical Mechanics': [
     {
       doc_id: 'phys-mechanics',
@@ -574,7 +191,7 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         '# Mechanics Problem Set Notes\n\n## Newton\'s Laws recap\n1. An object stays at rest or in motion unless a net force acts on it\n2. F = ma — this is where 90% of the problem sets live\n3. Every action has an equal and opposite reaction\n\n## Energy approach\nWhen forces get complicated, switch to conservation of energy. The total kinetic + potential energy stays constant if there\'s no friction or external work. I find the energy method faster than free-body diagrams for inclined-plane problems.\n\n## Calculus connection\nVelocity is the derivative of position, acceleration is the derivative of velocity. So mechanics problems are really just differential equations in disguise.',
     },
   ],
-  'Newton\'s Laws': [
+  "Newton's Laws": [
     {
       doc_id: 'phys-mechanics',
       name: 'Mechanics Problem Set Notes',
@@ -598,7 +215,7 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         '# Electromagnetism Lecture Notes\n\n## Coulomb\'s Law\nElectric force between two charges: F = kq₁q₂/r². Looks just like gravity but with charge instead of mass, and it can repel.\n\n## Electric fields\nE = F/q. The field is the force per unit charge. Field lines go from positive to negative.\n\n## Maxwell\'s Equations\nFour equations that unify electricity and magnetism:\n1. Gauss\'s law for E: charges create electric fields\n2. Gauss\'s law for B: no magnetic monopoles\n3. Faraday\'s law: changing B creates E\n4. Ampère-Maxwell: currents and changing E create B\n\nThe professor said these four equations contain all of classical electromagnetism. Light is just an electromagnetic wave predicted by these equations.',
     },
   ],
-  'Maxwell\'s Equations': [
+  "Maxwell's Equations": [
     {
       doc_id: 'phys-em',
       name: 'Electromagnetism Lecture Notes',
@@ -622,8 +239,6 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         '# Entropy\n\nS = k·ln(Ω) where Ω is the number of microstates. Higher entropy = more ways to arrange the system. The second law says entropy always increases in isolated systems, which is why you can\'t unscramble an egg.\n\nThis connects to information theory too — Shannon entropy measures uncertainty in a message, and the math is almost identical.',
     },
   ],
-
-  // ── Philosophy ──
   Epistemology: [
     {
       doc_id: 'phil-epistemology',
@@ -680,8 +295,14 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         '# Free Will\n\nSartre says we\'re condemned to be free — no excuses, full responsibility for every choice.\n\nBut my physics professor brought up Laplace\'s demon — if you knew the position and velocity of every particle, you could predict the entire future. That\'s hard determinism, and it seems to contradict free will.\n\nMaybe compatibilism is the answer: free will is compatible with determinism because "free" just means "not coerced," not "uncaused."',
     },
   ],
-
-  // ── Personal / Journal ──
+  Determinism: [
+    {
+      doc_id: 'phil-existentialism',
+      name: 'Existentialism Reading Notes',
+      full_text:
+        '# Determinism\n\nLaplace\'s demon: if you knew every particle\'s position and velocity, you could predict the entire future of the universe. Classical mechanics is deterministic — same initial conditions always give same outcomes.\n\nBut: quantum mechanics introduces genuine randomness. And chaos theory means even deterministic systems are unpredictable in practice. So maybe the universe is deterministic but unfollowable.\n\nThe entropy connection is interesting too — the second law of thermodynamics gives time a direction, even though Newton\'s laws are time-reversible.',
+    },
+  ],
   'Study Habits': [
     {
       doc_id: 'journal-semester-goals',
@@ -726,23 +347,26 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         '# Career Goals\n\nI\'m thinking about grad school for applied math or computational physics. Need to get my GPA up and maybe find a research position this summer.\n\nAlternatively, tech companies hire physics/math majors for quantitative roles. The ethics seminar made me think about whether I want to work in AI — interesting but the ethical questions are real.\n\nEither way, I need to build actual projects, not just do homework.',
     },
   ],
-  'Differential Equations': [
-    {
-      doc_id: 'phys-mechanics',
-      name: 'Mechanics Problem Set Notes',
-      full_text:
-        '# Differential Equations in Mechanics\n\nF = ma is really m·d²x/dt² = F(x,v,t) — a second-order differential equation. Simple harmonic motion (springs, pendulums) gives x\'\' = -ω²x, which has sin and cos solutions.\n\nThis is where calculus and physics merge. The math I\'m learning in calc class is literally the tool for solving physics problems.',
-    },
-  ],
-  Determinism: [
-    {
-      doc_id: 'phil-existentialism',
-      name: 'Existentialism Reading Notes',
-      full_text:
-        '# Determinism\n\nLaplace\'s demon: if you knew every particle\'s position and velocity, you could predict the entire future of the universe. Classical mechanics is deterministic — same initial conditions always give same outcomes.\n\nBut: quantum mechanics introduces genuine randomness. And chaos theory means even deterministic systems are unpredictable in practice. So maybe the universe is deterministic but unfollowable.\n\nThe entropy connection is interesting too — the second law of thermodynamics gives time a direction, even though Newton\'s laws are time-reversible.',
-    },
-  ],
 };
+
+// ─── Build the graph response ────────────────────────────────────
+
+export const mockGraphApiResponse: GraphApiResponse = {
+  nodes: CONCEPTS.map((name) => ({
+    id: `concept:${name}`,
+    type: 'Concept' as const,
+    name,
+  })),
+  edges: EDGES.map(({ source, target, reason, weight }) => ({
+    source: `concept:${source}`,
+    target: `concept:${target}`,
+    type: 'RELATED_TO',
+    reason,
+    weight,
+  })),
+};
+
+// ─── Relationship details for edge clicks ────────────────────────
 
 export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> = {
   'concept:Calculus->concept:Derivatives': {
@@ -751,39 +375,23 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
     type: 'RELATED_TO',
     reason: 'Derivatives are the central tool of differential calculus, measuring instantaneous rates of change',
     source_documents: [
-      {
-        doc_id: 'calc-limits',
-        name: 'Limits and Continuity Review',
-        full_text: 'Calculus starts with limits because they tell us what a function is trying to do near a point.',
-      },
+      { doc_id: 'calc-limits', name: 'Limits and Continuity Review', full_text: 'Calculus starts with limits because they tell us what a function is trying to do near a point.' },
     ],
     target_documents: [
-      {
-        doc_id: 'calc-derivatives',
-        name: 'Derivative Rules Study Guide',
-        full_text: 'Derivatives measure instantaneous change. Power rule, product rule, chain rule.',
-      },
+      { doc_id: 'calc-derivatives', name: 'Derivative Rules Study Guide', full_text: 'Derivatives measure instantaneous change. Power rule, product rule, chain rule.' },
     ],
     shared_document_ids: [],
   },
-  'concept:Derivatives->concept:Newton\'s Laws': {
+  "concept:Derivatives->concept:Newton's Laws": {
     source: 'Derivatives',
-    target: 'Newton\'s Laws',
+    target: "Newton's Laws",
     type: 'RELATED_TO',
-    reason: 'Newton\'s second law F=ma is a differential equation — acceleration is the second derivative of position',
+    reason: "Newton's second law F=ma is a differential equation — acceleration is the second derivative of position",
     source_documents: [
-      {
-        doc_id: 'calc-derivatives',
-        name: 'Derivative Rules Study Guide',
-        full_text: 'Derivatives measure instantaneous change.',
-      },
+      { doc_id: 'calc-derivatives', name: 'Derivative Rules Study Guide', full_text: 'Derivatives measure instantaneous change.' },
     ],
     target_documents: [
-      {
-        doc_id: 'phys-mechanics',
-        name: 'Mechanics Problem Set Notes',
-        full_text: 'F = ma — velocity is the derivative of position, acceleration is the derivative of velocity.',
-      },
+      { doc_id: 'phys-mechanics', name: 'Mechanics Problem Set Notes', full_text: 'F = ma — velocity is the derivative of position, acceleration is the derivative of velocity.' },
     ],
     shared_document_ids: [],
   },
@@ -793,18 +401,10 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
     type: 'RELATED_TO',
     reason: 'The second law of thermodynamics gives time a direction, challenging pure determinism with statistical irreversibility',
     source_documents: [
-      {
-        doc_id: 'phys-thermo',
-        name: 'Thermodynamics Midterm Review',
-        full_text: 'Entropy always increases in isolated systems. This gives time a direction — the arrow of time.',
-      },
+      { doc_id: 'phys-thermo', name: 'Thermodynamics Midterm Review', full_text: 'Entropy always increases in isolated systems. This gives time a direction — the arrow of time.' },
     ],
     target_documents: [
-      {
-        doc_id: 'phil-existentialism',
-        name: 'Existentialism Reading Notes',
-        full_text: 'Newton\'s laws are time-reversible but thermodynamics gives time a direction via entropy.',
-      },
+      { doc_id: 'phil-existentialism', name: 'Existentialism Reading Notes', full_text: "Newton's laws are time-reversible but thermodynamics gives time a direction via entropy." },
     ],
     shared_document_ids: [],
   },
@@ -814,18 +414,10 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
     type: 'RELATED_TO',
     reason: 'The free will debate directly opposes existentialist freedom against physical determinism',
     source_documents: [
-      {
-        doc_id: 'phil-existentialism',
-        name: 'Existentialism Reading Notes',
-        full_text: 'Sartre says we are condemned to be free — no excuses, full responsibility.',
-      },
+      { doc_id: 'phil-existentialism', name: 'Existentialism Reading Notes', full_text: 'Sartre says we are condemned to be free — no excuses, full responsibility.' },
     ],
     target_documents: [
-      {
-        doc_id: 'phil-existentialism',
-        name: 'Existentialism Reading Notes',
-        full_text: 'Laplace\'s demon: if you knew every particle\'s state, you could predict the entire future.',
-      },
+      { doc_id: 'phil-existentialism', name: 'Existentialism Reading Notes', full_text: "Laplace's demon: if you knew every particle's state, you could predict the entire future." },
     ],
     shared_document_ids: ['phil-existentialism'],
   },
@@ -833,20 +425,12 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
     source: 'Existentialism',
     target: 'Motivation',
     type: 'RELATED_TO',
-    reason: 'Camus\'s absurdism reframes the struggle for meaning as a source of personal motivation',
+    reason: "Camus's absurdism reframes the struggle for meaning as a source of personal motivation",
     source_documents: [
-      {
-        doc_id: 'phil-existentialism',
-        name: 'Existentialism Reading Notes',
-        full_text: 'Camus: the struggle itself is enough to fill a heart.',
-      },
+      { doc_id: 'phil-existentialism', name: 'Existentialism Reading Notes', full_text: 'Camus: the struggle itself is enough to fill a heart.' },
     ],
     target_documents: [
-      {
-        doc_id: 'journal-burnout',
-        name: 'Feeling Burned Out - Feb 2026',
-        full_text: 'Read some Camus last night and it helped — maybe the point isn\'t perfect grades but actually understanding things.',
-      },
+      { doc_id: 'journal-burnout', name: 'Feeling Burned Out - Feb 2026', full_text: "Read some Camus last night and it helped — maybe the point isn't perfect grades but actually understanding things." },
     ],
     shared_document_ids: [],
   },
@@ -856,82 +440,27 @@ export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> 
     type: 'RELATED_TO',
     reason: 'Ethics seminar discussions about AI ethics directly inform career direction decisions',
     source_documents: [
-      {
-        doc_id: 'phil-ethics',
-        name: 'Ethics Seminar Notes',
-        full_text: 'If I end up in AI, these ethical frameworks matter — is it ethical to deploy a 95% accurate model if errors disproportionately affect minorities?',
-      },
+      { doc_id: 'phil-ethics', name: 'Ethics Seminar Notes', full_text: 'If I end up in AI, these ethical frameworks matter — is it ethical to deploy a 95% accurate model if errors disproportionately affect minorities?' },
     ],
     target_documents: [
-      {
-        doc_id: 'journal-semester-goals',
-        name: 'Semester Goals - Jan 2026',
-        full_text: 'The ethics seminar made me think about whether I want to work in AI.',
-      },
+      { doc_id: 'journal-semester-goals', name: 'Semester Goals - Jan 2026', full_text: 'The ethics seminar made me think about whether I want to work in AI.' },
     ],
     shared_document_ids: [],
   },
 };
 
-function buildGeneratedMockDocument(conceptName: string): MockDocument | null {
-  const context = generatedConceptContext.get(conceptName);
-
-  if (!context) {
-    return null;
-  }
-
-  const nearbyConcepts = context.domainNeighbors
-    .filter((neighbor) => neighbor !== conceptName)
-    .slice(0, 3);
-  const bridgeConcepts = context.bridgeNeighbors
-    .filter((neighbor) => neighbor !== conceptName)
-    .slice(0, 3);
-
-  const nearbyLines =
-    nearbyConcepts.length > 0
-      ? nearbyConcepts
-          .map(
-            (neighbor) =>
-              `- ${neighbor} stays close to ${conceptName} inside the ${context.domain} cluster.`,
-          )
-          .join('\n')
-      : `- ${context.domain} is the main anchor concept for ${conceptName} in this mock graph.`;
-
-  const bridgeLines =
-    bridgeConcepts.length > 0
-      ? bridgeConcepts
-          .map(
-            (neighbor) =>
-              `- ${conceptName} also reaches into ${neighbor}, which helps the mock graph show cross-domain structure.`,
-          )
-          .join('\n')
-      : `- ${conceptName} mostly reinforces the internal shape of the ${context.domain} cluster.`;
-
-  return {
-    doc_id: `mock-${conceptName.toLowerCase().replace(/\s+/g, '-')}`,
-    name: `${conceptName} Field Notes`,
-    full_text: `# ${conceptName}\n\n${conceptName} sits inside the ${context.domain} cluster of the BrainBank mock graph. ${context.summary}\n\n## Why it matters\n${context.application}\n\n## Nearby concepts\n${nearbyLines}\n\n## Cross-domain links\n${bridgeLines}`,
-  };
-}
+// ─── Document lookup ─────────────────────────────────────────────
 
 export function getMockDocumentsForConcept(conceptName: string): MockDocument[] {
-  const curatedDocuments = MOCK_CONCEPT_DOCUMENTS[conceptName];
+  const docs = DOCUMENTS[conceptName];
+  if (docs) return docs;
 
-  if (curatedDocuments) {
-    return curatedDocuments;
-  }
-
-  const generatedDocument = buildGeneratedMockDocument(conceptName);
-
-  if (generatedDocument) {
-    return [generatedDocument];
-  }
-
+  // Fallback for any concept not in the map
   return [
     {
       doc_id: `mock-${conceptName.toLowerCase().replace(/\s+/g, '-')}`,
-      name: `${conceptName} Notes.md`,
-      full_text: `Research notes and observations about ${conceptName}.`,
+      name: `${conceptName} Notes`,
+      full_text: `# ${conceptName}\n\nResearch notes and observations about ${conceptName}.`,
     },
   ];
 }

@@ -49,6 +49,11 @@ def _init_schema(conn: kuzu.Connection) -> None:
     conn.execute(
         "CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept, reason STRING, weight DOUBLE, edge_type STRING)"
     )
+    # Add weight to existing databases that predate this column.
+    try:
+        conn.execute("ALTER TABLE RELATED_TO ADD weight DOUBLE DEFAULT 1.0")
+    except Exception:
+        pass  # Column already present.
     # Add edge_type to existing databases that predate this column.
     try:
         conn.execute("ALTER TABLE RELATED_TO ADD edge_type STRING DEFAULT 'RELATED_TO'")

@@ -75,7 +75,7 @@ describe('ChatPanel', () => {
 
     render(<ChatPanel />);
 
-    const input = screen.getByLabelText('Ask BrainBank');
+    const input = screen.getByLabelText('Ask braen');
     await user.type(input, 'Where should I focus next?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 

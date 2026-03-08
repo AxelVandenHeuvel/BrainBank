@@ -18,16 +18,16 @@ function DocumentList({ title, documents }: DocumentListProps) {
   }
 
   return (
-    <section className="space-y-3">
-      <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+    <section className="space-y-2">
+      <h3 className="text-sm font-medium text-neutral-200">{title}</h3>
       <ul className="space-y-2">
         {documents.map((document) => (
           <li
             key={document.doc_id}
-            className="rounded-2xl border border-white/10 bg-slate-900/70 p-3"
+            className="border border-white/[0.06] bg-neutral-950 p-3"
           >
-            <p className="text-sm font-medium text-sky-200">{document.name}</p>
-            <p className="mt-1 text-xs leading-5 text-slate-300">
+            <p className="text-sm font-medium text-pink-300">{document.name}</p>
+            <p className="mt-1 text-xs leading-5 text-neutral-400">
               {document.full_text}
             </p>
           </li>
@@ -60,18 +60,18 @@ export function EdgeDetailPanel({
     : [];
 
   return (
-    <aside className="absolute bottom-4 left-4 z-10 w-[24rem] max-w-[calc(100%-2rem)] rounded-[1.75rem] border border-white/10 bg-slate-950/90 p-5 shadow-[0_30px_80px_rgba(2,6,23,0.7)] backdrop-blur">
+    <aside className="absolute bottom-4 left-4 z-10 w-[24rem] max-w-[calc(100%-2rem)] border border-white/[0.08] bg-black/95 p-4 shadow-xl backdrop-blur">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+          <p className="text-[10px] uppercase tracking-widest text-neutral-500">
             Relationship
           </p>
           {relationship ? (
-            <h2 className="mt-2 text-lg font-semibold text-white">
+            <h2 className="mt-1.5 text-lg font-semibold text-white">
               {relationship.source} to {relationship.target}
             </h2>
           ) : (
-            <h2 className="mt-2 text-lg font-semibold text-white">
+            <h2 className="mt-1.5 text-lg font-semibold text-white">
               Relationship details
             </h2>
           )}
@@ -80,18 +80,18 @@ export function EdgeDetailPanel({
           type="button"
           onClick={onClose}
           aria-label="Close relationship details"
-          className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1 text-sm text-slate-200 transition hover:bg-slate-800"
+          className="border border-white/[0.06] bg-neutral-950 px-3 py-1 text-sm text-neutral-300 transition hover:text-white"
         >
           Close
         </button>
       </div>
 
       {isLoading ? (
-        <p className="mt-4 text-sm text-slate-300">Loading relationship details...</p>
+        <p className="mt-4 text-sm text-neutral-400">Loading relationship details...</p>
       ) : null}
 
       {!isLoading && error ? (
-        <p className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+        <p className="mt-4 border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
           {error}
         </p>
       ) : null}
@@ -99,10 +99,10 @@ export function EdgeDetailPanel({
       {!isLoading && relationship ? (
         <div className="mt-4 space-y-4">
           <div className="flex items-center gap-3">
-            <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1 text-xs font-semibold tracking-[0.24em] text-sky-200">
+            <span className="border border-pink-500/30 bg-pink-500/10 px-2.5 py-1 text-xs font-medium text-pink-300">
               {relationship.type}
             </span>
-            <p className="text-sm text-slate-200">{relationship.reason}</p>
+            <p className="text-sm text-neutral-300">{relationship.reason}</p>
           </div>
           {!error ? (
             <>

@@ -11,6 +11,8 @@ from tests.conftest import (
     mock_extract_concepts,
 )
 
+LANCE_PATH_HOLDER = {"path": None}
+
 client = TestClient(app)
 
 
@@ -18,6 +20,9 @@ client = TestClient(app)
 def isolate_graph_data(monkeypatch, lance_path, kuzu_path):
     # init_kuzu initialises schema and returns (db, conn); we only need the db.
     real_kuzu_db, _ = real_init_kuzu(kuzu_path)
+
+    # Store lance_path so update-document tests can verify data directly.
+    LANCE_PATH_HOLDER["path"] = lance_path
 
     # Route all per-request Kuzu connections to the isolated test DB.
     # get_db_connection() calls get_kuzu_engine() which reads _db_instance at
@@ -36,6 +41,29 @@ def isolate_graph_data(monkeypatch, lance_path, kuzu_path):
     monkeypatch.setattr(
         "backend.ingestion.processor.init_lancedb",
         lambda path="./data/lancedb": real_init_lancedb(lance_path),
+    )
+
+    # Route delete_document_chunks to use the isolated test path.
+    from backend.db.lance import delete_document_chunks as real_delete
+    monkeypatch.setattr(
+        "backend.api_graph.delete_document_chunks",
+        lambda db_path, doc_id: real_delete(lance_path, doc_id),
+    )
+
+    # Route update_document_text to use the isolated test path.
+    from backend.db.lance import update_document_text as real_update_text
+    monkeypatch.setattr(
+        "backend.api_graph.update_document_text",
+        lambda db_path, doc_id, doc_name, new_text: real_update_text(lance_path, doc_id, doc_name, new_text),
+    )
+
+    # Route ingest_markdown in api_graph to use the isolated test path.
+    from backend.ingestion.processor import ingest_markdown as real_ingest
+    monkeypatch.setattr(
+        "backend.api_graph.ingest_markdown",
+        lambda text, title, shared_kuzu_db=None, doc_id=None: real_ingest(
+            text, title, lance_db_path=lance_path, shared_kuzu_db=shared_kuzu_db, doc_id=doc_id,
+        ),
     )
 
 
@@ -521,4 +549,79 @@ class TestGetLatentDiscovery:
         data = response.json()
         assert data["concept_name"] == "NonExistent"
         assert data["results"] == []
+
+
+class TestUpdateDocument:
+    def _ingest_and_get_doc_id(self, title="Math Notes", text="Calculus is about Derivatives and Integrals."):
+        """Ingest a document and return its doc_id."""
+        with (
+            patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts),
+            patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts),
+            patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
+        ):
+            resp = client.post("/ingest", json={"text": text, "title": title})
+        return resp.json()["doc_id"]
+
+    def test_lightweight_save_returns_doc_id(self):
+        """PUT should quickly save text without re-ingesting."""
+        doc_id = self._ingest_and_get_doc_id()
+
+        resp = client.put(
+            f"/api/documents/{doc_id}",
+            json={"text": "Updated content.", "title": "Updated Title"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["doc_id"] == doc_id
+        assert data["status"] == "saved"
+
+    def test_lightweight_save_updates_text(self):
+        """After PUT, the document text should be updated."""
+        doc_id = self._ingest_and_get_doc_id()
+
+        client.put(
+            f"/api/documents/{doc_id}",
+            json={"text": "Biology is about Cells.", "title": "Bio Notes"},
+        )
+
+        resp = client.get("/api/documents")
+        docs = resp.json()["documents"]
+        matching = [d for d in docs if d["doc_id"] == doc_id]
+        assert len(matching) == 1
+        assert matching[0]["name"] == "Bio Notes"
+
+    def test_lightweight_save_nonexistent_returns_404(self):
+        """PUT with a doc_id that does not exist should return 404."""
+        fake_id = "nonexistent-doc-id-12345"
+
+        resp = client.put(
+            f"/api/documents/{fake_id}",
+            json={"text": "Does not exist.", "title": "Ghost"},
+        )
+
+        assert resp.status_code == 404
+
+    def test_reingest_returns_concepts(self):
+        """POST reingest should run full pipeline and return concepts."""
+        doc_id = self._ingest_and_get_doc_id()
+
+        with (
+            patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts),
+            patch("backend.ingestion.processor.extract_concepts", return_value={
+                "concepts": ["Chemistry", "Atoms"],
+                "relationships": [],
+            }),
+            patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
+        ):
+            resp = client.post(
+                f"/api/documents/{doc_id}/reingest",
+                json={"text": "Chemistry is about Atoms.", "title": "Chem Notes"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["doc_id"] == doc_id
+        assert "Chemistry" in data["concepts"]
+        assert "Atoms" in data["concepts"]
 

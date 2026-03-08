@@ -1,0 +1,139 @@
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+
+import { FileExplorer } from './FileExplorer';
+
+// Mock the useFileTree hook
+vi.mock('../hooks/useFileTree', () => ({
+  useFileTree: vi.fn(),
+}));
+
+import { useFileTree } from '../hooks/useFileTree';
+
+const mockUseFileTree = vi.mocked(useFileTree);
+
+const MOCK_TREE = [
+  {
+    name: 'Algebra',
+    documents: [{ docId: 'doc-3', name: 'Linear Equations' }],
+  },
+  {
+    name: 'Calculus',
+    documents: [
+      { docId: 'doc-1', name: 'Derivatives Notes' },
+      { docId: 'doc-2', name: 'Mechanics Overview' },
+    ],
+  },
+  {
+    name: 'Physics',
+    documents: [{ docId: 'doc-2', name: 'Mechanics Overview' }],
+  },
+];
+
+describe('FileExplorer', () => {
+  it('renders concept folders', () => {
+    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
+
+    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+
+    expect(screen.getByText('Algebra')).toBeInTheDocument();
+    expect(screen.getByText('Calculus')).toBeInTheDocument();
+    expect(screen.getByText('Physics')).toBeInTheDocument();
+  });
+
+  it('clicking a folder expands it showing documents', async () => {
+    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
+    const user = userEvent.setup();
+
+    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+
+    // Documents should not be visible initially
+    expect(screen.queryByText('Derivatives Notes')).not.toBeInTheDocument();
+
+    // Click the Calculus folder
+    await user.click(screen.getByText('Calculus'));
+
+    // Now documents should be visible
+    expect(screen.getByText('Derivatives Notes')).toBeInTheDocument();
+    expect(screen.getByText('Mechanics Overview')).toBeInTheDocument();
+  });
+
+  it('clicking an expanded folder collapses it', async () => {
+    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
+    const user = userEvent.setup();
+
+    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+
+    // Expand
+    await user.click(screen.getByText('Calculus'));
+    expect(screen.getByText('Derivatives Notes')).toBeInTheDocument();
+
+    // Collapse
+    await user.click(screen.getByText('Calculus'));
+    expect(screen.queryByText('Derivatives Notes')).not.toBeInTheDocument();
+  });
+
+  it('clicking a document calls onOpenDocument with correct args', async () => {
+    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
+    const user = userEvent.setup();
+    const onOpenDocument = vi.fn();
+
+    render(<FileExplorer highlightedConcept={null} onOpenDocument={onOpenDocument} />);
+
+    // Expand Calculus folder
+    await user.click(screen.getByText('Calculus'));
+
+    // Click a document
+    await user.click(screen.getByText('Derivatives Notes'));
+
+    expect(onOpenDocument).toHaveBeenCalledWith('doc-1', 'Derivatives Notes', 'Calculus');
+  });
+
+  it('highlightedConcept auto-expands that folder', async () => {
+    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
+
+    render(<FileExplorer highlightedConcept="Physics" onOpenDocument={vi.fn()} />);
+
+    // Physics folder should be auto-expanded
+    await waitFor(() => {
+      expect(screen.getByText('Mechanics Overview')).toBeInTheDocument();
+    });
+  });
+
+  it('changing highlightedConcept expands the new folder', async () => {
+    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
+
+    const { rerender } = render(
+      <FileExplorer highlightedConcept="Physics" onOpenDocument={vi.fn()} />,
+    );
+
+    // Physics should be expanded
+    await waitFor(() => {
+      expect(screen.getByText('Mechanics Overview')).toBeInTheDocument();
+    });
+
+    // Change to Algebra
+    rerender(<FileExplorer highlightedConcept="Algebra" onOpenDocument={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Linear Equations')).toBeInTheDocument();
+    });
+  });
+
+  it('shows loading state', () => {
+    mockUseFileTree.mockReturnValue({ tree: [], isLoading: true, refetch: vi.fn() });
+
+    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+  });
+
+  it('shows empty state when tree is empty', () => {
+    mockUseFileTree.mockReturnValue({ tree: [], isLoading: false, refetch: vi.fn() });
+
+    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+
+    expect(screen.getByText(/no concepts yet/i)).toBeInTheDocument();
+  });
+});

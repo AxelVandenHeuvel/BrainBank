@@ -1,4 +1,4 @@
-from backend.db.lance import init_lancedb, find_existing_document
+from backend.db.lance import init_lancedb, find_existing_document, delete_document_chunks
 from tests.conftest import mock_embed_texts
 
 
@@ -94,3 +94,71 @@ class TestFindExistingDocument:
         assert "member_concepts" in field_names
         assert "summary" in field_names
         assert "summary_vector" in field_names
+
+
+class TestDeleteDocumentChunks:
+    def test_deletes_chunks_for_given_doc_id(self, lance_path):
+        """Should delete all chunks belonging to the specified doc_id."""
+        _, table = init_lancedb(lance_path)
+        vec = mock_embed_texts(["chunk"])[0]
+        table.add([
+            {"chunk_id": "c1", "doc_id": "doc-1", "doc_name": "Doc A", "text": "a", "concepts": ["X"], "vector": vec},
+            {"chunk_id": "c2", "doc_id": "doc-1", "doc_name": "Doc A", "text": "b", "concepts": ["X"], "vector": vec},
+            {"chunk_id": "c3", "doc_id": "doc-2", "doc_name": "Doc B", "text": "c", "concepts": ["Y"], "vector": vec},
+        ])
+
+        deleted = delete_document_chunks(lance_path, "doc-1")
+        assert deleted == 2
+
+        # Re-open to see the updated state
+        _, fresh_table = init_lancedb(lance_path)
+        df = fresh_table.to_pandas()
+        assert len(df) == 1
+        assert df.iloc[0]["doc_id"] == "doc-2"
+
+    def test_deletes_centroid_for_given_doc_id(self, lance_path):
+        """Should also delete the document centroid row."""
+        db, table = init_lancedb(lance_path)
+        vec = mock_embed_texts(["chunk"])[0]
+        table.add([
+            {"chunk_id": "c1", "doc_id": "doc-1", "doc_name": "Doc A", "text": "a", "concepts": ["X"], "vector": vec},
+        ])
+        centroids = db.open_table("document_centroids")
+        centroids.add([{"doc_id": "doc-1", "doc_name": "Doc A", "centroid_vector": vec}])
+
+        delete_document_chunks(lance_path, "doc-1")
+
+        # Re-open to see the updated state
+        fresh_db, _ = init_lancedb(lance_path)
+        fresh_centroids = fresh_db.open_table("document_centroids")
+        centroid_df = fresh_centroids.to_pandas()
+        assert len(centroid_df[centroid_df["doc_id"] == "doc-1"]) == 0
+
+    def test_returns_zero_for_nonexistent_doc_id(self, lance_path):
+        """Should return 0 when no chunks match the doc_id."""
+        init_lancedb(lance_path)
+        deleted = delete_document_chunks(lance_path, "nonexistent")
+        assert deleted == 0
+
+    def test_preserves_other_documents(self, lance_path):
+        """Should not touch chunks or centroids belonging to other doc_ids."""
+        db, table = init_lancedb(lance_path)
+        vec = mock_embed_texts(["chunk"])[0]
+        table.add([
+            {"chunk_id": "c1", "doc_id": "doc-1", "doc_name": "Doc A", "text": "a", "concepts": ["X"], "vector": vec},
+            {"chunk_id": "c2", "doc_id": "doc-2", "doc_name": "Doc B", "text": "b", "concepts": ["Y"], "vector": vec},
+        ])
+        centroids = db.open_table("document_centroids")
+        centroids.add([
+            {"doc_id": "doc-1", "doc_name": "Doc A", "centroid_vector": vec},
+            {"doc_id": "doc-2", "doc_name": "Doc B", "centroid_vector": vec},
+        ])
+
+        delete_document_chunks(lance_path, "doc-1")
+
+        # Re-open to see the updated state
+        fresh_db, _ = init_lancedb(lance_path)
+        fresh_centroids = fresh_db.open_table("document_centroids")
+        centroid_df = fresh_centroids.to_pandas()
+        assert len(centroid_df) == 1
+        assert centroid_df.iloc[0]["doc_id"] == "doc-2"

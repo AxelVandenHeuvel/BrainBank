@@ -1,8 +1,12 @@
+import asyncio
+from functools import partial
+
 import kuzu
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.db.kuzu import get_db_connection, update_node_communities
-from backend.db.lance import init_lancedb
+from backend.db.kuzu import get_db_connection, get_kuzu_engine, update_node_communities
+from backend.db.lance import init_lancedb, delete_document_chunks, update_document_text
+from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.latent_discovery import concept_name_from_query_rows, find_latent_document_hits
 from backend.services.clustering import run_leiden_clustering
 from backend.schemas import (
@@ -11,6 +15,7 @@ from backend.schemas import (
     DocumentResponse,
     GraphEdgeResponse,
     RelationshipDetailsResponse,
+    UpdateDocumentRequest,
 )
 
 graph_router = APIRouter(prefix="/api")
@@ -214,6 +219,34 @@ def get_documents():
         )
 
     return {"documents": documents}
+
+
+@graph_router.put("/documents/{doc_id}")
+async def update_document(doc_id: str, body: UpdateDocumentRequest):
+    """Lightweight save: update document text without re-running the full pipeline."""
+    updated = update_document_text("./data/lancedb", doc_id, body.title, body.text)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"doc_id": doc_id, "status": "saved"}
+
+
+@graph_router.post("/documents/{doc_id}/reingest")
+async def reingest_document(doc_id: str, body: UpdateDocumentRequest):
+    """Full re-ingest: delete old chunks, re-embed, re-extract concepts, rebuild graph."""
+    delete_document_chunks("./data/lancedb", doc_id)
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        partial(
+            ingest_markdown,
+            body.text,
+            body.title,
+            shared_kuzu_db=get_kuzu_engine(),
+            doc_id=doc_id,
+        ),
+    )
+    return result
 
 
 @graph_router.get("/concepts/{concept_name}/documents", response_model=list[DocumentResponse])
