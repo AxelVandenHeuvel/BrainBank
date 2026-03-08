@@ -1237,6 +1237,10 @@ export function Graph3D({
     return BASE_LINK_COLOR;
   }
 
+  function getLinkLineDash(link: GraphLink): number[] | null {
+    return isGhostLink(link) ? [2, 1] : null;
+  }
+
   function getLinkWidth(link: GraphLink): number {
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
@@ -1332,6 +1336,7 @@ export function Graph3D({
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
+        linkLineDash={getLinkLineDash}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
         linkOpacity={0.82}

@@ -47,8 +47,8 @@ export function useGraphData(): UseGraphDataResult {
             ? { ...payload, edges: (payload as { links: unknown[] }).links }
             : payload;
 
-        if (!validateGraphApiResponse(graphPayload)) {
-          throw new Error('Invalid graph payload');
+        if (!validateGraphApiResponse(graphPayload) || graphPayload.nodes.length === 0) {
+          throw new Error('Empty or invalid graph payload');
         }
 
         setResult({

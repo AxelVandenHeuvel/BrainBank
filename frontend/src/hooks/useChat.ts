@@ -149,10 +149,19 @@ export function useChat(): UseChatResult {
     setIsLoading(true);
 
     try {
+      const recentHistory = activeSession.messages.slice(-20).map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
       const response = await fetch(QUERY_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: trimmedQuestion }),
+        body: JSON.stringify({
+          question: trimmedQuestion,
+          session_id: activeSession.id,
+          history: recentHistory,
+        }),
       });
 
       if (!response.ok) {

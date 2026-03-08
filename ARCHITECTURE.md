@@ -117,6 +117,8 @@ backend/
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
+  session/
+    memory.py               - In-memory session store with bounded turn window and TTL
   retrieval/
     context.py              - Context dedupe + budgeted prompt assembly for retrieval
     local_search.py         - Seed retrieval, graph expansion, and discovery chunk ranking
@@ -146,6 +148,10 @@ tests/
     test_pdf.py             - PDF text extraction tests
   test_api_notion.py        - Notion import API endpoint tests
   test_api_upload.py        - File upload API endpoint tests
+  session/
+    test_memory.py          - Session store TTL, isolation, and window tests
+    test_query_with_history.py - History-aware query pipeline tests
+    test_api_session.py     - Session-aware API endpoint tests
   retrieval/
     test_context.py         - Context ordering, dedupe, and budget tests
     test_local_search.py    - Seed retrieval, traversal, and discovery chunk tests
@@ -311,10 +317,24 @@ Output: { imported: N, pages: [{ title, doc_id, chunks, concepts }] }
 
 The Notion service (`backend/services/notion.py`) handles URL parsing, rich text annotation conversion (bold, italic, code, strikethrough, links), and block-to-markdown translation. It uses the `notion-client` Python SDK. Each imported page goes through the same ingestion pipeline as manually created notes.
 
+## Session Memory
+
+`backend/session/memory.py` provides an in-memory session store scoped per user session. It is separate from the knowledge graph — session memory is ephemeral and never ingested into LanceDB or Kuzu.
+
+- **Bounded window**: each session retains at most 20 turns (configurable via `max_turns`). Older turns are trimmed automatically.
+- **TTL expiration**: inactive sessions expire after 30 minutes (configurable via `ttl_seconds`). `cleanup_expired()` removes stale sessions.
+- **Thread-safe**: all access is protected by a threading lock since FastAPI dispatches query work to a thread pool.
+- **Session isolation**: each `session_id` has its own independent turn list.
+
+The frontend sends `session_id` (the localStorage chat session UUID) and `history` (the last 20 messages) with each `/query` request. The backend records each user/assistant turn in the session store and passes the conversation history into the LLM prompt so it can resolve references like "it", "that", and "the second one".
+
 ## Query Flow (`POST /query`)
 
 ```
-Input: question
+Input: { question, session_id?, history? }
+  |
+  v
+api.py -> record user turn in SessionMemory (if session_id present)
   |
   v
 api.py -> get_kuzu_engine() -- reuse the shared Kuzu Database handle
@@ -337,13 +357,17 @@ context.assemble_context_chunks() -- seed chunks first, then discovery chunks,
 context.build_context_text() -- join selected chunk texts with separators
   |
   v
-llm.generate_answer() -- Gemini or Ollama generates grounded answer from ordered context
+llm.generate_answer() -- Gemini or Ollama generates grounded answer
+  |                       includes conversation history for reference resolution
+  |
+  v
+api.py -> record assistant turn in SessionMemory (if session_id present)
   |
   v
 Output: { answer, source_concepts, discovery_concepts }
 ```
 
-The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. The retrieval path is still local-search-only in this phase, but it is now split into explicit steps with an internal `RetrievalConfig` for seed limits, graph-hop depth, discovery-chunk limits, and context budget. Default behavior stays equivalent to the old path: top-5 chunk seeds, 1-hop graph expansion, and the same external `/query` response shape.
+The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. The retrieval path is still local-search-only in this phase, but it is now split into explicit steps with an internal `RetrievalConfig` for seed limits, graph-hop depth, discovery-chunk limits, and context budget. Default behavior stays equivalent to the old path: top-5 chunk seeds, 1-hop graph expansion, and the same external `/query` response shape. When `history` is provided, the conversation turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
 
 ## API Endpoints
 
