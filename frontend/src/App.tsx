@@ -159,8 +159,6 @@ export default function App() {
               isChatOpen
                 ? 'visible translate-x-0 opacity-100'
                 : 'invisible translate-x-8 opacity-0'
-            className={`flex w-full transition ${
-              isChatOpen ? 'visible translate-x-0 opacity-100' : 'invisible translate-x-8 opacity-0'
             }`}
           >
             <ChatPanel />

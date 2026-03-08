@@ -854,6 +854,8 @@ export function Graph3D({
     if (expandedConcept) stopIdleRotation();
     else scheduleIdleRotation();
   }, [expandedConcept]);
+
+  useEffect(() => {
     if (!selectedEdge) {
       return;
     }
