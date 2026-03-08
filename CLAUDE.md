@@ -9,3 +9,9 @@
 - Every step of the way give me a high level explaination of what changed.
 - Ensure each file has one responsibility. If a file has more than one responsibility, refactor it into smaller files.
 
+
+### Kuzu Database Connection Rule
+Kuzu is an embedded graph database that enforces a strict, exclusive file lock on its data directory. 
+
+- **NEVER** call `init_kuzu()` inside a FastAPI route handler or a frequently called function. If you do, Kuzu will throw an `IO exception: Could not set lock on file` and crash the server on the second request.
+- **ALWAYS** use `get_db_connection()` to get a connection to the database. This function will return a fresh connection per request, and close it when done.
