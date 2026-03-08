@@ -230,7 +230,7 @@ export default function App() {
         {/* Collapsible sidebar */}
         <aside
           data-testid="sidebar"
-          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 lg:overflow-y-auto ${
+          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${
             sidebarCollapsed ? 'w-[3rem]' : 'w-[22rem] p-4'
           }`}
         >
@@ -271,8 +271,11 @@ export default function App() {
           >
             <IngestPanel onIngestComplete={() => { refetch(); setFileTreeRefetchSignal((n) => n + 1); }} onNewNote={handleNewNote} />
 
-            <section className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] pt-3">
-              <p className="mb-2 px-1 text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+            <section
+              data-testid="sidebar-files-section"
+              className="min-h-0 flex flex-1 flex-col border-t border-white/[0.06] pt-3"
+            >
+              <p className="mb-2 px-1 text-left text-[10px] font-medium uppercase tracking-widest text-neutral-500">
                 Files
               </p>
               <FileExplorer

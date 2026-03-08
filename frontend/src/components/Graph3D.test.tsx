@@ -273,7 +273,7 @@ describe('Graph3D', () => {
     }).enableNavigationControls).toBe(false);
   });
 
-  it('renders the brain shell with a light pink wireframe color and opacity', async () => {
+  it('renders the brain shell with a white wireframe color and opacity', async () => {
     render(
       <Graph3D
         data={graph}
@@ -296,7 +296,7 @@ describe('Graph3D', () => {
     });
 
     expect(brainMaterials).not.toHaveLength(0);
-    const expectedBrainColor = new THREE.Color('#ec4899').lerp(new THREE.Color('#ffffff'), 0.4);
+    const expectedBrainColor = new THREE.Color('#FFFFFF');
     brainMaterials.forEach((material) => {
       expect(material.transparent).toBe(true);
       expect(material.opacity).toBeCloseTo(0.06, 6);
@@ -903,6 +903,26 @@ describe('Graph3D', () => {
         z: 0,
       }),
     );
+  });
+
+  it('locks the graph shell and brain mesh to the chosen default colors without debug controls', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const graphShell = screen.getByTestId('graph-shell');
+    expect(graphShell).toHaveAttribute('data-background-hex', '#0E0F10');
+    expect(graphShell).toHaveAttribute('data-brain-mesh-hex', '#FFFFFF');
+    expect(screen.queryByTestId('graph-background-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('background-debug-picker')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Background color')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Brain mesh color')).not.toBeInTheDocument();
   });
 
   it('zooms in and out with the scroll wheel', () => {
