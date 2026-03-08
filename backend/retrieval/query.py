@@ -6,8 +6,15 @@ from backend.retrieval.context import build_local_context
 from backend.retrieval.global_search import run_global_search
 from backend.retrieval.local_search import run_local_search
 from backend.retrieval.provenance import build_local_answer_provenance
+from backend.retrieval.traversal import build_traversal_plan
 from backend.retrieval.routing import QueryRoute, classify_query_route
-from backend.retrieval.types import DocumentCitation, QueryResult, RetrievalConfig
+from backend.retrieval.types import (
+    DocumentCitation,
+    LocalQueryPreparation,
+    QueryPreparation,
+    QueryResult,
+    RetrievalConfig,
+)
 from backend.services.embeddings import embed_query
 from backend.services.llm import (
     generate_answer,
@@ -71,6 +78,116 @@ def _get_query_connection(shared_kuzu_db, kuzu_db_path: str):
     return kuzu_db, conn, True
 
 
+def _prepare_local_query(
+    db,
+    table,
+    conn,
+    user_query: str,
+    query_vector: list[float],
+    config: RetrievalConfig,
+) -> LocalQueryPreparation:
+    search_result = run_local_search(
+        db,
+        table,
+        conn,
+        user_query,
+        query_vector,
+        config,
+    )
+    if not search_result.seed_chunks:
+        if table.to_pandas().empty:
+            answer = EMPTY_BRAINBANK_MESSAGE
+        else:
+            answer = "No relevant information found."
+        return LocalQueryPreparation(
+            user_query=user_query,
+            source_concepts=(),
+            discovery_concepts=(),
+            context="",
+            traversal_plan=None,
+            immediate_response=QueryResult(
+                answer=answer,
+                source_concepts=(),
+                discovery_concepts=(),
+            ),
+        )
+
+    source_concepts = tuple(hit.name for hit in search_result.source_concepts)
+    discovery_concepts = tuple(hit.name for hit in search_result.discovery_concepts)
+    context = build_local_context(search_result, config.max_context_words)
+    provenance = build_local_answer_provenance(search_result, conn, config.max_context_words)
+
+    return LocalQueryPreparation(
+        user_query=user_query,
+        source_concepts=source_concepts,
+        discovery_concepts=discovery_concepts,
+        context=context,
+        traversal_plan=build_traversal_plan(conn, search_result, config),
+        source_documents=provenance["source_documents"],
+        discovery_documents=provenance["discovery_documents"],
+        source_chunks=provenance["source_chunks"],
+        discovery_chunks=provenance["discovery_chunks"],
+        supporting_relationships=provenance["supporting_relationships"],
+    )
+
+
+def prepare_brainbank_query(
+    user_query: str,
+    lance_db_path: str = "./data/lancedb",
+    kuzu_db_path: str = "./data/kuzu",
+    shared_kuzu_db=None,
+    config: RetrievalConfig | None = None,
+) -> QueryPreparation:
+    if config is None:
+        config = RetrievalConfig()
+
+    db, table = init_lancedb(lance_db_path)
+    kuzu_db, conn, own_db = _get_query_connection(shared_kuzu_db, kuzu_db_path)
+    query_vector = embed_query(user_query)
+
+    try:
+        route = classify_query_route(user_query)
+        if route == QueryRoute.GLOBAL:
+            return QueryPreparation(route=route, requires_direct_query=True)
+
+        preparation = _prepare_local_query(
+            db,
+            table,
+            conn,
+            user_query,
+            query_vector,
+            config,
+        )
+        return QueryPreparation(
+            route=route,
+            requires_direct_query=False,
+            source_concepts=preparation.source_concepts,
+            discovery_concepts=preparation.discovery_concepts,
+            traversal_plan=preparation.traversal_plan,
+            prepared_local_query=preparation,
+        )
+    finally:
+        conn.close()
+        if own_db:
+            kuzu_db.close()
+
+
+def answer_prepared_local_query(
+    preparation: LocalQueryPreparation,
+    history: list[dict] | None = None,
+) -> dict:
+    if preparation.immediate_response is not None:
+        return preparation.to_answer_response()
+
+    answer = generate_answer(
+        preparation.user_query,
+        preparation.context,
+        list(preparation.source_concepts) + list(preparation.discovery_concepts),
+        history=history or None,
+    )
+    return preparation.to_answer_response(answer=answer)
+
+
 def query_brainbank(
     user_query: str,
     lance_db_path: str = "./data/lancedb",
@@ -109,7 +226,7 @@ def query_brainbank(
                     ),
                 ).to_response()
 
-        search_result = run_local_search(
+        preparation = _prepare_local_query(
             db,
             table,
             conn,
@@ -117,38 +234,7 @@ def query_brainbank(
             query_vector,
             config,
         )
-        if not search_result.seed_chunks:
-            if table.to_pandas().empty:
-                answer = EMPTY_BRAINBANK_MESSAGE
-            else:
-                answer = "No relevant information found."
-            return QueryResult(
-                answer=answer,
-                source_concepts=(),
-                discovery_concepts=(),
-            ).to_response()
-
-        source_concepts = tuple(hit.name for hit in search_result.source_concepts)
-        discovery_concepts = tuple(hit.name for hit in search_result.discovery_concepts)
-        context = build_local_context(search_result, config.max_context_words)
-        provenance = build_local_answer_provenance(search_result, conn, config.max_context_words)
-        answer = generate_answer(
-            user_query,
-            context,
-            list(source_concepts) + list(discovery_concepts),
-            history=history or None,
-        )
-
-        return QueryResult(
-            answer=answer,
-            source_concepts=source_concepts,
-            discovery_concepts=discovery_concepts,
-            source_documents=provenance["source_documents"],
-            discovery_documents=provenance["discovery_documents"],
-            source_chunks=provenance["source_chunks"],
-            discovery_chunks=provenance["discovery_chunks"],
-            supporting_relationships=provenance["supporting_relationships"],
-        ).to_response()
+        return answer_prepared_local_query(preparation, history=history)
     finally:
         conn.close()
         if own_db:

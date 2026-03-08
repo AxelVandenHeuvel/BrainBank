@@ -42,6 +42,7 @@ import type {
   RelationshipDocument,
   RelationshipDetails,
 } from '../types/graph';
+import type { ActiveTraversal } from '../types/traversal';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { NodeTooltip } from './NodeTooltip';
 
@@ -101,6 +102,7 @@ interface Graph3DProps {
     sourceConcepts: string[];
     discoveryConcepts: string[];
   } | null;
+  activeTraversal?: ActiveTraversal | null;
   hoveredNode?: GraphNode | null;
   onHoverNode?: (node: GraphNode | null) => void;
   onOpenDocument?: (docId: string, name: string, content: string) => void;
@@ -112,6 +114,18 @@ interface SelectedRelationshipEdge {
   targetId: string;
   reason: string;
 }
+
+interface TraversalPulseWindow {
+  startMs: number;
+  endMs: number;
+  brightness: number;
+}
+
+const TRAVERSAL_INACTIVE_COLOR = new THREE.Color('#64748b');
+const TRAVERSAL_AMBIENT_BLINK_PERIOD_MS = 900;
+const TRAVERSAL_AMBIENT_BLINK_BASE = 0.18;
+const TRAVERSAL_AMBIENT_BLINK_RANGE = 0.55;
+const TRAVERSAL_OUTLINE_COLOR = new THREE.Color('#f8fafc');
 
 const BRAIN_MODEL_URL = '/assets/human-brain.glb';
 const CAMERA_MOVE_DURATION_MS = 1200;
@@ -186,6 +200,15 @@ function getVisualNodeColor(node: GraphNode): THREE.Color {
   );
 }
 
+function getTraversalBlinkPhase(nodeId: string): number {
+  let hash = 0;
+  for (let i = 0; i < nodeId.length; i++) {
+    hash = (hash * 33 + nodeId.charCodeAt(i)) | 0;
+  }
+
+  return (((hash >>> 0) % 360) / 360) * Math.PI * 2;
+}
+
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
   const font = 'bold 52px "Inter", "Roboto", sans-serif';
@@ -253,6 +276,35 @@ function createNodeMaterial(nodeColor: THREE.Color): THREE.MeshStandardMaterial 
   });
 }
 
+function applyNodeMaterialState(
+  obj: THREE.Object3D,
+  color: THREE.Color,
+  emissive: THREE.Color,
+  opacity: number,
+) {
+  obj.userData.currentColor = color.clone();
+  obj.userData.currentEmissive = emissive.clone();
+  obj.userData.currentOpacity = opacity;
+  obj.userData.currentOutlineOpacity = Number(obj.userData.currentOutlineOpacity ?? 0);
+  obj.userData.currentSpriteOpacity = Number(obj.userData.currentSpriteOpacity ?? 1);
+
+  obj.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.material) {
+      return;
+    }
+
+    if (child.name !== 'node-shape') {
+      return;
+    }
+
+    const material = child.material as THREE.MeshStandardMaterial;
+    material.color.copy(color);
+    material.emissive.copy(emissive);
+    material.opacity = opacity;
+    material.transparent = true;
+  });
+}
+
 function getBrainMeshMaterials(brain: THREE.Object3D): THREE.MeshBasicMaterial[] {
   const materials: THREE.MeshBasicMaterial[] = [];
 
@@ -277,13 +329,13 @@ export function Graph3D({
   source: graphSource,
   query,
   chatFocus = null,
+  activeTraversal = null,
   hoveredNode: hoveredNodeProp,
   onHoverNode: onHoverNodeProp,
   onOpenDocument,
   onConceptFocused,
 }: Graph3DProps) {
   const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
   const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -305,6 +357,11 @@ export function Graph3D({
   const brainMeshAnimationRef = useRef<number | null>(null);
   const simulationSettledRef = useRef(false);
   const pinnedPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  const traversalPulseWindowsRef = useRef<Map<string, TraversalPulseWindow[]>>(new Map());
+  const traversalRevealTimesRef = useRef<Map<string, number>>(new Map());
+  const traversalRevealBrightnessRef = useRef<Map<string, number>>(new Map());
+  const traversalRunStartedAtRef = useRef<number>(0);
+  const traversalIsActiveRef = useRef(false);
   const lastSearchTargetIdRef = useRef<string | null>(null);
   const preSearchCameraRef = useRef<{
     pos: { x: number; y: number; z: number };
@@ -445,6 +502,72 @@ export function Graph3D({
   const displayDataRef = useRef(displayData);
   displayDataRef.current = displayData;
 
+  useEffect(() => {
+    traversalPulseWindowsRef.current = new Map();
+    traversalRevealTimesRef.current = new Map();
+    traversalRevealBrightnessRef.current = new Map();
+    traversalRunStartedAtRef.current = 0;
+    traversalIsActiveRef.current = activeTraversal !== null;
+
+    if (!activeTraversal) {
+      return;
+    }
+
+    const availableNodeIds = new Set(displayData.nodes.map((node) => node.id));
+    const windows = new Map<string, TraversalPulseWindow[]>();
+    const revealTimes = new Map<string, number>();
+    const revealBrightness = new Map<string, number>();
+    const startTime = performance.now();
+    traversalRunStartedAtRef.current = startTime;
+
+    activeTraversal.plan.steps.forEach((step) => {
+      if (!availableNodeIds.has(step.nodeId)) {
+        return;
+      }
+
+      if (!revealTimes.has(step.nodeId)) {
+        revealTimes.set(step.nodeId, startTime + step.delayMs);
+      }
+      revealBrightness.set(
+        step.nodeId,
+        Math.max(revealBrightness.get(step.nodeId) ?? 0, step.brightness),
+      );
+
+      const nodeWindows = windows.get(step.nodeId) ?? [];
+      nodeWindows.push({
+        startMs: startTime + step.delayMs,
+        endMs: startTime + step.delayMs + activeTraversal.plan.pulseDurationMs,
+        brightness: step.brightness,
+      });
+      windows.set(step.nodeId, nodeWindows);
+    });
+
+    traversalPulseWindowsRef.current = windows;
+    traversalRevealTimesRef.current = revealTimes;
+    traversalRevealBrightnessRef.current = revealBrightness;
+
+    const now = performance.now();
+    displayData.nodes.forEach((node) => {
+      const obj = (node as GraphNode & { __threeObj?: THREE.Object3D }).__threeObj;
+      if (!obj) {
+        return;
+      }
+
+      const revealTime = revealTimes.get(node.id);
+      const isRevealed = revealTime !== undefined && now >= revealTime;
+      obj.userData.traversalRevealed = isRevealed;
+
+      if (!isRevealed) {
+        applyNodeMaterialState(
+          obj,
+          TRAVERSAL_INACTIVE_COLOR,
+          TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05),
+          Number(obj.userData.currentOpacity ?? 0.9),
+        );
+      }
+    });
+  }, [activeTraversal, displayData.nodes]);
+
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const chatFocusNodeIds = useMemo(() => {
@@ -481,7 +604,7 @@ export function Graph3D({
     };
   }, [chatFocus, displayData.nodes]);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
-  const activeCardNode = selectedNode ?? hoveredNode;
+  const hoveredNodeId = hoveredNode?.id ?? null;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
@@ -572,6 +695,59 @@ export function Graph3D({
     labelSprite.position.set(0, NODE_LABEL_Y_OFFSET, 0);
     group.add(labelSprite);
     group.userData.baseColor = nodeColor.clone();
+    group.userData.traversalPulse = 0;
+    const initialRevealTime = traversalRevealTimesRef.current.get(node.id);
+    const initialTraversalRevealed =
+      traversalIsActiveRef.current &&
+      initialRevealTime !== undefined &&
+      performance.now() >= initialRevealTime;
+    group.userData.traversalRevealed = initialTraversalRevealed;
+    applyNodeMaterialState(
+      group,
+      initialTraversalRevealed || !traversalIsActiveRef.current
+        ? nodeColor
+        : TRAVERSAL_INACTIVE_COLOR,
+      initialTraversalRevealed || !traversalIsActiveRef.current
+        ? nodeColor.clone().multiplyScalar(0.15)
+        : TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05),
+      0.9,
+    );
+    group.userData.update = (time: number) => {
+      const windows = traversalPulseWindowsRef.current.get(node.id) ?? [];
+      const revealTime = traversalRevealTimesRef.current.get(node.id);
+      const revealStrength = traversalRevealBrightnessRef.current.get(node.id) ?? 1;
+      let pulse = 0;
+
+      windows.forEach((window) => {
+        if (time < window.startMs || time > window.endMs) {
+          return;
+        }
+
+        const progress = (time - window.startMs) / Math.max(window.endMs - window.startMs, 1);
+        const triangle = progress <= 0.5 ? progress * 2 : (1 - progress) * 2;
+        pulse = Math.max(pulse, triangle * window.brightness);
+      });
+
+      const traversalRevealed =
+        traversalIsActiveRef.current &&
+        revealTime !== undefined &&
+        time >= revealTime;
+      if (traversalRevealed) {
+        const traversalElapsedMs = Math.max(0, time - traversalRunStartedAtRef.current);
+        const oscillation =
+          (Math.sin(
+            ((traversalElapsedMs / TRAVERSAL_AMBIENT_BLINK_PERIOD_MS) * Math.PI * 2) +
+              getTraversalBlinkPhase(node.id),
+          ) + 1) / 2;
+        const ambientPulse =
+          (TRAVERSAL_AMBIENT_BLINK_BASE + (oscillation * TRAVERSAL_AMBIENT_BLINK_RANGE)) *
+          revealStrength;
+        pulse = Math.max(pulse, ambientPulse);
+      }
+
+      group.userData.traversalPulse = pulse;
+      group.userData.traversalRevealed = traversalRevealed;
+    };
     (node as GraphNode & { __threeObj?: THREE.Object3D }).__threeObj = group;
 
     return group;
@@ -726,7 +902,6 @@ export function Graph3D({
 
   function handleReset() {
     setRotationPivotNode(null);
-    setSelectedNode(null);
     setLatentLinks([]);
     setExpandedConcept(null);
     setIsDiving(false);
@@ -1054,10 +1229,9 @@ export function Graph3D({
         return;
       }
 
-      // Single-click doc node: select it (no zoom to keep second click reliable)
+      // Single-click doc node: record the click without zoom so the second click stays reliable.
       lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
       clearSelectedEdge();
-      setSelectedNode(node);
       return;
     }
 
@@ -1067,7 +1241,6 @@ export function Graph3D({
     }
 
     clearSelectedEdge();
-    setSelectedNode(node);
     setRotationPivotNode(node.id);
     suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
 
@@ -1101,7 +1274,6 @@ export function Graph3D({
     if (isGhostLink(link)) {
       return;
     }
-    setSelectedNode(null);
     setRotationPivotNode(null);
     setLatentLinks([]);
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
@@ -1576,6 +1748,7 @@ export function Graph3D({
         const isChatDiscovery = chatFocusNodeIds.discoveryNodeIds.has(node.id);
         const isChatDimmed = hasChatFocus && !isChatSource && !isChatDiscovery;
         const isExpandHidden = expandedNodeIds !== null && !expandedNodeIds.has(node.id);
+        const isHoveredTooltipNode = expandedConcept === null && hoveredNodeId === node.id;
         const isDocExpand = node.id.startsWith('doc-expand:');
         const dimOpacity = isExpandHidden ? 0 : 0.08;
         const isDimmed = isSearchDimmed || isChatDimmed || isExpandHidden;
@@ -1583,16 +1756,39 @@ export function Graph3D({
         const baseColor =
           ((obj.userData.baseColor as THREE.Color | undefined) ?? new THREE.Color(getBaseNodeColor(node)))
             .clone();
+        const traversalPulse = Number(obj.userData.traversalPulse ?? 0);
+        const traversalRevealed = obj.userData.traversalRevealed === true;
+        const traversalIsActive = traversalIsActiveRef.current;
 
-        const targetColor =
+        const normalTargetColor =
           isChatDiscovery || isChatDimmed ? new THREE.Color(DIMMED_SEARCH_COLOR) : baseColor;
+        const targetColor =
+          traversalIsActive && !traversalRevealed
+            ? TRAVERSAL_INACTIVE_COLOR.clone()
+            : traversalIsActive && traversalRevealed
+              ? TRAVERSAL_INACTIVE_COLOR.clone().lerp(
+                  normalTargetColor,
+                  Math.max(0, Math.min(1, traversalPulse)),
+                )
+              : normalTargetColor;
         const targetEmissive =
-          isChatSource
-            ? baseColor.clone().multiplyScalar(0.2)
-            : targetColor.clone().multiplyScalar(0.08);
-        const targetOpacity = isDimmed ? dimOpacity : 0.9;
-        const targetOutlineOpacity = isChatDiscovery && !isExpandHidden ? 0.95 : 0;
-        const targetSpriteOpacity = isExpandHidden || isSearchDimmed || isChatDimmed ? 0 : 1;
+          traversalIsActive && !traversalRevealed
+            ? TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05)
+            : isChatSource
+              ? baseColor.clone().multiplyScalar(0.2)
+              : targetColor.clone().multiplyScalar(0.08);
+        targetEmissive.add(baseColor.clone().multiplyScalar(0.95 * traversalPulse));
+        targetEmissive.add(TRAVERSAL_OUTLINE_COLOR.clone().multiplyScalar(0.25 * traversalPulse));
+        const targetOpacity = Math.min(1, (isDimmed ? dimOpacity : 0.9) + traversalPulse * 0.28);
+        const traversalOutlineOpacity =
+          traversalIsActive && traversalRevealed && !isExpandHidden
+            ? 0.08 + (0.84 * traversalPulse)
+            : 0;
+        const targetOutlineOpacity = isChatDiscovery && !isExpandHidden
+          ? Math.max(0.95, traversalOutlineOpacity)
+          : traversalOutlineOpacity;
+        const targetSpriteOpacity =
+          isExpandHidden || isSearchDimmed || isChatDimmed || isHoveredTooltipNode ? 0 : 1;
 
         if (obj.userData.currentOpacity === undefined) {
           obj.userData.currentColor = baseColor.clone();
@@ -1625,6 +1821,11 @@ export function Graph3D({
             if (child.name === 'node-outline') {
               const outlineMat = child.material as THREE.MeshBasicMaterial;
               child.visible = obj.userData.currentOutlineOpacity > 0.01 || targetOutlineOpacity > 0;
+              outlineMat.color.copy(
+                traversalIsActive && traversalRevealed
+                  ? TRAVERSAL_OUTLINE_COLOR.clone().lerp(baseColor, Math.min(traversalPulse, 0.65))
+                  : new THREE.Color(DISCOVERY_OUTLINE_COLOR),
+              );
               outlineMat.opacity = obj.userData.currentOutlineOpacity;
             }
           }
@@ -1640,7 +1841,7 @@ export function Graph3D({
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [chatFocusNodeIds, displayData.nodes, expandedNodeIds, hasChatFocus, matchedNodeIds, query]);
+  }, [chatFocusNodeIds, displayData.nodes, expandedConcept, expandedNodeIds, hasChatFocus, hoveredNodeId, matchedNodeIds, query]);
 
 
   useEffect(() => {
@@ -1665,7 +1866,7 @@ export function Graph3D({
   }, [hasFocusedRotationPivot, selectedEdge, expandedConcept]);
 
   useEffect(() => {
-    if (!activeCardNode) {
+    if (!hoveredNode) {
       setTooltipPosition(null);
       return;
     }
@@ -1674,9 +1875,9 @@ export function Graph3D({
 
     const updatePosition = () => {
       const worldPoint = toWorldPoint({
-        x: activeCardNode.x ?? 0,
-        y: activeCardNode.y ?? 0,
-        z: activeCardNode.z ?? 0,
+        x: hoveredNode.x ?? 0,
+        y: hoveredNode.y ?? 0,
+        z: hoveredNode.z ?? 0,
       });
       const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
@@ -1692,7 +1893,7 @@ export function Graph3D({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [activeCardNode]);
+  }, [hoveredNode]);
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
@@ -1880,7 +2081,6 @@ export function Graph3D({
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
-          setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
           setExpandedConcept(null);
@@ -1930,6 +2130,7 @@ export function Graph3D({
         height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
+        nodeLabel={() => null}
         nodeVal={() => 4}
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
@@ -1952,7 +2153,6 @@ export function Graph3D({
         onBackgroundClick={() => {
           if (Date.now() <= suppressBackgroundDoubleClickUntilRef.current) return;
           clearSelectedEdge();
-          setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
           setExpandedConcept(null);
@@ -1984,10 +2184,10 @@ export function Graph3D({
           ⟳
         </button>
       </div>
-      {activeCardNode && tooltipPosition && !expandedConcept ? (
+      {hoveredNode && tooltipPosition && !expandedConcept ? (
         <NodeTooltip
-          node={activeCardNode}
-          connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
+          node={hoveredNode}
+          connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
         />

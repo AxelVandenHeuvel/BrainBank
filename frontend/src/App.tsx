@@ -12,6 +12,7 @@ import { findMatchingNodeIds } from './lib/graphView';
 import { getMockDocumentsForConcept } from './mock/mockGraph';
 import type { AssistantMessageSelection } from './types/chat';
 import type { OpenTab } from './types/notes';
+import type { ActiveTraversal } from './types/traversal';
 
 const BRAIN_TAB_ID = '__brain__';
 
@@ -39,6 +40,7 @@ export default function App() {
   const [fileTreeRefetchSignal, setFileTreeRefetchSignal] = useState(0);
   const [selectedAssistantMessage, setSelectedAssistantMessage] =
     useState<AssistantMessageSelection | null>(null);
+  const [activeTraversal, setActiveTraversal] = useState<ActiveTraversal | null>(null);
 
   // --- Tab management ---
 
@@ -276,6 +278,7 @@ export default function App() {
               data={data}
               source={source}
               query={deferredQuery}
+              activeTraversal={activeTraversal}
               chatFocus={
                 selectedAssistantMessage
                   ? {
@@ -335,6 +338,7 @@ export default function App() {
               graphSource={source}
               onOpenDocument={handleChatOpenDocument}
               onAssistantMessageSelect={setSelectedAssistantMessage}
+              onTraversalChange={setActiveTraversal}
             />
           </div>
         </aside>

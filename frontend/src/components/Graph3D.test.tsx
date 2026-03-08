@@ -8,6 +8,7 @@ import { Graph3D } from './Graph3D';
 
 const graphPropsSpy = vi.fn();
 const gltfLoadSpy = vi.fn();
+const TRAVERSAL_GRAY = new THREE.Color('#64748b');
 let sceneObject = new THREE.Scene();
 let canvasGetContextSpy: { mockRestore: () => void } | null = null;
 let resizeObserverCallback:
@@ -174,7 +175,38 @@ function getLatestGraphProps() {
     height: number;
     enableNavigationControls: boolean;
     linkHoverPrecision: number;
+    nodeLabel?: (node: GraphNode) => string | null;
   };
+}
+
+function getNodeShapeMaterial(
+  nodeObject: THREE.Object3D | null | undefined,
+): THREE.MeshStandardMaterial {
+  const shape = nodeObject?.getObjectByName('node-shape') as THREE.Mesh | undefined;
+  if (!shape || !(shape.material instanceof THREE.MeshStandardMaterial)) {
+    throw new Error('Expected node-shape mesh with MeshStandardMaterial');
+  }
+
+  return shape.material;
+}
+
+function getNodeOutlineMaterial(
+  nodeObject: THREE.Object3D | null | undefined,
+): THREE.MeshBasicMaterial {
+  const outline = nodeObject?.getObjectByName('node-outline') as THREE.Mesh | undefined;
+  if (!outline || !(outline.material instanceof THREE.MeshBasicMaterial)) {
+    throw new Error('Expected node-outline mesh with MeshBasicMaterial');
+  }
+
+  return outline.material;
+}
+
+function getColorDistance(left: THREE.Color, right: THREE.Color): number {
+  return Math.sqrt(
+    ((left.r - right.r) ** 2) +
+      ((left.g - right.g) ** 2) +
+      ((left.b - right.b) ** 2),
+  );
 }
 
 describe('Graph3D', () => {
@@ -868,6 +900,372 @@ describe('Graph3D', () => {
     expect(unrelatedLabel?.material.opacity).toBeLessThan(0.01);
   });
 
+  it('restarts the traversal pulse schedule when the traversal runId changes', () => {
+    const traversal = {
+      runId: 1,
+      plan: {
+        rootNodeId: 'concept:Calculus',
+        stepIntervalMs: 160,
+        pulseDurationMs: 320,
+        brightnessDecay: 0.65,
+        brightnessThreshold: 0.25,
+        steps: [
+          {
+            nodeId: 'concept:Calculus',
+            concept: 'Calculus',
+            hop: 0,
+            brightness: 1,
+            delayMs: 0,
+          },
+        ],
+      },
+    };
+
+    const { rerender } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={traversal}
+      />,
+    );
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[0]);
+
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect(nodeObject?.userData.traversalPulse).toBeGreaterThan(0);
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    const ambientPulse = Number(nodeObject?.userData.traversalPulse ?? 0);
+    expect(ambientPulse).toBeGreaterThan(0);
+
+    rerender(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{ ...traversal, runId: 2 }}
+      />,
+    );
+
+    const restartedSamples: number[] = [];
+    for (let index = 0; index < 15; index += 1) {
+      act(() => {
+        vi.advanceTimersByTime(40);
+      });
+      restartedSamples.push(Number(nodeObject?.userData.traversalPulse ?? 0));
+    }
+
+    expect(Math.max(...restartedSamples)).toBeGreaterThan(0.7);
+    expect(Math.min(...restartedSamples)).toBeLessThan(0.35);
+  });
+
+  it('uses stronger traversal pulses for brighter steps than for later dimmer steps', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Calculus',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Calculus',
+                concept: 'Calculus',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+              {
+                nodeId: 'concept:Derivatives',
+                concept: 'Derivatives',
+                hop: 1,
+                brightness: 0.65,
+                delayMs: 0,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const rootObject = props.nodeThreeObject(graph.nodes[0]);
+    const laterObject = props.nodeThreeObject(graph.nodes[1]);
+
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+
+    expect(rootObject?.userData.traversalPulse).toBeGreaterThan(
+      laterObject?.userData.traversalPulse ?? 0,
+    );
+  });
+
+  it('keeps unrevealed nodes gray until traversal reaches them', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Calculus',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Calculus',
+                concept: 'Calculus',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+              {
+                nodeId: 'concept:Derivatives',
+                concept: 'Derivatives',
+                hop: 1,
+                brightness: 0.65,
+                delayMs: 480,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const rootObject = props.nodeThreeObject(graph.nodes[0]);
+    const laterObject = props.nodeThreeObject(graph.nodes[1]);
+    if (!rootObject || !laterObject) {
+      throw new Error('Expected traversal node objects');
+    }
+    const rootMaterial = getNodeShapeMaterial(rootObject);
+    const laterMaterial = getNodeShapeMaterial(laterObject);
+    const rootBaseColor = (rootObject.userData.baseColor as THREE.Color).clone();
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(getColorDistance(laterMaterial.color, TRAVERSAL_GRAY)).toBeLessThan(0.12);
+    expect(getColorDistance(rootMaterial.color, TRAVERSAL_GRAY)).toBeGreaterThan(0.2);
+  });
+
+  it('keeps traversed nodes slowly pulsing between gray and color while unrevealed nodes remain gray', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Calculus',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Calculus',
+                concept: 'Calculus',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+              {
+                nodeId: 'concept:Derivatives',
+                concept: 'Derivatives',
+                hop: 1,
+                brightness: 0.65,
+                delayMs: 720,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const rootObject = props.nodeThreeObject(graph.nodes[0]);
+    const laterObject = props.nodeThreeObject(graph.nodes[1]);
+    if (!rootObject || !laterObject) {
+      throw new Error('Expected traversal node objects');
+    }
+    const rootMaterial = getNodeShapeMaterial(rootObject);
+    const laterMaterial = getNodeShapeMaterial(laterObject);
+    const rootOutlineMaterial = getNodeOutlineMaterial(rootObject);
+    const laterOutlineMaterial = getNodeOutlineMaterial(laterObject);
+    const rootBaseColor = (rootObject.userData.baseColor as THREE.Color).clone();
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(Number(laterObject.userData.traversalPulse ?? 0)).toBe(0);
+    expect(getColorDistance(laterMaterial.color, TRAVERSAL_GRAY)).toBeLessThan(0.12);
+    expect(laterOutlineMaterial.opacity).toBeLessThan(0.05);
+    const sampledPulses: number[] = [];
+    const sampledDistances: number[] = [];
+    const sampledEmissiveStrengths: number[] = [];
+    const sampledOutlineOpacities: number[] = [];
+
+    const grayToBaseDistance = getColorDistance(TRAVERSAL_GRAY, rootBaseColor);
+
+    for (let index = 0; index < 12; index += 1) {
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+      sampledPulses.push(Number(rootObject.userData.traversalPulse ?? 0));
+      sampledDistances.push(getColorDistance(rootMaterial.color, rootBaseColor));
+      sampledEmissiveStrengths.push(
+        rootMaterial.emissive.r + rootMaterial.emissive.g + rootMaterial.emissive.b,
+      );
+      sampledOutlineOpacities.push(rootOutlineMaterial.opacity);
+    }
+
+    expect(Math.max(...sampledPulses)).toBeGreaterThan(0.7);
+    expect(Math.max(...sampledPulses) - Math.min(...sampledPulses)).toBeGreaterThan(0.25);
+    expect(Math.max(...sampledEmissiveStrengths)).toBeGreaterThan(0.3);
+    expect(Math.max(...sampledOutlineOpacities)).toBeGreaterThan(0.55);
+    expect(Math.max(...sampledOutlineOpacities) - Math.min(...sampledOutlineOpacities)).toBeGreaterThan(0.2);
+    expect(Math.min(...sampledDistances)).toBeGreaterThan(0.08);
+    expect(Math.min(...sampledDistances)).toBeLessThan(0.35);
+    expect(
+      Math.min(...sampledDistances.map((distance) => Math.abs(distance - grayToBaseDistance))),
+    ).toBeGreaterThan(0.08);
+  });
+
+  it('fades all nodes back to their normal colors after the traversal completes', () => {
+    const traversal = {
+      runId: 1,
+      plan: {
+        rootNodeId: 'concept:Calculus',
+        stepIntervalMs: 160,
+        pulseDurationMs: 320,
+        brightnessDecay: 0.65,
+        brightnessThreshold: 0.25,
+        steps: [
+          {
+            nodeId: 'concept:Calculus',
+            concept: 'Calculus',
+            hop: 0,
+            brightness: 1,
+            delayMs: 0,
+          },
+        ],
+      },
+    };
+
+    const { rerender } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={traversal}
+      />,
+    );
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[1]);
+    if (!nodeObject) {
+      throw new Error('Expected traversal node object');
+    }
+    const nodeMaterial = getNodeShapeMaterial(nodeObject);
+    const nodeBaseColor = (nodeObject.userData.baseColor as THREE.Color).clone();
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(getColorDistance(nodeMaterial.color, TRAVERSAL_GRAY)).toBeLessThan(0.12);
+
+    rerender(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={null}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    const earlyFadeDistance = getColorDistance(nodeMaterial.color, nodeBaseColor);
+    expect(earlyFadeDistance).toBeGreaterThan(0.12);
+
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    expect(getColorDistance(nodeMaterial.color, nodeBaseColor)).toBeLessThan(0.12);
+  });
+
+  it('ignores traversal steps whose nodes do not exist in the graph', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Missing',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Missing',
+                concept: 'Missing',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[0]);
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(nodeObject?.userData.traversalPulse ?? 0).toBe(0);
+  });
+
   it('renders zoom controls and uses them', () => {
     const { container } = render(
       <Graph3D
@@ -1295,7 +1693,75 @@ describe('Graph3D', () => {
       expect(onOpenDocument).not.toHaveBeenCalled();
     });
 
-    it('single-clicking a Concept node pins a node card without an open docs button', async () => {
+    it('renders the hover tooltip as name plus connection count', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(screen.getByText('Calculus (2)')).toBeInTheDocument();
+      expect(screen.queryByText('Concept')).not.toBeInTheDocument();
+      expect(screen.queryByText('2 connections')).not.toBeInTheDocument();
+    });
+
+    it('disables the force-graph cursor-following node label', () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      const nodeLabel = getLatestGraphProps().nodeLabel;
+
+      expect(nodeLabel).toBeTypeOf('function');
+      expect(nodeLabel?.(graph.nodes[0])).toBeNull();
+    });
+
+    it('hides the hovered node sprite label while keeping other node labels visible', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      const props = getLatestGraphProps();
+      const hoveredObject = props.nodeThreeObject(graph.nodes[0]);
+      const relatedObject = props.nodeThreeObject(graph.nodes[1]);
+      const hoveredLabel = hoveredObject?.children.find((child) => child instanceof THREE.Sprite) as
+        | THREE.Sprite
+        | undefined;
+      const relatedLabel = relatedObject?.children.find((child) => child instanceof THREE.Sprite) as
+        | THREE.Sprite
+        | undefined;
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(hoveredLabel).toBeDefined();
+      expect(relatedLabel).toBeDefined();
+      expect((hoveredLabel?.material as THREE.SpriteMaterial).opacity).toBeLessThan(0.01);
+      expect((relatedLabel?.material as THREE.SpriteMaterial).opacity).toBeGreaterThan(0.9);
+    });
+
+    it('single-clicking a Concept node does not pin a node card', async () => {
       render(
         <Graph3D
           data={graph}
@@ -1313,8 +1779,12 @@ describe('Graph3D', () => {
         onNodeClick(graph.nodes[0]);
       });
 
-      expect(screen.getByText('Calculus')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Open docs' })).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(screen.queryByText('Calculus (2)')).not.toBeInTheDocument();
+      expect(screen.queryByText('Calculus')).not.toBeInTheDocument();
     });
 
     it('falls back to mock documents when the API returns empty and injects doc sub-nodes', async () => {

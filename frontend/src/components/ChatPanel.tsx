@@ -10,11 +10,13 @@ import type {
   ChatRelationshipCitation,
 } from '../types/chat';
 import type { GraphSource } from '../types/graph';
+import type { ActiveTraversal } from '../types/traversal';
 
 interface ChatPanelProps {
   graphSource: GraphSource;
   onOpenDocument?: (docId: string, name: string) => void;
   onAssistantMessageSelect?: (selection: AssistantMessageSelection | null) => void;
+  onTraversalChange?: (traversal: ActiveTraversal | null) => void;
 }
 
 const LOADING_MESSAGES = [
@@ -33,12 +35,14 @@ export function ChatPanel({
   graphSource,
   onOpenDocument,
   onAssistantMessageSelect,
+  onTraversalChange,
 }: ChatPanelProps) {
   const {
     messages,
     sessions,
     activeSessionId,
     isLoading,
+    activeTraversal,
     createSession,
     deleteSession,
     selectSession,
@@ -84,6 +88,10 @@ export function ChatPanel({
     };
   }, [isLoading]);
 
+  useEffect(() => {
+    onTraversalChange?.(activeTraversal);
+  }, [activeTraversal, onTraversalChange]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -92,6 +100,8 @@ export function ChatPanel({
       return;
     }
 
+    setSelectedAssistantMessageKey(null);
+    onAssistantMessageSelect?.(null);
     setQuestion('');
     await sendMessage(trimmedQuestion);
   }

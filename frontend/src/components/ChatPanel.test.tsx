@@ -146,6 +146,33 @@ describe('ChatPanel', () => {
     expect(input).toHaveValue('');
   });
 
+  it('clears the selected assistant highlight before sending a new question', async () => {
+    isLoading = false;
+    const onAssistantMessageSelect = vi.fn();
+    const user = userEvent.setup();
+    sendMessage.mockResolvedValue(undefined);
+
+    render(
+      <ChatPanel
+        graphSource="api"
+        onOpenDocument={openDocument}
+        onAssistantMessageSelect={onAssistantMessageSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Select response 1' }));
+    await user.type(screen.getByLabelText('Ask braen'), 'What next?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(onAssistantMessageSelect).toHaveBeenNthCalledWith(1, {
+      sourceConcepts: ['BrainBank'],
+      discoveryConcepts: ['BrainBank', 'Knowledge Graph'],
+      message: messages[1] as ChatMessage,
+    });
+    expect(onAssistantMessageSelect).toHaveBeenLastCalledWith(null);
+    expect(sendMessage).toHaveBeenCalledWith('What next?');
+  });
+
   it('lets users create a new chat and switch back to an older session', async () => {
     isLoading = false;
     const user = userEvent.setup();

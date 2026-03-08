@@ -28,13 +28,17 @@ vi.mock('./hooks/useGraphData', () => ({
 }));
 
 vi.mock('./components/Graph3D', () => ({
-  Graph3D: (props: { chatFocus?: { sourceConcepts: string[]; discoveryConcepts: string[] } | null }) => {
+  Graph3D: (props: {
+    chatFocus?: { sourceConcepts: string[]; discoveryConcepts: string[] } | null;
+    activeTraversal?: { runId: number } | null;
+  }) => {
     graph3DSpy(props);
 
     return (
       <div
         data-testid="graph-scene"
         data-chat-focus={props.chatFocus ? JSON.stringify(props.chatFocus) : 'none'}
+        data-active-traversal={props.activeTraversal ? String(props.activeTraversal.runId) : 'none'}
       />
     );
   },
@@ -65,6 +69,7 @@ vi.mock('./components/ChatPanel', () => ({
     graphSource,
     onOpenDocument,
     onAssistantMessageSelect,
+    onTraversalChange,
   }: {
     graphSource: 'api' | 'mock';
     onOpenDocument?: (docId: string, name: string) => void;
@@ -72,6 +77,7 @@ vi.mock('./components/ChatPanel', () => ({
       sourceConcepts: string[];
       discoveryConcepts: string[];
     } | null) => void;
+    onTraversalChange?: (traversal: { runId: number } | null) => void;
   }) => {
     const [draft, setDraft] = useState('');
 
@@ -104,6 +110,12 @@ vi.mock('./components/ChatPanel', () => ({
         <button type="button" onClick={() => onAssistantMessageSelect?.(null)}>
           Clear response
         </button>
+        <button type="button" onClick={() => onTraversalChange?.({ runId: 7 })}>
+          Start traversal
+        </button>
+        <button type="button" onClick={() => onTraversalChange?.(null)}>
+          Clear traversal
+        </button>
       </div>
     );
   },
@@ -128,6 +140,18 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Clear response' }));
     expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-chat-focus', 'none');
+  });
+
+  it('passes active traversal state from chat into the graph scene', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+    await user.click(screen.getByRole('button', { name: 'Start traversal' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-active-traversal', '7');
+
+    await user.click(screen.getByRole('button', { name: 'Clear traversal' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-active-traversal', 'none');
   });
 
   it('renders the shell with search bar in the top bar area', () => {

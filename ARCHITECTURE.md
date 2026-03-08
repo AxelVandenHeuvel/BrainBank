@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Both routes now surface document provenance in the `/query` response: the local path carries cited source/discovery documents, chunks, and supporting relationships from retrieval-time provenance assembly, while the global path maps cited community concepts back to ranked underlying documents so summary-style answers are not missing note links. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. The legacy `POST /query` route still handles both paths end-to-end, while the local path also exposes a staged flow through `POST /query/prepare` plus `POST /query/answer`. That staged local flow lets the frontend start a neuron-firing animation from the actual retrieval traversal plan before the grounded LLM answer finishes. Both routes surface document provenance in the final answer payload: the local path carries cited source/discovery documents, chunks, and supporting relationships from retrieval-time provenance assembly, while the global path maps cited community concepts back to ranked underlying documents so summary-style answers are not missing note links. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
 
 ## Stack
 
@@ -99,21 +99,21 @@ frontend/
     App.tsx                  - Layout shell with collapsible sidebar, top search bar, permanent Brain tab, fully wired tab system, FileExplorer, TabBar, DocumentEditor, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, deletable sessions, bottom-anchored composer, in-stream loading status bubble, assistant-response graph focus toggles, answer provenance sections, inline clickable document hyperlinks inside assistant responses, and mock-data warning when chat is not grounded in live backend notes
+      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, deletable sessions, bottom-anchored composer, in-stream loading status bubble, assistant-response graph focus toggles, traversal-state callback wiring, answer provenance sections, inline clickable document hyperlinks inside assistant responses, and mock-data warning when chat is not grounded in live backend notes
       ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
       DocumentEditor.tsx     - Milkdown Crepe editor with explicit manual saves, lightweight draft creation for new notes, and lightweight PUT updates for existing notes
       EdgeDetailPanel.tsx    - Selected relationship panel with a fixed header, bounded height, and internally scrollable evidence documents
       EditorArea.tsx         - Container combining TabBar + DocumentEditor (legacy; no longer used by App.tsx, which renders TabBar and DocumentEditor directly)
-      Graph3D.tsx            - 3D graph scene with a top-left brain mesh toggle that fades the shell in and out, a soft pink brain wireframe shell, dodecahedron nodes, force-directed layout, animated node-to-node focus transitions, concept dive-in with document sub-graph, and callback props (onOpenDocument, onConceptFocused) for parent tab integration
+      Graph3D.tsx            - 3D graph scene with a top-left brain mesh toggle that fades the shell in and out, a soft pink brain wireframe shell, dodecahedron nodes, force-directed layout, animated node-to-node focus transitions, temporary neuron-firing pulses driven by staged local retrieval traversal plans, query-time traversal washout that turns unreached nodes gray until they are traversed, bright eased gray-to-color pulsing plus a matching pulsing outline on already-revealed traversal nodes while the answer is still in flight, concept dive-in with document sub-graph, compact hover-only node tooltips, and callback props (onOpenDocument, onConceptFocused) for parent tab integration
       FileExplorer.tsx       - Sidebar file tree: collapsible concept folders with document items, auto-expand on highlight, refetchSignal prop for parent-triggered refresh
       IngestPanel.tsx        - New Note button + file upload + Notion import
       MarkdownDocumentViewer.tsx - Read-only markdown renderer for selected documents
       NoteEditor.tsx         - Full-page markdown note editor (legacy, replaced by DocumentEditor for tab system)
-      NodeTooltip.tsx        - Hover or selected-node card showing node name, type, and connection count
+      NodeTooltip.tsx        - Compact hover tooltip that renders `name (connectionCount)` above the hovered node
       SearchBar.tsx          - Slim horizontal search input for the top bar
       TabBar.tsx             - Horizontal tab bar with active highlighting, conditional close buttons (hidden when `closable === false`), and new-tab italic indicator
     hooks/
-      useChat.ts             - POST /query hook for chat state, retrieval answers, answer provenance metadata, and session deletion/fallback behavior
+      useChat.ts             - Staged local query hook: POST /query/prepare + POST /query/answer for traversal-aware chat, with automatic fallback to POST /query for global prompts, plus answer provenance metadata and session deletion/fallback behavior
       useFileTree.ts         - GET /api/concepts + /api/documents hook, builds the sidebar tree and groups concept-less drafts under a `Notes` bucket
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
@@ -128,10 +128,11 @@ frontend/
       setup.ts               - Vitest setup
     types/
       chat.ts                - Shared chat message and session types
+      traversal.ts           - Shared frontend traversal-plan and active-run types for neuron firing
       graph.ts               - Graph node, edge, link, and discovery types
       notes.ts               - OpenTab interface for the tab system (includes optional `closable` field)
 backend/
-  api.py                    - FastAPI /ingest and /query endpoints
+  api.py                    - FastAPI /ingest, /query, /query/prepare, and /query/answer endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/documents/{doc_id} (GET + PUT lightweight + POST reingest), /api/stats, /api/concepts/{name}/documents
   graph_visualization.py    - Terminal-friendly concept graph loading from Kuzu with LanceDB fallback and ASCII rendering
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
@@ -155,14 +156,16 @@ backend/
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   session/
     memory.py               - In-memory session store with bounded turn window and TTL
+    prepared_query_store.py - Short-lived in-memory store for staged local query state between prepare and answer
   retrieval/
     artifacts.py            - Batch rebuild for concept centroids and community summaries
     context.py              - Deterministic context assembly for local/global GraphRAG
     global_search.py        - Community-summary retrieval plus map/reduce answer synthesis
     latent_discovery.py     - Shared concept-centroid to document-centroid discovery helpers
     local_search.py         - Local GraphRAG seed selection, weighted expansion, and latent evidence retrieval
+    traversal.py            - BFS traversal-plan builder for neuron firing animation
     provenance.py          - Query-time answer provenance assembly for cited documents, evidence chunks, and supporting relationships
-    query.py                - Route-aware query orchestration
+    query.py                - Route-aware query orchestration plus staged local prepare/answer helpers
     routing.py              - LOCAL vs GLOBAL query classification
     types.py                - Retrieval dataclasses and internal config defaults
 sample_data/
@@ -254,6 +257,7 @@ Graph3D -- react-force-graph-3d scene
   |         +-- scroll wheel -> zoom camera in or out around the current focus point
   |         +-- single-click node -> smooth camera fly to that node (same animation as search), pin a translucent card above it, request latent discovery tethers, and call onConceptFocused callback
   |         +-- selected assistant response -> keep source concepts fully lit, dim all unrelated nodes with hidden labels, and render discovery concepts as dimmed nodes with gold outline + visible labels
+  |         +-- active local traversal run -> wash visible nodes to gray, reveal traversed nodes in their normal colors as each traversal step fires, keep revealed nodes slowly pulsing brightly between gray and color with a matching pulsing outline while the answer request is still running, and fade all nodes back to the resting palette when the answer request completes
   |         +-- double-click concept node -> "dive into" concept: zoom very close, inject document sub-nodes in a ring around the concept with connecting edges, dim all other nodes
   |         +-- double-click doc sub-node -> call onOpenDocument callback to open that document in the editor
   |         +-- clicked concept node -> becomes the active rotation pivot
@@ -293,7 +297,7 @@ The system is composed of two active components rendered directly in `App.tsx` (
 
 The layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend uses the loaded brain mesh as a real containment boundary for the graph, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the dodecahedron nodes stay inside the shell. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales it to a larger target diagonal (`325`) so the default framing gives the visualization more room. That shell is rendered as a very light soft-pink wireframe overlay (`opacity: 0.06`, tint derived from the page accent pink) so it frames the brain without competing with the nodes, and a dedicated top-left checkbox now fades that mesh in or out instead of snapping visibility while still leaving node layout untouched. The mesh toggle uses the same checkbox-in-pill structure as the nearby Discovery Mode control so the two graph toggles read as one control cluster. Each graph node is rendered as a procedural `DodecahedronGeometry` with flat shading and a text label sprite above it, colored by community palette when a `community_id` is present or by the red-to-blue score gradient otherwise.
 
-Node placement uses a force-directed layout: each node id is seeded to a deterministic position via hash, then d3-force-3d runs with charge repulsion (`-150`), collision avoidance (`forceCollide(18)`), and weight-based link distance/strength. After the simulation settles, all node positions are pinned (`fx/fy/fz`) so they never move again — subsequent reheats are immediately suppressed by re-pinning from a saved position map on every engine tick. Brain containment clamping runs during simulation ticks to keep nodes inside the shell. `Graph3D` disables the built-in navigation controls, keeps idle motion and left-button drag on the scene object's own rotation, reserves single-click for node interactions (single click = smoothly animate both the scene focus point and camera toward the selected node, pin a semi-translucent card above the selected node, and request latent discovery tether request for concepts; double click = "dive into" the concept), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. That shared focus animation path is also what fixes the regression where clicking from one node to another used to snap the view instead of flying between targets. The scene spins by default on load and stops permanently when the user drags, clicks a node, or clicks an edge; rotation resumes only when the reset button is pressed (after the camera-return animation completes). The selected-node card reuses the tooltip positioning path, but once a node is clicked it stays anchored above that node until the user clears selection or opens another target. Double-clicking a concept node triggers a "dive-in" experience: the camera zooms very close to the concept, document sub-nodes are injected in a ring around it (with concept-to-doc and doc-to-doc ring edges), and all other nodes are dimmed to 8% opacity. Double-clicking a document sub-node opens it in the editor via the `onOpenDocument` callback. Pressing Escape, clicking reset, or clicking the background exits the expanded view and restores the brain overview. `Graph3D` accepts two callback props for the tab system: `onOpenDocument(docId, name, content)` is called when a document sub-node is double-clicked in dive-in view, and `onConceptFocused(conceptName | null)` is called when a concept node gains or loses focus. `ChatPanel` now receives its own `onOpenDocument(docId, name)` callback from `App.tsx`, so clicking a cited answer document opens the same editor flow and then hydrates the tab with `GET /api/documents/{doc_id}`. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width scales by relationship weight (`Math.log((weight || 1) + 1) * 2.2`) so stronger relationships still read clearly without dominating the scene, and discovery ghost links stay dashed with `[2, 1]` line dashes so they read as temporary tethers. Semantic bridge edges from `heal_graph` use a distinct amber tint and thinner width. Unfocused edges use a softer translucent bluish-white base color, the graph-level edge opacity is lowered, and ghost tethers are thinner so the nodes remain the visual priority before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node animates that local focus point toward the target instead of teleporting it there first. When a concept node is focused, `Graph3D` stores that node's id as the active rotation target and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. During search, non-matching nodes and their labels are dimmed to 8% opacity while matched nodes stay fully visible. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. The chat overlay itself now starts closed on first render, leaving the graph fully unobstructed until the user opens chat from the right-side handle. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+Node placement uses a force-directed layout: each node id is seeded to a deterministic position via hash, then d3-force-3d runs with charge repulsion (`-150`), collision avoidance (`forceCollide(18)`), and weight-based link distance/strength. After the simulation settles, all node positions are pinned (`fx/fy/fz`) so they never move again — subsequent reheats are immediately suppressed by re-pinning from a saved position map on every engine tick. Brain containment clamping runs during simulation ticks to keep nodes inside the shell. `Graph3D` disables the built-in navigation controls, keeps idle motion and left-button drag on the scene object's own rotation, reserves single-click for node interactions (single click = smoothly animate both the scene focus point and camera toward the selected node and request latent discovery tether data for concepts; double click = "dive into" the concept), maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons, and explicitly disables the force-graph library's default cursor-following hover label. That shared focus animation path is also what fixes the regression where clicking from one node to another used to snap the view instead of flying between targets. The scene spins by default on load and stops permanently when the user drags, clicks a node, or clicks an edge; rotation resumes only when the reset button is pressed (after the camera-return animation completes). Hovering a node renders a compact tooltip in the format `Name (connectionCount)` above the node, and the hovered node's in-scene text sprite fades out so the hover state shows only one label. Clicking a node no longer pins a separate card in place. Double-clicking a concept node triggers a "dive-in" experience: the camera zooms very close to the concept, document sub-nodes are injected in a ring around it (with concept-to-doc and doc-to-doc ring edges), and all other nodes are dimmed to 8% opacity. Double-clicking a document sub-node opens it in the editor via the `onOpenDocument` callback. Pressing Escape, clicking reset, or clicking the background exits the expanded view and restores the brain overview. `Graph3D` accepts two callback props for the tab system: `onOpenDocument(docId, name, content)` is called when a document sub-node is double-clicked in dive-in view, and `onConceptFocused(conceptName | null)` is called when a concept node gains or loses focus. `ChatPanel` now receives its own `onOpenDocument(docId, name)` callback from `App.tsx`, so clicking a cited answer document opens the same editor flow and then hydrates the tab with `GET /api/documents/{doc_id}`. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width scales by relationship weight (`Math.log((weight || 1) + 1) * 2.2`) so stronger relationships still read clearly without dominating the scene, and discovery ghost links stay dashed with `[2, 1]` line dashes so they read as temporary tethers. Semantic bridge edges from `heal_graph` use a distinct amber tint and thinner width. Unfocused edges use a softer translucent bluish-white base color, the graph-level edge opacity is lowered, and ghost tethers are thinner so the nodes remain the visual priority before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node animates that local focus point toward the target instead of teleporting it there first. When a concept node is focused, `Graph3D` stores that node's id as the active rotation target and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. During search, non-matching nodes and their labels are dimmed to 8% opacity while matched nodes stay fully visible. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. The chat overlay itself now starts closed on first render, leaving the graph fully unobstructed until the user opens chat from the right-side handle. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. Discovery Mode adds temporary latent tethers from the selected concept to semantically similar documents returned by `/api/discovery/latent/{concept_name}`; these ghost links are dashed and use a distinct violet tint, and the user can toggle them on or off from the graph UI. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. The panel is height-bounded to the graph viewport, keeps its title and close button pinned at the top, and scrolls long relationship evidence inside its body instead of letting content run off-screen. That panel can be dismissed either with its close button or by pressing `Escape`.
 
@@ -446,9 +450,11 @@ The Notion service (`backend/services/notion.py`) handles URL parsing, rich text
 - **Thread-safe**: all access is protected by a threading lock since FastAPI dispatches query work to a thread pool.
 - **Session isolation**: each `session_id` has its own independent turn list.
 
-The frontend sends `session_id` (the localStorage chat session UUID) and `history` (the last 20 messages) with each `/query` request. The backend records each user/assistant turn in the session store and passes the conversation history into the LLM prompt so it can resolve references like "it", "that", and "the second one".
+The frontend sends `session_id` (the localStorage chat session UUID) and `history` (the last 20 messages) with each `/query` request, and with each staged `/query/prepare` + `/query/answer` sequence for local traversal-aware queries. The backend records each user/assistant turn in the session store when the final answer request is handled and passes the conversation history into the LLM prompt so it can resolve references like "it", "that", and "the second one".
 
-## Query Flow (`POST /query`)
+`backend/session/prepared_query_store.py` provides a second ephemeral store for the staged local flow. It keeps prepared local-query state in memory for up to 5 minutes, caps the store at 100 items, evicts the oldest item when full, and deletes each prepared query as soon as `/query/answer` consumes it.
+
+## Query Flow (`POST /query`, `POST /query/prepare`, `POST /query/answer`)
 
 ```
 Input: { question, session_id?, history? }
@@ -504,6 +510,56 @@ route.classify_query_route() -- GLOBAL for overview/theme prompts, otherwise LOC
 ```
 
 The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. Retrieval still preserves the stable `/query` contract, but internally it is now route-aware and GraphRAG-specific. Local retrieval defaults to chunk/document artifacts already produced during ingest and upgrades itself when `concept_centroids` exists. Global retrieval only activates when `community_summaries` exists; otherwise overview-style questions transparently fall back to the local path. Local answers assemble full provenance from retrieval hits, and global answers map their surfaced source concepts back to ranked documents so both routes can drive clickable note citations in chat. When `session_id` and `history` are provided, the API stores turns in `SessionMemory`, and the history turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
+
+The staged local flow works like this:
+
+```
+Input: { question, session_id?, history? }
+  |
+  v
+POST /query/prepare
+  |
+  +-- classify GLOBAL?
+  |     |
+  |     +-- yes -> return { route:"GLOBAL", requires_direct_query:true, prepared_query_id:null, traversal_plan:null }
+  |     +-- no  -> run local retrieval only
+  |
+  +-- local retrieval
+  |     |
+  |     +-- embeddings.embed_query()
+  |     +-- local_search.run_local_search()
+  |     +-- context.build_local_context()
+  |     +-- provenance.build_local_answer_provenance()
+  |     +-- traversal.build_traversal_plan()
+  |     v
+  |   prepared_query_store.create(...)
+  |
+  v
+Return: { route:"LOCAL", requires_direct_query:false, prepared_query_id, source_concepts, discovery_concepts, traversal_plan }
+  |
+  v
+Frontend starts neuron-firing animation from traversal_plan and concurrently calls POST /query/answer
+  |
+  v
+POST /query/answer
+  |
+  +-- prepared_query_store.consume(...)
+  +-- session_memory.add_turn(user) when session_id present
+  +-- immediate no-results response OR llm.generate_answer(prepared context, prepared concepts, history)
+  +-- session_memory.add_turn(assistant) when session_id present
+  v
+Return: same final answer payload shape as POST /query
+```
+
+The traversal plan contract is fixed for v1:
+- `root_node_id`
+- `step_interval_ms = 160`
+- `pulse_duration_ms = 320`
+- `brightness_decay = 0.65`
+- `brightness_threshold = 0.25`
+- `steps = [{ node_id, concept, hop, brightness, delay_ms }]`
+
+The plan is built only for LOCAL queries. It starts from the highest-ranked source concept, walks breadth-first across `RELATED_TO` edges, emits only concepts that were already selected as source or discovery concepts, and drops steps once hop depth or brightness would exceed the configured stop conditions.
 If LanceDB has zero ingested chunks, `/query` returns a specific empty-database message instead of the generic "No relevant information found." response. That makes it clear the failure is missing ingested data rather than a bad retrieval match.
 
 ## API Endpoints
@@ -520,6 +576,16 @@ If LanceDB has zero ingested chunks, `/query` returns a specific empty-database 
 ### `POST /query`
 - Body: `{"question": "..."}`
 - Returns: `{"answer": "...", "source_concepts": [...], "discovery_concepts": [...], "source_documents": [{"doc_id", "name"}], "discovery_documents": [{"doc_id", "name"}], "source_chunks": [{"chunk_id", "doc_id", "doc_name", "text"}], "discovery_chunks": [{"chunk_id", "doc_id", "doc_name", "text"}], "supporting_relationships": [{"source", "target", "type", "reason"}]}`
+
+### `POST /query/prepare`
+- Body: `{"question": "...", "session_id"?: "...", "history"?: [{"role", "content"}]}`
+- Returns local staged-query metadata for LOCAL prompts: `{"route": "LOCAL", "requires_direct_query": false, "prepared_query_id": "...", "source_concepts": [...], "discovery_concepts": [...], "traversal_plan": {...}}`
+- Returns global fallback metadata for GLOBAL prompts: `{"route": "GLOBAL", "requires_direct_query": true, "prepared_query_id": null, "source_concepts": [], "discovery_concepts": [], "traversal_plan": null}`
+
+### `POST /query/answer`
+- Body: `{"prepared_query_id": "...", "session_id"?: "...", "history"?: [{"role", "content"}]}`
+- Returns the same final answer payload shape as `POST /query`
+- Rejects missing, expired, or already-consumed prepared query IDs with `404`
 
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
