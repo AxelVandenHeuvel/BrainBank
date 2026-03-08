@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./hooks/useGraphData', () => ({
@@ -29,13 +30,27 @@ vi.mock('./components/Graph3D', () => ({
 }));
 
 vi.mock('./components/ChatPanel', () => ({
-  ChatPanel: () => <div data-testid="chat-panel">Chat panel</div>,
+  ChatPanel: () => {
+    const [draft, setDraft] = useState('');
+
+    return (
+      <div data-testid="chat-panel">
+        <label htmlFor="chat-draft">Draft</label>
+        <input
+          id="chat-draft"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <div>{draft || 'Empty draft'}</div>
+      </div>
+    );
+  },
 }));
 
 import App from './App';
 
 describe('App', () => {
-  it('renders the shell, graph summary, node legend, and lets users toggle the chat panel', async () => {
+  it('renders the shell, graph summary, node legend, and keeps chat state when users toggle the panel', async () => {
     const user = userEvent.setup();
 
     render(<App />);
@@ -47,14 +62,17 @@ describe('App', () => {
     expect(screen.getByText('Mock data')).toBeInTheDocument();
     expect(screen.getByText('Concept')).toBeInTheDocument();
     expect(screen.getByText('Document')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Draft'), 'Persist me');
+    expect(screen.getByDisplayValue('Persist me')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Close chat panel' }));
 
-    expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chat-panel')).not.toBeVisible();
     expect(screen.getByRole('button', { name: 'Open chat panel' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
 
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Persist me')).toBeInTheDocument();
   });
 });
