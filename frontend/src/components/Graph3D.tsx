@@ -1192,7 +1192,8 @@ export function Graph3D({
 
       brainGroupRef.current = brainGroup;
       scene.add(brainGroup);
-      // Reheat the simulation so it re-runs with brain containment clamping active
+      // Reset settled flag so the reheated simulation runs clamping in onEngineTick
+      simulationSettledRef.current = false;
       (graphRef.current as any)?.d3ReheatSimulation?.();
       handleReset();
     });
@@ -1212,6 +1213,16 @@ export function Graph3D({
 
   useEffect(() => {
     clampNodesWithinBrain(true);
+    // Sync pin map with clamped positions
+    if (brainContainmentRef.current) {
+      const pins = pinnedPositionsRef.current;
+      displayData.nodes.forEach((n) => {
+        pins.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0 });
+        n.fx = n.x;
+        n.fy = n.y;
+        n.fz = n.z;
+      });
+    }
   }, [displayData.nodes]);
 
   // Fade + hide brain wireframe during dive and when in expanded concept view
@@ -1529,6 +1540,16 @@ export function Graph3D({
   }
 
   function getLinkColor(link: GraphLink): string {
+    // When a concept is expanded, only show doc↔doc links; hide everything else
+    if (expandedNodeIds) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      if (expandedNodeIds.has(sourceId) && expandedNodeIds.has(targetId)) {
+        return ACTIVE_LINK_COLOR;
+      }
+      return 'rgba(0,0,0,0)';
+    }
+
     if (isGhostLink(link)) {
       return GHOST_EDGE_COLOR;
     }
@@ -1541,16 +1562,6 @@ export function Graph3D({
         return DIMMED_LINK_COLOR;
       }
       return SEMANTIC_BRIDGE_COLOR;
-    }
-
-    // When a concept is expanded, only show doc↔doc links; hide everything else
-    if (expandedNodeIds) {
-      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      if (expandedNodeIds.has(sourceId) && expandedNodeIds.has(targetId)) {
-        return ACTIVE_LINK_COLOR;
-      }
-      return 'rgba(0,0,0,0)';
     }
 
     if (isSelectedLink(link)) {
@@ -1569,6 +1580,14 @@ export function Graph3D({
   }
 
   function getLinkWidth(link: GraphLink): number {
+    if (expandedNodeIds) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      if (!expandedNodeIds.has(sourceId) || !expandedNodeIds.has(targetId)) {
+        return 0;
+      }
+    }
+
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
     }
