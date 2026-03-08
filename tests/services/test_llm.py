@@ -1,6 +1,11 @@
 from unittest.mock import Mock, patch
 
-from backend.services.llm import extract_concepts, extract_knowledge
+from backend.services.llm import (
+    extract_concepts,
+    extract_knowledge,
+    generate_answer,
+    generate_test_answer,
+)
 
 
 def _mock_response(text: str):
@@ -134,3 +139,32 @@ class TestExtractConcepts:
                 }
             ],
         }
+
+
+class TestModelSelection:
+    @patch("backend.services.llm._get_client")
+    def test_generate_answer_uses_current_default_model(self, mock_get_client):
+        client = Mock()
+        client.models.generate_content.return_value = _mock_response("Answer")
+        mock_get_client.return_value = client
+
+        result = generate_answer("What is calculus?", "Context", ["Calculus"])
+
+        assert result == "Answer"
+        assert client.models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash"
+
+    @patch.dict("backend.services.llm.os.environ", {"TEST_LLM_PROVIDER": "ollama"}, clear=False)
+    @patch("backend.services.llm.urlopen")
+    def test_generate_test_answer_can_use_local_ollama(self, mock_urlopen):
+        response = Mock()
+        response.read.return_value = b'{"response": "Local model reply"}'
+        mock_urlopen.return_value.__enter__.return_value = response
+
+        result = generate_test_answer("Say hello")
+
+        assert result == "Local model reply"
+        request = mock_urlopen.call_args.args[0]
+        assert request.full_url == "http://localhost:11434/api/generate"
+        assert request.get_method() == "POST"
+        assert b'"model": "llama3.2:3b"' in request.data
+        assert b'"prompt": "Say hello"' in request.data

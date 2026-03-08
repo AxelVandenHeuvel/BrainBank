@@ -17,7 +17,7 @@ interface UseChatResult {
   sendMessage: (question: string) => Promise<void>;
 }
 
-const QUERY_ENDPOINT = 'http://localhost:8000/query';
+const QUERY_ENDPOINT = '/query/test-llm';
 const FALLBACK_ERROR_MESSAGE = 'I could not reach BrainBank right now.';
 
 export function useChat(): UseChatResult {

@@ -51,3 +51,24 @@ class TestQueryEndpoint:
     def test_query_missing_fields(self):
         response = client.post("/query", json={})
         assert response.status_code == 422
+
+
+class TestLlmTestEndpoint:
+    @patch("backend.api.generate_test_answer", return_value="Direct Gemini response")
+    def test_llm_test_route_returns_answer_without_database(self, mock_generate):
+        response = client.post(
+            "/query/test-llm",
+            json={"question": "Can you hear me?"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "answer": "Direct Gemini response",
+            "discovery_concepts": [],
+            "mode": "llm_test",
+        }
+        mock_generate.assert_called_once_with("Can you hear me?")
+
+    def test_llm_test_route_requires_question(self):
+        response = client.post("/query/test-llm", json={})
+        assert response.status_code == 422

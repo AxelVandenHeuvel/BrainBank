@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from google import genai
@@ -7,6 +8,9 @@ from google import genai
 load_dotenv()
 
 _client = None
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 
 
 def _get_client():
@@ -17,6 +21,33 @@ def _get_client():
             raise ValueError("GEMINI_API_KEY environment variable is required")
         _client = genai.Client(api_key=api_key)
     return _client
+
+
+def _get_model_name() -> str:
+    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+
+
+def _get_test_llm_provider() -> str:
+    return os.environ.get("TEST_LLM_PROVIDER", "gemini").lower()
+
+
+def _generate_ollama_response(prompt: str) -> str:
+    payload = json.dumps(
+        {
+            "model": os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+            "prompt": prompt,
+            "stream": False,
+        }
+    ).encode("utf-8")
+    request = Request(
+        f"{os.environ.get('OLLAMA_BASE_URL', DEFAULT_OLLAMA_URL)}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return data["response"]
 
 
 def _parse_json_response(raw_text: str) -> dict:

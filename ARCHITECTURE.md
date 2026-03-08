@@ -152,7 +152,7 @@ The sidebar has a "New Note" button and a file upload option:
 
 Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also manages its own camera state: it auto-centers on load, resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also derives a dedicated home-view camera target from the loaded brain bounds, so reset and initial framing center the brain shell in the viewport instead of centering only the node cluster. It resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 ## Frontend Chat Flow
 
@@ -166,16 +166,16 @@ ChatPanel -- controlled input + session message history
 useChat.sendMessage() -- append user message and set loading state
   |
   v
-POST http://localhost:8000/query
+POST /query/test-llm -- proxied by Vite in development to the backend API
   |
   v
-Backend returns { answer, discovery_concepts }
+Backend returns { answer, discovery_concepts, mode }
   |
   v
 ChatPanel -- render assistant answer + discovery concept tags
 ```
 
-Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet. The panel is toggled from a single side-mounted control so it can collapse without adding a second toolbar area.
+Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet. The panel is toggled from a single side-mounted control so it can collapse without adding a second toolbar area. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -284,7 +284,11 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 
 | Variable       | Required | Purpose            |
 |----------------|----------|--------------------|
-| GEMINI_API_KEY | Yes      | Gemini 1.5 Flash   |
+| GEMINI_API_KEY | Yes      | Gemini API authentication |
+| GEMINI_MODEL   | No       | Override model name (default: `gemini-2.5-flash`) |
+| TEST_LLM_PROVIDER | No    | Test route provider: `gemini` or `ollama` |
+| OLLAMA_BASE_URL | No      | Local Ollama base URL (default: `http://localhost:11434`) |
+| OLLAMA_MODEL | No         | Local Ollama model for the test route (default: `llama3.2:3b`) |
 
 Database paths default to `./data/lancedb` and `./data/kuzu`.
 

@@ -6,6 +6,8 @@ interface CameraPosition {
   z: number;
 }
 
+const HOME_VIEW_HEIGHT_FACTOR = 0.08;
+
 interface ForceGraphCameraHandle {
   cameraPosition(): CameraPosition;
   cameraPosition(
@@ -145,5 +147,22 @@ export function zoomToNode(
     },
     lookAt,
     1200,
+  );
+}
+
+export function centerCameraOnTarget(
+  fgRef: ForceGraphCameraRef,
+  target: CameraPosition,
+  distance: number,
+  durationMs = 1200,
+): void {
+  fgRef.current?.cameraPosition(
+    {
+      x: target.x,
+      y: target.y + distance * HOME_VIEW_HEIGHT_FACTOR,
+      z: target.z + distance,
+    },
+    target,
+    durationMs,
   );
 }
