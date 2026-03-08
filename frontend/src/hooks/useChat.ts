@@ -6,12 +6,28 @@ import {
   saveActiveSessionId,
   saveSessions,
 } from '../lib/chatStorage';
-import type { ChatMessage, ChatSession } from '../types/chat';
+import type {
+  ChatChunkCitation,
+  ChatDocumentCitation,
+  ChatMessage,
+  ChatRelationshipCitation,
+  ChatSession,
+} from '../types/chat';
 
 interface QueryResponse {
   answer?: string;
   source_concepts?: string[];
   discovery_concepts?: string[];
+  source_documents?: Array<{ doc_id: string; name: string }>;
+  discovery_documents?: Array<{ doc_id: string; name: string }>;
+  source_chunks?: Array<{ chunk_id: string; doc_id: string; doc_name: string; text: string }>;
+  discovery_chunks?: Array<{ chunk_id: string; doc_id: string; doc_name: string; text: string }>;
+  supporting_relationships?: Array<{
+    source: string;
+    target: string;
+    type: string;
+    reason?: string | null;
+  }>;
 }
 
 interface UseChatResult {
@@ -20,6 +36,7 @@ interface UseChatResult {
   messages: ChatMessage[];
   isLoading: boolean;
   createSession: () => void;
+  deleteSession: (sessionId: string) => void;
   selectSession: (sessionId: string) => void;
   sendMessage: (question: string) => Promise<void>;
 }
@@ -58,6 +75,37 @@ function getSessionTitle(question: string, currentTitle: string): string {
   }
 
   return question.slice(0, 60);
+}
+
+function mapDocuments(
+  documents: QueryResponse['source_documents'] | QueryResponse['discovery_documents'],
+): ChatDocumentCitation[] {
+  return (documents ?? []).map((document) => ({
+    docId: document.doc_id,
+    name: document.name,
+  }));
+}
+
+function mapChunks(
+  chunks: QueryResponse['source_chunks'] | QueryResponse['discovery_chunks'],
+): ChatChunkCitation[] {
+  return (chunks ?? []).map((chunk) => ({
+    chunkId: chunk.chunk_id,
+    docId: chunk.doc_id,
+    docName: chunk.doc_name,
+    text: chunk.text,
+  }));
+}
+
+function mapRelationships(
+  relationships: QueryResponse['supporting_relationships'],
+): ChatRelationshipCitation[] {
+  return (relationships ?? []).map((relationship) => ({
+    source: relationship.source,
+    target: relationship.target,
+    type: relationship.type,
+    reason: relationship.reason,
+  }));
 }
 
 export function useChat(): UseChatResult {
@@ -114,6 +162,24 @@ export function useChat(): UseChatResult {
     }
 
     setActiveSessionId(sessionId);
+  }
+
+  function deleteSession(sessionId: string) {
+    setSessions((previousSessions) => {
+      const nextSessions = previousSessions.filter((session) => session.id !== sessionId);
+
+      if (nextSessions.length === 0) {
+        const fallbackSession = createEmptySession();
+        setActiveSessionId(fallbackSession.id);
+        return [fallbackSession];
+      }
+
+      if (sessionId === activeSessionId) {
+        setActiveSessionId(nextSessions[0].id);
+      }
+
+      return sortSessionsByUpdatedAt(nextSessions);
+    });
   }
 
   function appendMessage(sessionId: string, message: ChatMessage) {
@@ -174,6 +240,11 @@ export function useChat(): UseChatResult {
         content: data.answer ?? '',
         sourceConcepts: data.source_concepts ?? [],
         discoveryConcepts: data.discovery_concepts ?? [],
+        sourceDocuments: mapDocuments(data.source_documents),
+        discoveryDocuments: mapDocuments(data.discovery_documents),
+        sourceChunks: mapChunks(data.source_chunks),
+        discoveryChunks: mapChunks(data.discovery_chunks),
+        supportingRelationships: mapRelationships(data.supporting_relationships),
       });
     } catch {
       appendMessage(activeSession.id, {
@@ -181,6 +252,11 @@ export function useChat(): UseChatResult {
         content: FALLBACK_ERROR_MESSAGE,
         sourceConcepts: [],
         discoveryConcepts: [],
+        sourceDocuments: [],
+        discoveryDocuments: [],
+        sourceChunks: [],
+        discoveryChunks: [],
+        supportingRelationships: [],
       });
     } finally {
       setIsLoading(false);
@@ -193,6 +269,7 @@ export function useChat(): UseChatResult {
     messages,
     isLoading,
     createSession,
+    deleteSession,
     selectSession,
     sendMessage,
   };

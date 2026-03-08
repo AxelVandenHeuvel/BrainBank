@@ -5,11 +5,15 @@ import type {
   AssistantMessageSelection,
   ChatMessage,
   ChatSession,
+  ChatChunkCitation,
+  ChatDocumentCitation,
+  ChatRelationshipCitation,
 } from '../types/chat';
 import type { GraphSource } from '../types/graph';
 
 interface ChatPanelProps {
   graphSource: GraphSource;
+  onOpenDocument?: (docId: string, name: string) => void;
   onAssistantMessageSelect?: (selection: AssistantMessageSelection | null) => void;
 }
 
@@ -25,13 +29,18 @@ const LOADING_MESSAGES = [
 const LOADING_MESSAGE_HOLD_MS = 2600;
 const LOADING_MESSAGE_FADE_MS = 520;
 
-export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelProps) {
+export function ChatPanel({
+  graphSource,
+  onOpenDocument,
+  onAssistantMessageSelect,
+}: ChatPanelProps) {
   const {
     messages,
     sessions,
     activeSessionId,
     isLoading,
     createSession,
+    deleteSession,
     selectSession,
     sendMessage,
   } = useChat();
@@ -99,6 +108,15 @@ export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelPr
     setSelectedAssistantMessageKey(null);
     onAssistantMessageSelect?.(null);
     selectSession(sessionId);
+  }
+
+  function handleDeleteSession(sessionId: string) {
+    if (sessionId === activeSessionId) {
+      setSelectedAssistantMessageKey(null);
+      onAssistantMessageSelect?.(null);
+    }
+
+    deleteSession(sessionId);
   }
 
   function handleAssistantMessageClick(message: ChatMessage, index: number) {
@@ -182,23 +200,39 @@ export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelPr
                 ]).size;
 
                 return (
-                  <button
+                  <div
                     key={session.id}
-                    type="button"
-                    aria-label={session.title}
-                    aria-pressed={session.id === activeSessionId}
-                    onClick={() => handleSelectSession(session.id)}
-                    className={`flex w-full flex-col rounded-2xl border px-3 py-3 text-left text-sm transition ${
+                    className={`flex items-start gap-2 rounded-2xl border p-2 transition ${
                       session.id === activeSessionId
-                        ? 'border-pink-500/30 bg-pink-500/10 text-pink-200'
-                        : 'border-white/[0.06] bg-black/30 text-neutral-300 hover:border-white/[0.12]'
+                        ? 'border-pink-500/30 bg-pink-500/10'
+                        : 'border-white/[0.06] bg-black/30'
                     }`}
                   >
-                    <span className="break-words font-medium leading-5">{session.title}</span>
-                    <span className="mt-1 break-words text-xs leading-5 text-neutral-500">
-                      {formatSessionMeta(session, sessionConceptCount)}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      aria-label={session.title}
+                      aria-pressed={session.id === activeSessionId}
+                      onClick={() => handleSelectSession(session.id)}
+                      className={`flex min-w-0 flex-1 flex-col rounded-[0.9rem] px-3 py-2 text-left text-sm transition ${
+                        session.id === activeSessionId
+                          ? 'text-pink-200'
+                          : 'text-neutral-300 hover:bg-white/[0.03]'
+                      }`}
+                    >
+                      <span className="break-words font-medium leading-5">{session.title}</span>
+                      <span className="mt-1 break-words text-xs leading-5 text-neutral-500">
+                        {formatSessionMeta(session, sessionConceptCount)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${session.title}`}
+                      onClick={() => handleDeleteSession(session.id)}
+                      className="shrink-0 rounded-full border border-white/[0.08] bg-black/40 px-2.5 py-2 text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 transition hover:border-rose-500/30 hover:text-rose-300"
+                    >
+                      Del
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -206,10 +240,13 @@ export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelPr
         ) : null}
       </div>
 
-      <div className="mt-4 flex flex-1 flex-col overflow-hidden">
-        <div className="flex flex-col overflow-hidden">
+      <div
+        data-testid="chat-panel-body"
+        className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {graphSource === 'mock' ? (
-            <div className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
+            <div className="mb-3 shrink-0 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
               Graph is showing mock data. Chat only queries live ingested notes from the backend.
             </div>
           ) : null}
@@ -235,11 +272,17 @@ export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelPr
                   className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}
                 >
                   {isAssistant ? (
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       aria-label={`Select response ${index}`}
                       aria-pressed={isSelectedAssistantMessage}
                       onClick={() => handleAssistantMessageClick(message, index)}
+                      onKeyDown={(event) =>
+                        handleAssistantMessageKeyDown(event, () =>
+                          handleAssistantMessageClick(message, index),
+                        )
+                      }
                       className={`max-w-[85%] px-4 py-3 text-left text-sm leading-6 transition ${
                         isSelectedAssistantMessage
                           ? 'border border-amber-300/40 bg-amber-300/10 text-neutral-100'
@@ -257,8 +300,34 @@ export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelPr
                             concepts={message.discoveryConcepts}
                           />
                         ) : null}
+                        {message.sourceDocuments?.length ? (
+                          <DocumentSection
+                            title="Source documents"
+                            documents={message.sourceDocuments}
+                            onOpenDocument={onOpenDocument}
+                          />
+                        ) : null}
+                        {message.discoveryDocuments?.length ? (
+                          <DocumentSection
+                            title="Discovery documents"
+                            documents={message.discoveryDocuments}
+                            onOpenDocument={onOpenDocument}
+                          />
+                        ) : null}
+                        {(message.sourceChunks?.length || message.discoveryChunks?.length) ? (
+                          <ChunkSection
+                            title="Evidence excerpts"
+                            chunks={[...(message.sourceChunks ?? []), ...(message.discoveryChunks ?? [])]}
+                          />
+                        ) : null}
+                        {message.supportingRelationships?.length ? (
+                          <RelationshipSection
+                            title="Supporting relationships"
+                            relationships={message.supportingRelationships}
+                          />
+                        ) : null}
                       </div>
-                    </button>
+                    </div>
                   ) : (
                     <div className="max-w-[85%] bg-pink-500 px-4 py-3 text-sm leading-6 text-white">
                       <p>{message.content}</p>
@@ -292,7 +361,7 @@ export function ChatPanel({ graphSource, onAssistantMessageSelect }: ChatPanelPr
 
           <form
             data-testid="chat-panel-form"
-            className="mt-4 flex shrink-0 gap-2"
+            className="mt-auto flex shrink-0 gap-2 pt-4"
             onSubmit={handleSubmit}
           >
             <label htmlFor="chat-question" className="sr-only">
@@ -359,6 +428,18 @@ function getAssistantMessageKey(message: ChatMessage, index: number): string {
   return `${index}:${message.content}`;
 }
 
+function handleAssistantMessageKeyDown(
+  event: React.KeyboardEvent<HTMLElement>,
+  onSelect: () => void,
+) {
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+
+  event.preventDefault();
+  onSelect();
+}
+
 interface ConceptSectionProps {
   title: string;
   concepts: string[];
@@ -378,6 +459,95 @@ function ConceptSection({ title, concepts }: ConceptSectionProps) {
           >
             {concept}
           </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface DocumentSectionProps {
+  title: string;
+  documents: ChatDocumentCitation[];
+  onOpenDocument?: (docId: string, name: string) => void;
+}
+
+function DocumentSection({ title, documents, onOpenDocument }: DocumentSectionProps) {
+  return (
+    <section>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+        {title}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {documents.map((document) => (
+          <button
+            key={`${title}-${document.docId}`}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenDocument?.(document.docId, document.name);
+            }}
+            className="border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200 transition hover:border-emerald-300/40"
+          >
+            {document.name}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface ChunkSectionProps {
+  title: string;
+  chunks: ChatChunkCitation[];
+}
+
+function ChunkSection({ title, chunks }: ChunkSectionProps) {
+  return (
+    <section>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+        {title}
+      </p>
+      <div className="mt-2 space-y-2">
+        {chunks.map((chunk) => (
+          <div
+            key={`${title}-${chunk.chunkId}`}
+            className="border border-white/[0.06] bg-black/40 px-3 py-2 text-xs leading-5 text-neutral-300"
+          >
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+              {chunk.docName}
+            </p>
+            <p>{chunk.text}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface RelationshipSectionProps {
+  title: string;
+  relationships: ChatRelationshipCitation[];
+}
+
+function RelationshipSection({ title, relationships }: RelationshipSectionProps) {
+  return (
+    <section>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+        {title}
+      </p>
+      <div className="mt-2 space-y-2">
+        {relationships.map((relationship) => (
+          <div
+            key={`${title}-${relationship.source}-${relationship.target}-${relationship.type}`}
+            className="border border-white/[0.06] bg-black/40 px-3 py-2 text-xs leading-5 text-neutral-300"
+          >
+            <p className="font-medium text-neutral-100">
+              {relationship.source} {'->'} {relationship.target}
+            </p>
+            {relationship.reason ? (
+              <p className="mt-1 text-neutral-400">{relationship.reason}</p>
+            ) : null}
+          </div>
         ))}
       </div>
     </section>

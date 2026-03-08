@@ -90,6 +90,11 @@ class TestQueryEndpoint:
         assert "answer" in data
         assert "source_concepts" in data
         assert "discovery_concepts" in data
+        assert "source_documents" in data
+        assert "discovery_documents" in data
+        assert "source_chunks" in data
+        assert "discovery_chunks" in data
+        assert "supporting_relationships" in data
 
     def test_query_missing_fields(self):
         response = client.post("/query", json={})
@@ -107,7 +112,13 @@ class TestLlmTestEndpoint:
         assert response.status_code == 200
         assert response.json() == {
             "answer": "Direct Gemini response",
+            "source_concepts": [],
             "discovery_concepts": [],
+            "source_documents": [],
+            "discovery_documents": [],
+            "source_chunks": [],
+            "discovery_chunks": [],
+            "supporting_relationships": [],
             "mode": "llm_test",
         }
         mock_generate.assert_called_once_with("Can you hear me?")
