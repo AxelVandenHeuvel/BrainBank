@@ -854,6 +854,22 @@ export function Graph3D({
     if (expandedConcept) stopIdleRotation();
     else scheduleIdleRotation();
   }, [expandedConcept]);
+    if (!selectedEdge) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        clearSelectedEdge();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedEdge]);
 
   useEffect(() => {
     if (!hoveredNode) {
