@@ -10,6 +10,7 @@ import {
   DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
+  communityColor,
   conceptColorFromScore,
   createFocusSet,
   findMatchingNodeIds,
@@ -122,7 +123,9 @@ const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
 const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.45)';
 const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.52)';
+const SEMANTIC_BRIDGE_COLOR = 'rgba(251, 191, 36, 0.6)';
 const GHOST_EDGE_WIDTH = 0.8;
+const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 3.5;
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
@@ -272,6 +275,10 @@ export function Graph3D({
     return link.isGhost === true || link.type === 'LATENT_DISCOVERY';
   }
 
+  function isSemanticBridgeLink(link: GraphLink): boolean {
+    return link.type === 'SEMANTIC_BRIDGE';
+  }
+
   function clearSelectedEdge() {
     setSelectedEdge(null);
     setRelationshipDetails(null);
@@ -282,15 +289,20 @@ export function Graph3D({
   const getNodeThreeObject = useCallback((node: GraphNode): THREE.Object3D | null => {
     const group = new THREE.Group();
 
-    const hash = String(node.id).split('').reduce((acc, char) => {
-        return (acc * 31 + char.charCodeAt(0)) % 10000;
-    }, 0) / 10000;
-
-    const colorScore = node.colorScore !== undefined ? node.colorScore : hash;
-
-    const deepRed = new THREE.Color(0xFF4444);
-    const electricBlue = new THREE.Color(0x4444FF);
-    const nodeColor = deepRed.clone().lerp(electricBlue, colorScore);
+    let nodeColor: THREE.Color;
+    if (node.type === 'Concept' && node.community_id != null) {
+      // Use Leiden community palette when community_id is available.
+      nodeColor = new THREE.Color(communityColor(node.community_id));
+    } else {
+      // Fall back to colorScore lerp (or id-hash when colorScore is absent).
+      const hash = String(node.id).split('').reduce((acc, char) => {
+          return (acc * 31 + char.charCodeAt(0)) % 10000;
+      }, 0) / 10000;
+      const colorScore = node.colorScore !== undefined ? node.colorScore : hash;
+      const deepRed = new THREE.Color(0xFF4444);
+      const electricBlue = new THREE.Color(0x4444FF);
+      nodeColor = deepRed.clone().lerp(electricBlue, colorScore);
+    }
     const hexColor = `#${nodeColor.getHexString()}`;
 
     const sphereMaterial = new THREE.MeshPhysicalMaterial({
@@ -1196,6 +1208,9 @@ export function Graph3D({
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
+      if (node.community_id != null) {
+        return communityColor(node.community_id);
+      }
       return conceptColorFromScore(node.colorScore);
     }
     return NODE_TYPE_COLORS[node.type];
@@ -1222,6 +1237,16 @@ export function Graph3D({
       return GHOST_EDGE_COLOR;
     }
 
+    if (isSemanticBridgeLink(link)) {
+      if (isSelectedLink(link) || isFocusedNodeLink(link) || isDirectHoverLink(link, hoveredNode)) {
+        return ACTIVE_LINK_COLOR;
+      }
+      if (focusedEdgeNodeId || hoveredNode) {
+        return DIMMED_LINK_COLOR;
+      }
+      return SEMANTIC_BRIDGE_COLOR;
+    }
+
     if (isSelectedLink(link)) {
       return ACTIVE_LINK_COLOR;
     }
@@ -1240,6 +1265,10 @@ export function Graph3D({
   function getLinkWidth(link: GraphLink): number {
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
+    }
+
+    if (isSemanticBridgeLink(link)) {
+      return SEMANTIC_BRIDGE_WIDTH;
     }
 
     const weight =
