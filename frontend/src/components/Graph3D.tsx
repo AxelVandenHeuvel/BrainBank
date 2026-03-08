@@ -301,6 +301,7 @@ export function Graph3D({
   } | null>(null);
   const diveStartTimeRef = useRef<number | null>(null);
   const [isDiving, setIsDiving] = useState(false);
+  const [showBrainMesh, setShowBrainMesh] = useState(true);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -589,26 +590,6 @@ export function Graph3D({
     rotationRoot.updateMatrixWorld(true);
   }
 
-  function getActiveRotationPivot() {
-    const activeNodeId = activeRotationNodeIdRef.current;
-
-    if (!activeNodeId) {
-      return null;
-    }
-
-    const activeNode = displayData.nodes.find((node) => node.id === activeNodeId);
-
-    if (!activeNode) {
-      return null;
-    }
-
-    return new THREE.Vector3(
-      activeNode.x ?? 0,
-      activeNode.y ?? 0,
-      activeNode.z ?? 0,
-    );
-  }
-
   function setRotationPivotNode(nodeId: string | null) {
     activeRotationNodeIdRef.current = nodeId;
     setHasFocusedRotationPivot(nodeId !== null);
@@ -642,8 +623,7 @@ export function Graph3D({
       return;
     }
 
-    const activePivot = getActiveRotationPivot();
-    const focusPoint = activePivot ?? new THREE.Vector3(
+    const focusPoint = new THREE.Vector3(
       sceneFocusPointRef.current.x,
       sceneFocusPointRef.current.y,
       sceneFocusPointRef.current.z,
@@ -660,16 +640,16 @@ export function Graph3D({
   }
 
   function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
-    sceneFocusPointRef.current = point;
-    applySceneFocusPoint();
-    const target = lookAtTargetRef.current;
     animateCamera(
       {
-        x: target.x,
-        y: target.y + distance * 0.08,
-        z: target.z + distance,
+        x: 0,
+        y: distance * 0.08,
+        z: distance,
       },
-      target,
+      { x: 0, y: 0, z: 0 },
+      CAMERA_MOVE_DURATION_MS,
+      undefined,
+      point,
     );
   }
 
@@ -936,6 +916,7 @@ export function Graph3D({
     targetLookAt: { x: number; y: number; z: number },
     durationMs: number = CAMERA_MOVE_DURATION_MS,
     onComplete?: () => void,
+    targetFocusPoint?: { x: number; y: number; z: number },
   ) {
     // Cancel any in-flight camera animation so consecutive moves don't conflict.
     if (cameraAnimationRef.current !== null) {
@@ -948,12 +929,22 @@ export function Graph3D({
 
     const startCam = { x: cam.x, y: cam.y, z: cam.z };
     const startLookAt = { ...lookAtTargetRef.current };
+    const startFocusPoint = { ...sceneFocusPointRef.current };
     const startTime = performance.now();
 
     function animate() {
       const elapsed = performance.now() - startTime;
       const t = Math.min(elapsed / durationMs, 1);
       const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+
+      if (targetFocusPoint) {
+        sceneFocusPointRef.current = {
+          x: startFocusPoint.x + (targetFocusPoint.x - startFocusPoint.x) * eased,
+          y: startFocusPoint.y + (targetFocusPoint.y - startFocusPoint.y) * eased,
+          z: startFocusPoint.z + (targetFocusPoint.z - startFocusPoint.z) * eased,
+        };
+        applySceneFocusPoint();
+      }
 
       const pos = {
         x: startCam.x + (targetPos.x - startCam.x) * eased,
@@ -1287,7 +1278,7 @@ export function Graph3D({
     if (!brain) return;
 
     if (!isDiving && expandedConcept === null) {
-      brain.visible = true;
+      brain.visible = showBrainMesh;
       // Restore each material to its original opacity (captured at dive start)
       brain.traverse((child) => {
         if (child instanceof THREE.Mesh && child.material) {
@@ -1334,7 +1325,7 @@ export function Graph3D({
     };
     frameId = requestAnimationFrame(animateBrainFade);
     return () => cancelAnimationFrame(frameId);
-  }, [expandedConcept, isDiving]);
+  }, [expandedConcept, isDiving, showBrainMesh]);
 
   useEffect(() => {
     if (!data.nodes.length) {
@@ -1808,18 +1799,33 @@ export function Graph3D({
       onTouchStart={handleInteraction}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
-      <div className="absolute left-4 top-4 z-10 rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
-        <label className="flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            checked={discoveryModeEnabled}
-            onChange={(event) => {
-              setDiscoveryModeEnabled(event.target.checked);
-            }}
-            aria-label="Discovery mode"
-          />
-          <span>Discovery Mode</span>
-        </label>
+      <div className="absolute left-4 top-4 z-10 flex flex-col gap-2">
+        <div className="rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showBrainMesh}
+              onChange={(event) => {
+                setShowBrainMesh(event.target.checked);
+              }}
+              aria-label="Brain mesh"
+            />
+            <span>Brain Mesh</span>
+          </label>
+        </div>
+        <div className="rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={discoveryModeEnabled}
+              onChange={(event) => {
+                setDiscoveryModeEnabled(event.target.checked);
+              }}
+              aria-label="Discovery mode"
+            />
+            <span>Discovery Mode</span>
+          </label>
+        </div>
       </div>
       <ForceGraph3D
         ref={graphRef as never}

@@ -28,7 +28,7 @@ export default function App() {
   const { data, source, refetch } = useGraphData();
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
-  const [isChatOpen, setIsChatOpen] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
 

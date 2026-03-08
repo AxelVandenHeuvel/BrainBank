@@ -116,6 +116,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
     await user.click(screen.getByRole('button', { name: 'Select response' }));
     expect(screen.getByTestId('graph-scene')).toHaveAttribute(
       'data-chat-focus',
@@ -217,7 +218,12 @@ describe('App', () => {
       'lg:w-[30rem]',
     );
     expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-has-bottom-composer', 'true');
+    expect(screen.getByTestId('chat-panel')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open chat panel' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
+    expect(screen.getByTestId('chat-panel')).toBeVisible();
 
     // Type in chat
     await user.type(screen.getByLabelText('Draft'), 'Persist me');
@@ -269,6 +275,7 @@ describe('App', () => {
 
     render(<App />);
 
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
     await user.click(screen.getByRole('button', { name: 'Open cited doc' }));
 
     expect(fetchMock).toHaveBeenCalledWith('/api/documents/doc-1');
