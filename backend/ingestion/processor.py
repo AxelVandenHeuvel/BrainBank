@@ -1,9 +1,10 @@
+import kuzu as _kuzu
 import uuid
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
 from backend.ingestion.chunker import semantic_chunk_text as chunk_text
-from backend.services.embeddings import embed_texts
+from backend.services.embeddings import calculate_color_score, embed_texts
 from backend.services.llm import extract_concepts
 
 
@@ -12,9 +13,21 @@ def ingest_markdown(
     doc_name: str,
     lance_db_path: str = "./data/lancedb",
     kuzu_db_path: str = "./data/kuzu",
+    shared_kuzu_db=None,
 ) -> dict:
     db, table = init_lancedb(lance_db_path)
-    kuzu_db, conn = init_kuzu(kuzu_db_path)
+
+    # When the backend is running, the caller passes the module-level Database
+    # object so we reuse it instead of opening a second one (which would fail
+    # with a lock conflict).  Tests pass shared_kuzu_db=None and supply their
+    # own kuzu_db_path temp directory.
+    if shared_kuzu_db is not None:
+        kuzu_db = shared_kuzu_db
+        conn = _kuzu.Connection(kuzu_db)
+        own_db = False
+    else:
+        kuzu_db, conn = init_kuzu(kuzu_db_path)
+        own_db = True
     try:
         doc_id = str(uuid.uuid4())
         chunks = chunk_text(text)
@@ -50,10 +63,15 @@ def ingest_markdown(
         ]
         table.add(records)
 
-        # Upsert Concept nodes in Kuzu
+        # Upsert Concept nodes in Kuzu with semantic color score
         for concept in concepts:
+            score = calculate_color_score(concept)
             conn.execute(
                 "MERGE (c:Concept {name: $name})", parameters={"name": concept}
+            )
+            conn.execute(
+                "MATCH (c:Concept {name: $name}) SET c.colorScore = $score",
+                parameters={"name": concept, "score": score},
             )
 
         # Create RELATED_TO edges between concepts
@@ -79,4 +97,5 @@ def ingest_markdown(
         return {"doc_id": doc_id, "chunks": len(chunks), "concepts": concepts}
     finally:
         conn.close()
-        kuzu_db.close()
+        if own_db:
+            kuzu_db.close()

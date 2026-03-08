@@ -184,6 +184,11 @@ describe('Graph3D', () => {
 
     vi.advanceTimersByTime(200);
 
+    // Camera should be positioned to frame the scaled brain geometry.
+    // The SphereGeometry(50) mock with mesh at (40,-20,10) gives:
+    //   centeredBrain.sphere.radius ≈ 130, distance = max(130 * 2.6, 240) = 338
+    //   orbitTarget ≈ {x:0, y:0, z:0} after centering
+    //   camera.y = target.y + distance * 0.08 ≈ 27.04
     expect(cameraPosition).toHaveBeenCalledWith(
       expect.objectContaining({
         x: 0,
@@ -444,6 +449,7 @@ describe('Graph3D', () => {
 
     expect(container.querySelector('.absolute.top-4.right-4.flex.flex-col.gap-2')).not.toBeNull();
     expect(cameraPosition).toHaveBeenCalled();
+    // ⟳ resets to brain home view
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
@@ -639,9 +645,30 @@ describe('Graph3D', () => {
       );
     });
 
-    it('fetched documents are injected as extra nodes and links into the graph', async () => {
+    it('clicking a Concept node opens the expansion overlay', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // Calculus
+      });
+
+      expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
+    });
+
+    it('expansion overlay shows document cards after fetch resolves', async () => {
       const mockDocs = [
-        { doc_id: 'abc123', name: 'Math Notes', full_text: 'content' },
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
       ];
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -665,25 +692,10 @@ describe('Graph3D', () => {
         onNodeClick(graph.nodes[0]); // Calculus
       });
 
-      const { graphData } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
-        graphData: GraphData;
-      };
-      expect(graphData.nodes).toHaveLength(graph.nodes.length + 1);
-      const injected = graphData.nodes.find((n) => n.id === 'doc:abc123');
-      expect(injected?.name).toBe('Math Notes');
-      expect(injected?.type).toBe('Document');
-      expect(graphData.links.some((l) => l.target === 'doc:abc123')).toBe(true);
+      expect(screen.getByText('Math Notes')).toBeTruthy();
     });
 
-    it('clicking the same Concept node again collapses the document nodes', async () => {
-      const mockDocs = [
-        { doc_id: 'abc123', name: 'Math Notes', full_text: 'content' },
-      ];
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockDocs),
-      });
-
+    it('the collapse button closes the overlay', async () => {
       render(
         <Graph3D
           data={graph}
@@ -693,42 +705,23 @@ describe('Graph3D', () => {
           onHoverNode={vi.fn()}
         />,
       );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
 
-      // First click — expand
       await act(async () => {
-        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-          onNodeClick: (n: GraphNode) => void;
-        }).onNodeClick(graph.nodes[0]);
+        onNodeClick(graph.nodes[0]); // Calculus
       });
-      expect(graphPropsSpy.mock.calls.at(-1)?.[0].graphData.nodes).toHaveLength(
-        graph.nodes.length + 1,
-      );
+      expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
 
-      // Advance past double-click threshold so second click is not treated as zoom
-      vi.advanceTimersByTime(400);
-
-      // Second click — collapse
       await act(async () => {
-        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-          onNodeClick: (n: GraphNode) => void;
-        }).onNodeClick(graph.nodes[0]);
+        fireEvent.click(screen.getByText(/Back to Web/));
       });
-      expect(graphPropsSpy.mock.calls.at(-1)?.[0].graphData.nodes).toHaveLength(
-        graph.nodes.length,
-      );
+
+      expect(screen.queryByRole('heading', { name: 'Calculus' })).toBeNull();
     });
 
-    it('clicking a different Concept node replaces the previous document nodes', async () => {
-      const docsA = [{ doc_id: 'docA', name: 'Doc A', full_text: 'a' }];
-      const docsB = [{ doc_id: 'docB', name: 'Doc B', full_text: 'b' }];
-      let call = 0;
-      globalThis.fetch = vi.fn().mockImplementation(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve(call++ === 0 ? docsA : docsB),
-        }),
-      );
-
+    it('when already expanded, clicking another concept does nothing', async () => {
       render(
         <Graph3D
           data={graph}
@@ -738,28 +731,21 @@ describe('Graph3D', () => {
           onHoverNode={vi.fn()}
         />,
       );
-
-      // Click Calculus
-      await act(async () => {
-        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-          onNodeClick: (n: GraphNode) => void;
-        }).onNodeClick(graph.nodes[0]);
-      });
-
-      vi.advanceTimersByTime(400);
-
-      // Click Derivatives
-      await act(async () => {
-        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-          onNodeClick: (n: GraphNode) => void;
-        }).onNodeClick(graph.nodes[1]);
-      });
-
-      const { graphData } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
-        graphData: GraphData;
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
       };
-      expect(graphData.nodes.find((n) => n.id === 'doc:docA')).toBeUndefined();
-      expect(graphData.nodes.find((n) => n.id === 'doc:docB')).toBeDefined();
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // Calculus
+      });
+      expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
+
+      await act(async () => {
+        onNodeClick(graph.nodes[1]); // Derivatives — should be ignored
+      });
+
+      expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Derivatives' })).toBeNull();
     });
   });
 

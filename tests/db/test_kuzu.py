@@ -13,6 +13,13 @@ class TestInitKuzu:
         assert result.has_next()
         assert result.get_next()[0] == 0
 
+    def test_concept_stores_color_score(self, kuzu_path):
+        db, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Calculus', colorScore: 0.15})")
+        result = conn.execute("MATCH (c:Concept {name: 'Calculus'}) RETURN c.colorScore")
+        assert result.has_next()
+        assert abs(result.get_next()[0] - 0.15) < 1e-9
+
     def test_idempotent_init(self, kuzu_path):
         """Calling init twice (sequentially) should not error."""
         db1, conn1 = init_kuzu(kuzu_path)

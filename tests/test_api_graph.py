@@ -16,21 +16,26 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def isolate_graph_data(monkeypatch, lance_path, kuzu_path):
+    # init_kuzu initialises schema and returns (db, conn); we only need the db.
+    real_kuzu_db, _ = real_init_kuzu(kuzu_path)
+
+    # Route all per-request Kuzu connections to the isolated test DB.
+    # get_db_connection() calls get_kuzu_engine() which reads _db_instance at
+    # call time, so patching the module-level variable is sufficient.
+    monkeypatch.setattr("backend.db.kuzu._db_instance", real_kuzu_db)
+
+    # Patch init_lancedb in api_graph so every per-call open returns the test
+    # table (a fresh handle each time, always reflecting the latest writes).
     monkeypatch.setattr(
         "backend.api_graph.init_lancedb",
         lambda: real_init_lancedb(lance_path),
     )
-    monkeypatch.setattr(
-        "backend.api_graph.init_kuzu",
-        lambda: real_init_kuzu(kuzu_path),
-    )
+
+    # Route ingest writes (LanceDB) to the same isolated test path.
+    # Kuzu ingest already uses get_kuzu_engine() which returns real_kuzu_db above.
     monkeypatch.setattr(
         "backend.ingestion.processor.init_lancedb",
         lambda path="./data/lancedb": real_init_lancedb(lance_path),
-    )
-    monkeypatch.setattr(
-        "backend.ingestion.processor.init_kuzu",
-        lambda path="./data/kuzu": real_init_kuzu(kuzu_path),
     )
 
 
@@ -42,6 +47,7 @@ def _ingest_sample():
             "backend.ingestion.processor.extract_concepts",
             side_effect=mock_extract_concepts,
         ),
+        patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
     ):
         client.post(
             "/ingest",
@@ -86,7 +92,6 @@ class TestGetGraph:
         assert len(data["nodes"]) > 0
         node_types = {n["type"] for n in data["nodes"]}
         assert "Concept" in node_types
-        assert "Document" in node_types
 
     def test_returns_edges_after_ingest(self):
         _ingest_sample()
@@ -101,6 +106,14 @@ class TestGetGraph:
         assert "id" in node
         assert "type" in node
         assert "name" in node
+
+    def test_node_has_color_score(self):
+        _ingest_sample()
+        response = client.get("/api/graph")
+        node = response.json()["nodes"][0]
+        assert "colorScore" in node
+        assert isinstance(node["colorScore"], float)
+        assert 0.0 <= node["colorScore"] <= 1.0
 
     def test_edge_shape(self):
         _ingest_sample()

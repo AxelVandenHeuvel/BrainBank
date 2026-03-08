@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import kuzu
 import pytest
 from fastapi.testclient import TestClient
 
@@ -18,21 +19,25 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def isolate_api_data(monkeypatch, lance_path, kuzu_path):
+    real_kuzu_db, _ = real_init_kuzu(kuzu_path)
+
+    # Route the global Kuzu engine to the isolated test DB so that both the
+    # ingest endpoint (which calls get_kuzu_engine()) and the query endpoint
+    # use the same temporary database.
+    monkeypatch.setattr("backend.db.kuzu._db_instance", real_kuzu_db)
+
     monkeypatch.setattr(
         "backend.ingestion.processor.init_lancedb",
         lambda path="./data/lancedb": real_init_lancedb(lance_path),
     )
     monkeypatch.setattr(
-        "backend.ingestion.processor.init_kuzu",
-        lambda path="./data/kuzu": real_init_kuzu(kuzu_path),
-    )
-    monkeypatch.setattr(
         "backend.retrieval.query.init_lancedb",
         lambda path="./data/lancedb": real_init_lancedb(lance_path),
     )
+    # Reuse the already-open DB to avoid a second file-lock attempt.
     monkeypatch.setattr(
         "backend.retrieval.query.init_kuzu",
-        lambda path="./data/kuzu": real_init_kuzu(kuzu_path),
+        lambda path="./data/kuzu": (real_kuzu_db, kuzu.Connection(real_kuzu_db)),
     )
 
 

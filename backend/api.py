@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from backend.api_graph import graph_router
+from backend.db.kuzu import get_kuzu_engine
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
 from backend.services.llm import generate_test_answer
@@ -25,7 +26,10 @@ class QueryRequest(BaseModel):
 @app.post("/ingest")
 async def ingest(req: IngestRequest):
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, partial(ingest_markdown, req.text, req.title))
+    result = await loop.run_in_executor(
+        None,
+        partial(ingest_markdown, req.text, req.title, shared_kuzu_db=get_kuzu_engine()),
+    )
     return result
 
 

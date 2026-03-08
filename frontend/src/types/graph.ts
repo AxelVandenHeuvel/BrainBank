@@ -9,6 +9,7 @@ export interface GraphNode {
   id: string;
   type: GraphNodeType;
   name: string;
+  colorScore?: number;
   x?: number;
   y?: number;
   z?: number;

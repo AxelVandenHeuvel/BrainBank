@@ -11,6 +11,7 @@ import {
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
   centerCameraOnTarget,
+  conceptColorFromScore,
   createFocusSet,
   findMatchingNodeIds,
   getConnectionCount,
@@ -115,8 +116,36 @@ const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 const POINTER_ROTATION_SPEED = 0.005;
 const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
-const CONTAINER_SPHERE_RADIUS = 22;
-const DOC_ORBIT_RADIUS = 15;
+
+function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = 'rgba(0,0,0,0)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, canvas.width, canvas.height, 64);
+    ctx.fill();
+
+    ctx.font = 'bold 52px "Inter", "Roboto", sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(16, 4, 1);
+  sprite.renderOrder = 999;
+  return sprite;
+}
 
 export function Graph3D({
   data,
@@ -139,9 +168,8 @@ export function Graph3D({
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const expandedConceptIdRef = useRef<string | null>(null);
 
-  const [expandedConceptId, setExpandedConceptId] = useState<string | null>(null);
-  const [injectedNodes, setInjectedNodes] = useState<GraphNode[]>([]);
-  const [injectedLinks, setInjectedLinks] = useState<GraphLink[]>([]);
+  const [expandedConcept, setExpandedConcept] = useState<GraphNode | null>(null);
+  const [expandedDocs, setExpandedDocs] = useState<Array<{ doc_id: string; name: string; full_text: string }> | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(null);
@@ -149,16 +177,9 @@ export function Graph3D({
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
 
-  const displayData = useMemo(
-    () =>
-      injectedNodes.length === 0
-        ? data
-        : {
-            nodes: [...data.nodes, ...injectedNodes],
-            links: [...data.links, ...injectedLinks],
-          },
-    [data, injectedLinks, injectedNodes],
-  );
+  // No node injection — documents are shown in a 2D overlay on concept click.
+  const displayData = data;
+  const haloDataMapRef = useRef<Record<string, any[]>>({});
 
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
@@ -194,37 +215,83 @@ export function Graph3D({
   }
 
   function getNodeThreeObject(node: GraphNode): THREE.Object3D | null {
-    if (node.id !== expandedConceptId) {
-      return null;
-    }
-
-    const color = new THREE.Color(NODE_TYPE_COLORS[node.type]);
     const group = new THREE.Group();
 
-    group.add(
-      new THREE.Mesh(
-        new THREE.SphereGeometry(CONTAINER_SPHERE_RADIUS, 20, 20),
-        new THREE.MeshBasicMaterial({
-          color,
-          transparent: true,
-          opacity: 0.06,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      ),
-    );
+    const hash = String(node.id).split('').reduce((acc, char) => {
+        return (acc * 31 + char.charCodeAt(0)) % 10000;
+    }, 0) / 10000;
 
-    group.add(
-      new THREE.Mesh(
-        new THREE.SphereGeometry(CONTAINER_SPHERE_RADIUS, 10, 10),
-        new THREE.MeshBasicMaterial({
-          color,
-          wireframe: true,
-          transparent: true,
-          opacity: 0.28,
-        }),
-      ),
+    const colorScore = node.colorScore !== undefined ? node.colorScore : hash;
+
+    const deepRed = new THREE.Color(0xFF4444);
+    const electricBlue = new THREE.Color(0x4444FF);
+    const nodeColor = deepRed.clone().lerp(electricBlue, colorScore);
+    const hexColor = `#${nodeColor.getHexString()}`;
+
+    const sphereMaterial = new THREE.MeshPhysicalMaterial({
+        color: nodeColor,
+        roughness: 0.1,
+        metalness: 0.1,
+        transmission: 0.8,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+    });
+
+    const sphereMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(6.5, 32, 32),
+      sphereMaterial
     );
+    group.add(sphereMesh);
+
+    const haloGroup = new THREE.Group();
+    haloGroup.name = 'halo';
+
+    const haloMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const haloGeom = new THREE.SphereGeometry(0.4, 8, 8);
+
+    if (!haloDataMapRef.current[node.id]) {
+      haloDataMapRef.current[node.id] = Array.from({ length: 15 }).map(() => ({
+          radius: 1.5 + Math.random() * 4.0,
+          theta: Math.random() * 2 * Math.PI,
+          phi: Math.acos(2 * Math.random() - 1),
+          speed: 0.0015,
+          offset: Math.random() * Math.PI * 2
+      }));
+    }
+    const hData = haloDataMapRef.current[node.id];
+
+    const spawnTime = performance.now();
+    haloGroup.rotation.y = spawnTime * 0.0003;
+    haloGroup.rotation.x = spawnTime * 0.0001;
+
+    for (let i = 0; i < 15; i++) {
+        const mesh = new THREE.Mesh(haloGeom, haloMaterial);
+        const d = hData[i];
+
+        const r = d.radius + Math.sin(spawnTime * d.speed + d.offset) * 0.4;
+        mesh.position.setFromSphericalCoords(r, d.phi, d.theta);
+
+        mesh.userData = d;
+        haloGroup.add(mesh);
+    }
+    group.add(haloGroup);
+
+    const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
+    labelSprite.position.set(0, 10.5, 0);
+    group.add(labelSprite);
+
+    group.userData.update = (time: number) => {
+        haloGroup.rotation.y = time * 0.0003;
+        haloGroup.rotation.x = time * 0.0001;
+
+        haloGroup.children.forEach(child => {
+            const d = child.userData;
+            const r = d.radius + Math.sin(time * d.speed + d.offset) * 0.4;
+            child.position.setFromSphericalCoords(r, d.phi, d.theta);
+        });
+    };
 
     return group;
   }
@@ -449,63 +516,42 @@ export function Graph3D({
   }
 
   async function handleConceptExpansion(node: GraphNode) {
-    const conceptNodeId = node.id;
-    const conceptPos = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
+    if (expandedConceptIdRef.current) return;
 
-    if (expandedConceptIdRef.current === conceptNodeId) {
-      expandedConceptIdRef.current = null;
-      setExpandedConceptId(null);
-      setInjectedNodes([]);
-      setInjectedLinks([]);
-      return;
+    expandedConceptIdRef.current = node.id;
+    setExpandedConcept(node);
+    setExpandedDocs(null);
+
+    const controls = graphRef.current?.controls();
+    if (controls) {
+       (controls as any).enableRotate = false;
+       (controls as any).enablePan = false;
     }
 
-    expandedConceptIdRef.current = conceptNodeId;
-    setExpandedConceptId(conceptNodeId);
-    setInjectedNodes([]);
-    setInjectedLinks([]);
-
     let docs: Array<{ doc_id: string; name: string; full_text: string }> = [];
-
     try {
       const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`);
       if (response.ok) {
-        docs = (await response.json()) as typeof docs;
+        docs = await response.json();
       }
-    } catch {
-      // Fall back to bundled mock data when the backend is unavailable.
-    }
+    } catch { }
 
-    if (docs.length === 0) {
-      docs = getMockDocumentsForConcept(node.name);
-    }
+    if (docs.length === 0) docs = getMockDocumentsForConcept(node.name);
 
-    if (expandedConceptIdRef.current !== conceptNodeId) {
-      return;
-    }
+    if (expandedConceptIdRef.current !== node.id) return;
+    setExpandedDocs(docs);
+  }
 
-    const count = docs.length;
-    setInjectedNodes(
-      docs.map((doc, index) => {
-        const theta = (2 * Math.PI * index) / count;
-        const phi = Math.PI * (0.35 + 0.3 * (index % 2 === 0 ? 1 : -1));
-        return {
-          id: `doc:${doc.doc_id}`,
-          type: 'Document' as const,
-          name: doc.name,
-          fx: conceptPos.x + DOC_ORBIT_RADIUS * Math.sin(phi) * Math.cos(theta),
-          fy: conceptPos.y + DOC_ORBIT_RADIUS * Math.cos(phi),
-          fz: conceptPos.z + DOC_ORBIT_RADIUS * Math.sin(phi) * Math.sin(theta),
-        };
-      }),
-    );
-    setInjectedLinks(
-      docs.map((doc) => ({
-        source: conceptNodeId,
-        target: `doc:${doc.doc_id}`,
-        type: 'MENTIONS',
-      })),
-    );
+  function handleCollapse() {
+    expandedConceptIdRef.current = null;
+    setExpandedConcept(null);
+    setExpandedDocs(null);
+
+    const controls = graphRef.current?.controls();
+    if (controls) {
+      (controls as any).enableRotate = true;
+      (controls as any).enablePan = true;
+    }
   }
 
   function handleNodeClick(node: GraphNode) {
@@ -521,11 +567,7 @@ export function Graph3D({
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
       focusPoint(
-        {
-          x: node.x ?? 0,
-          y: node.y ?? 0,
-          z: node.z ?? 0,
-        },
+        { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
         100,
       );
       lastNodeClickRef.current = null;
@@ -534,11 +576,7 @@ export function Graph3D({
 
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
     focusPoint(
-      {
-        x: node.x ?? 0,
-        y: node.y ?? 0,
-        z: node.z ?? 0,
-      },
+      { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
       160,
     );
     void handleConceptExpansion(node);
@@ -617,6 +655,16 @@ export function Graph3D({
       setIsRelationshipLoading(false);
     }
   }
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && expandedConceptIdRef.current) {
+        handleCollapse();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     scheduleIdleRotation();
@@ -786,6 +834,26 @@ export function Graph3D({
   }, [displayData.nodes, query]);
 
   useEffect(() => {
+    let frameId: number;
+    const animate = () => {
+      const time = performance.now();
+
+      displayData.nodes.forEach((node) => {
+        const obj = (node as any).__threeObj as THREE.Object3D | undefined;
+        if (obj && typeof obj.userData.update === 'function') {
+          obj.userData.update(time);
+        }
+      });
+      frameId = requestAnimationFrame(animate);
+    };
+    frameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameId);
+  }, [displayData.nodes]);
+
+  useEffect(() => {
+    if (expandedConcept) stopIdleRotation();
+    else scheduleIdleRotation();
+  }, [expandedConcept]);
     if (!selectedEdge) {
       return;
     }
@@ -833,20 +901,27 @@ export function Graph3D({
     };
   }, [hoveredNode]);
 
+  function getBaseNodeColor(node: GraphNode): string {
+    if (node.type === 'Concept') {
+      return conceptColorFromScore(node.colorScore);
+    }
+    return NODE_TYPE_COLORS[node.type];
+  }
+
   function getNodeColor(node: GraphNode): string {
     if (selectedEdge) {
       return selectedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
     if (hoveredNode) {
-      return focusedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
+      return focusedNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_NODE_COLOR;
     }
 
     if (query.trim()) {
-      return matchedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_SEARCH_COLOR;
+      return matchedNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_SEARCH_COLOR;
     }
 
-    return NODE_TYPE_COLORS[node.type];
+    return getBaseNodeColor(node);
   }
 
   function getLinkColor(link: GraphLink): string {
@@ -918,30 +993,34 @@ export function Graph3D({
         enableNavigationControls={false}
         controlType="orbit"
       />
-      <div className="absolute right-4 top-4 flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={handleZoomIn}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
-        >
-          +
-        </button>
-        <button
-          type="button"
-          onClick={handleZoomOut}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
-        >
-          −
-        </button>
-        <button
-          type="button"
-          onClick={handleReset}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
-        >
-          ⟳
-        </button>
+      <div className="absolute right-4 top-4 flex flex-col gap-2 z-10">
+        {!expandedConcept && (
+          <>
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+            >
+              ⟳
+            </button>
+          </>
+        )}
       </div>
-      {hoveredNode && tooltipPosition ? (
+      {hoveredNode && tooltipPosition && !expandedConcept ? (
         <NodeTooltip
           node={hoveredNode}
           connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
@@ -949,6 +1028,45 @@ export function Graph3D({
           y={tooltipPosition.y}
         />
       ) : null}
+
+      {/* 2D Overlay with Frosted Glass Effect */}
+      {expandedConcept && (
+        <div className="absolute inset-0 z-30 bg-slate-950/80 backdrop-blur-md flex flex-col items-center overflow-y-auto animate-in fade-in duration-300">
+          <div className="sticky top-0 z-40 w-full bg-slate-950/40 backdrop-blur-lg border-b border-white/10 px-8 py-6 flex justify-between items-center mb-8">
+            <h2 className="text-3xl font-bold text-slate-100">{expandedConcept.name}</h2>
+            <button onClick={handleCollapse} className="px-6 py-2.5 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-sm font-semibold text-slate-100 shadow-lg shadow-indigo-950/30 transition float-right">
+              ← Back to Web (Esc)
+            </button>
+          </div>
+          <div className="w-full max-w-7xl px-8 pb-20">
+            {!expandedDocs ? (
+              <div className="text-slate-400 mt-20 text-xl animate-pulse text-center">Loading documents...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {expandedDocs.map((doc, idx) => (
+                  <div
+                    key={doc.doc_id}
+                    className="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl shadow-xl transition hover:-translate-y-1 hover:shadow-2xl hover:bg-slate-800/80 cursor-pointer flex flex-col"
+                    style={{ animation: `float ${4 + (idx % 3)}s ease-in-out infinite alternate` }}
+                  >
+                    <h3 className="text-xl font-semibold text-yellow-300 mb-3 leading-tight">{doc.name}</h3>
+                    <p className="text-slate-400 leading-relaxed overflow-hidden text-ellipsis line-clamp-[8]">{doc.full_text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes float {
+          0% { transform: translateY(0px) rotate(0deg); }
+          50% { transform: translateY(-6px) rotate(0.5deg); }
+          100% { transform: translateY(0px) rotate(0deg); }
+        }
+      `}</style>
+
       {selectedEdge ? (
         <EdgeDetailPanel
           relationship={relationshipDetails}

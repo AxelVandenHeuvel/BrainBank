@@ -77,9 +77,10 @@ def seed_college_math_notes(
         for note in notes:
             if note.doc_id in existing_doc_ids:
                 skipped_documents += 1
-                continue
-
-            table.add(_build_chunk_records(note))
+            else:
+                table.add(_build_chunk_records(note))
+                seeded_documents += 1
+                existing_doc_ids.add(note.doc_id)
 
             for concept in note.concepts:
                 conn.execute(
@@ -106,9 +107,6 @@ def seed_college_math_notes(
                         "reason": relationship.reason,
                     },
                 )
-
-            seeded_documents += 1
-            existing_doc_ids.add(note.doc_id)
 
         return {
             "seeded_documents": seeded_documents,

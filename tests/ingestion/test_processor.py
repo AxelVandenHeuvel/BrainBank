@@ -10,9 +10,10 @@ from tests.conftest import (
 
 
 class TestIngestMarkdown:
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_returns_doc_info(self, mock_llm, mock_emb, lance_path, kuzu_path):
+    def test_returns_doc_info(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         text = "Calculus is about Derivatives and Integrals."
         result = ingest_markdown(text, "Math Notes", lance_path, kuzu_path)
         assert "doc_id" in result
@@ -20,9 +21,10 @@ class TestIngestMarkdown:
         assert result["chunks"] >= 1
         assert "concepts" in result
 
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_chunks_stored_in_lancedb(self, mock_llm, mock_emb, lance_path, kuzu_path):
+    def test_chunks_stored_in_lancedb(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         text = "Calculus is about Derivatives and Integrals."
         result = ingest_markdown(text, "Math Notes", lance_path, kuzu_path)
         db, table = init_lancedb(lance_path)
@@ -30,9 +32,10 @@ class TestIngestMarkdown:
         assert len(df) == result["chunks"]
         assert df.iloc[0]["doc_id"] == result["doc_id"]
 
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_concepts_stored_in_kuzu(self, mock_llm, mock_emb, lance_path, kuzu_path):
+    def test_concepts_stored_in_kuzu(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         text = "Calculus is about Derivatives and Integrals."
         ingest_markdown(text, "Math Notes", lance_path, kuzu_path)
         _, conn = init_kuzu(kuzu_path)
@@ -43,9 +46,10 @@ class TestIngestMarkdown:
         assert "Calculus" in concepts
         assert "Derivatives" in concepts
 
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upsert_concept_no_duplicate(self, mock_llm, mock_emb, lance_path, kuzu_path):
+    def test_upsert_concept_no_duplicate(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         """Ingesting two docs with the same concept should not create duplicates."""
         ingest_markdown("Calculus basics", "Doc 1", lance_path, kuzu_path)
         ingest_markdown("Advanced Calculus", "Doc 2", lance_path, kuzu_path)
@@ -55,9 +59,10 @@ class TestIngestMarkdown:
         )
         assert result.get_next()[0] == 1
 
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_document_concept_links_are_stored_in_lancedb_metadata(self, mock_llm, mock_emb, lance_path, kuzu_path):
+    def test_document_concept_links_are_stored_in_lancedb_metadata(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         text = "Calculus is about Derivatives and Integrals."
         result = ingest_markdown(text, "Math Notes", lance_path, kuzu_path)
         _, table = init_lancedb(lance_path)
@@ -68,9 +73,10 @@ class TestIngestMarkdown:
         assert not matching_rows.empty
         assert any("Calculus" in list(concepts) for concepts in matching_rows["concepts"])
 
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_related_to_edges_created(self, mock_llm, mock_emb, lance_path, kuzu_path):
+    def test_related_to_edges_created(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         text = "Calculus is about Derivatives and Integrals."
         ingest_markdown(text, "Math Notes", lance_path, kuzu_path)
         _, conn = init_kuzu(kuzu_path)
@@ -81,3 +87,13 @@ class TestIngestMarkdown:
         while result.has_next():
             edges.append(result.get_next())
         assert len(edges) >= 1
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_color_score_stored_on_concept(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
+        ingest_markdown("Calculus basics", "Doc 1", lance_path, kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
+        result = conn.execute("MATCH (c:Concept {name: 'Calculus'}) RETURN c.colorScore")
+        assert result.has_next()
+        assert result.get_next()[0] == 0.5
