@@ -34,19 +34,21 @@ export function DocumentEditor({
 
   const save = useCallback(async () => {
     const text = contentRef.current.trim();
-    const currentTitle = titleRef.current.trim() || 'Untitled';
-    if (!text) return;
+    const rawTitle = titleRef.current.trim();
+    if (!text && !rawTitle) return;
+
+    const currentTitle = rawTitle || 'Untitled';
 
     // Prevent overlapping saves — especially important for new notes where
-    // POST /ingest is slow (LLM + embedding). The first save creates the doc;
-    // subsequent saves should wait until the component remounts with the real id.
+    // the first POST creates the doc and subsequent saves should wait until
+    // the component remounts with the real id.
     if (isSaving.current) return;
     isSaving.current = true;
 
     setStatus('saving');
 
     try {
-      const url = isNew ? '/ingest' : `/api/documents/${docId}`;
+      const url = isNew ? '/api/documents' : `/api/documents/${docId}`;
       const method = isNew ? 'POST' : 'PUT';
       const body = JSON.stringify({ title: currentTitle, text });
 
@@ -168,6 +170,16 @@ export function DocumentEditor({
           placeholder="Untitled"
           className="min-w-0 flex-1 border-none bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-neutral-700"
         />
+        <button
+          type="button"
+          onClick={() => {
+            void save();
+          }}
+          disabled={status === 'saving'}
+          className="shrink-0 border border-white/[0.08] bg-neutral-950 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-neutral-300 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Save note
+        </button>
         <span
           data-testid="save-status"
           className={`text-xs ${

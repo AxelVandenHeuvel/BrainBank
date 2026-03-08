@@ -125,6 +125,19 @@ describe('DocumentEditor', () => {
     expect(screen.getByTestId('save-status')).toBeInTheDocument();
   });
 
+  it('renders a manual save button', () => {
+    render(
+      <DocumentEditor
+        docId="doc-1"
+        initialTitle="Test"
+        initialContent=""
+        isNew={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save note' })).toBeInTheDocument();
+  });
+
   it('title changes call onTitleChange', async () => {
     const user = userEvent.setup();
     const onTitleChange = vi.fn();
@@ -143,7 +156,7 @@ describe('DocumentEditor', () => {
     expect(onTitleChange).toHaveBeenCalledWith('doc-1', 'New Title');
   });
 
-  it('auto-save triggers after debounce for new docs (POST /ingest)', async () => {
+  it('auto-save triggers after debounce for new docs (POST /api/documents)', async () => {
     vi.useFakeTimers();
 
     render(
@@ -171,9 +184,35 @@ describe('DocumentEditor', () => {
       vi.advanceTimersByTime(1600);
     });
 
-    expect(fetch).toHaveBeenCalledWith('/ingest', expect.objectContaining({
+    expect(fetch).toHaveBeenCalledWith('/api/documents', expect.objectContaining({
       method: 'POST',
     }));
+  });
+
+  it('manual save persists a title-only new note through the lightweight document endpoint', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <DocumentEditor
+        docId="new-1"
+        initialTitle="Untitled"
+        initialContent=""
+        isNew={true}
+      />,
+    );
+
+    const titleInput = screen.getByDisplayValue('Untitled');
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Short draft');
+    await user.click(screen.getByRole('button', { name: 'Save note' }));
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/documents',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ title: 'Short draft', text: '' }),
+      }),
+    );
   });
 
   it('auto-save triggers after debounce for existing docs (PUT /api/documents/{docId})', async () => {

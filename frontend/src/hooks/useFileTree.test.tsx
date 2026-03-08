@@ -105,6 +105,42 @@ describe('useFileTree', () => {
     expect(physDocs).toContain('doc-2');
   });
 
+  it('groups documents without concepts under a Notes section', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        if (url === '/api/concepts') {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(MOCK_CONCEPTS_RESPONSE),
+          });
+        }
+        if (url === '/api/documents') {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                documents: [
+                  ...MOCK_DOCUMENTS_RESPONSE.documents,
+                  { doc_id: 'doc-draft', name: 'Short draft', chunk_count: 1, concepts: [] },
+                ],
+              }),
+          });
+        }
+        return Promise.reject(new Error(`Unexpected URL: ${url}`));
+      }),
+    );
+
+    const { result } = renderHook(() => useFileTree());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const notes = result.current.tree.find((concept) => concept.name === 'Notes');
+
+    expect(notes).toBeDefined();
+    expect(notes?.documents).toEqual([{ docId: 'doc-draft', name: 'Short draft' }]);
+  });
+
   it('handles API failure gracefully', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
 

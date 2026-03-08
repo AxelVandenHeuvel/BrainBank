@@ -111,18 +111,15 @@ export default function App() {
     openDocument(docId, name, content);
 
     if (source === 'api') {
-      fetch(`/api/concepts/${encodeURIComponent(conceptName)}/documents`)
+      fetch(`/api/documents/${encodeURIComponent(docId)}`)
         .then((res) => {
           if (!res.ok) throw new Error('fetch failed');
           return res.json();
         })
-        .then((docs: { doc_id: string; name: string; full_text: string }[]) => {
-          const doc = docs.find((d) => d.doc_id === docId);
-          if (doc) {
-            setOpenTabs((prev) =>
-              prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
-            );
-          }
+        .then((doc: { doc_id: string; name: string; full_text: string }) => {
+          setOpenTabs((prev) =>
+            prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
+          );
         })
         .catch(() => { /* already showing mock content */ });
     }
