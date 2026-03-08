@@ -1,4 +1,4 @@
-from backend.db.lance import init_lancedb, find_existing_document
+from backend.db.lance import init_lancedb, find_existing_document, delete_document_chunks
 from tests.conftest import mock_embed_texts
 
 
@@ -63,3 +63,27 @@ class TestFindExistingDocument:
 
         result = find_existing_document("Physics Notes", lance_path)
         assert result is None
+
+
+class TestDeleteDocumentChunks:
+    def test_deletes_chunks_by_title(self, lance_path):
+        """Should remove all chunks for a given document title."""
+        db, table = init_lancedb(lance_path)
+        vec = mock_embed_texts(["chunk"])[0]
+        table.add([
+            {"chunk_id": "c1", "doc_id": "d1", "doc_name": "Math", "text": "a", "concepts": ["X"], "vector": vec},
+            {"chunk_id": "c2", "doc_id": "d1", "doc_name": "Math", "text": "b", "concepts": ["Y"], "vector": vec},
+            {"chunk_id": "c3", "doc_id": "d2", "doc_name": "Physics", "text": "c", "concepts": ["Z"], "vector": vec},
+        ])
+
+        delete_document_chunks("Math", lance_path)
+
+        # Re-open table to see the delete result
+        _, fresh_table = init_lancedb(lance_path)
+        df = fresh_table.to_pandas()
+        assert len(df) == 1
+        assert df.iloc[0]["doc_name"] == "Physics"
+
+    def test_no_error_when_title_not_found(self, lance_path):
+        """Should not raise when deleting a non-existent title."""
+        delete_document_chunks("Nonexistent", lance_path)

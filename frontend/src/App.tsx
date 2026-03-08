@@ -56,7 +56,6 @@ export default function App() {
 
   function handleNoteSaved() {
     refetch();
-    setView('graph');
   }
 
   return (

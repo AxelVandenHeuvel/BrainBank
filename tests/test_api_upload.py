@@ -194,35 +194,39 @@ class TestZipUpload:
         assert data["results"][0]["title"] == "notes"
 
 
-class TestDuplicateDetection:
-    """Tests for duplicate document detection in /ingest/upload."""
+class TestDuplicateReplacement:
+    """Tests for duplicate document replacement in /ingest/upload."""
 
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_skips_duplicate(self, mock_llm, mock_emb, mock_color, monkeypatch):
-        """When find_existing_document returns a match, the file should be skipped."""
+    def test_upload_replaces_duplicate(self, mock_llm, mock_emb, mock_color, monkeypatch):
+        """When a document with the same title exists, old chunks are deleted and it re-ingests."""
+        delete_called = []
         monkeypatch.setattr(
             "backend.api.find_existing_document",
             lambda title: {"doc_id": "existing-123", "doc_name": title},
         )
+        monkeypatch.setattr(
+            "backend.api.delete_document_chunks",
+            lambda title: delete_called.append(title),
+        )
 
-        file = io.BytesIO(b"# Duplicate content")
+        file = io.BytesIO(b"# Updated content")
         resp = client.post(
             "/ingest/upload",
             files=[("files", ("notes.md", file, "text/markdown"))],
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["imported"] == 0
-        assert data["results"][0]["skipped"] is True
-        assert data["results"][0]["reason"] == "duplicate"
+        assert data["imported"] == 1
+        assert delete_called == ["notes"]
 
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     def test_upload_proceeds_when_no_duplicate(self, mock_llm, mock_emb, mock_color):
-        """When find_existing_document returns None, the file should be ingested."""
+        """When find_existing_document returns None, the file should be ingested normally."""
         file = io.BytesIO(b"# New content")
         resp = client.post(
             "/ingest/upload",
@@ -231,4 +235,3 @@ class TestDuplicateDetection:
         assert resp.status_code == 200
         data = resp.json()
         assert data["imported"] == 1
-        assert data["results"][0].get("skipped") is not True

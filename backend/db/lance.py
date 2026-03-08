@@ -32,6 +32,15 @@ def find_existing_document(title: str, db_path: str = "./data/lancedb") -> dict 
     return {"doc_id": row["doc_id"], "doc_name": row["doc_name"]}
 
 
+def delete_document_chunks(title: str, db_path: str = "./data/lancedb") -> None:
+    """Delete all chunks for a document by title."""
+    _, table = init_lancedb(db_path)
+    try:
+        table.delete(f'doc_name = "{title}"')
+    except Exception:
+        pass
+
+
 def init_lancedb(db_path: str = "./data/lancedb"):
     # Apply the same safeguard we used for Kuzu to prevent IO crashes on fresh clones
     os.makedirs(db_path, exist_ok=True)

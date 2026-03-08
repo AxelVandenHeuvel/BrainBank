@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from backend.api_graph import graph_router
 from backend.db.kuzu import get_kuzu_engine
-from backend.db.lance import find_existing_document
+from backend.db.lance import delete_document_chunks, find_existing_document
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
 from backend.services.llm import generate_test_answer
@@ -151,8 +151,9 @@ async def ingest_upload(files: list[UploadFile]):
                         None, partial(find_existing_document, title)
                     )
                     if existing:
-                        results.append({"title": title, "skipped": True, "reason": "duplicate"})
-                        continue
+                        await loop.run_in_executor(
+                            None, partial(delete_document_chunks, title)
+                        )
                     try:
                         text = _extract_text(entry, zf.read(entry))
                     except Exception:
@@ -167,8 +168,9 @@ async def ingest_upload(files: list[UploadFile]):
                 None, partial(find_existing_document, title)
             )
             if existing:
-                results.append({"title": title, "skipped": True, "reason": "duplicate"})
-                continue
+                await loop.run_in_executor(
+                    None, partial(delete_document_chunks, title)
+                )
             text = _extract_text(f.filename or "", raw)
             result = await loop.run_in_executor(
                 None, partial(ingest_markdown, text, title, shared_kuzu_db=get_kuzu_engine())

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -71,6 +71,11 @@ beforeEach(() => {
   vi.restoreAllMocks();
   onSave.mockClear();
   onCancel.mockClear();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('NoteEditor', () => {
@@ -83,29 +88,33 @@ describe('NoteEditor', () => {
   });
 
   it('has a back button that calls onCancel', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<NoteEditor onSave={onSave} onCancel={onCancel} />);
 
     await user.click(screen.getByRole('button', { name: /back to graph/i }));
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it('saves note via POST /ingest and calls onSave', async () => {
-    const user = userEvent.setup();
+  it('auto-saves after 2s of inactivity', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ concepts: ['Math', 'Physics'], doc_id: 'abc' }),
+      json: () => Promise.resolve({ concepts: ['Math'], doc_id: 'abc' }),
     } as Response);
 
     render(<NoteEditor onSave={onSave} onCancel={onCancel} />);
 
-    await user.type(screen.getByPlaceholderText('Untitled'), 'My Note');
-
     await waitFor(() => {
       expect(screen.getByTestId('milkdown-mock')).toBeInTheDocument();
     });
+
+    await user.type(screen.getByPlaceholderText('Untitled'), 'My Note');
     await user.type(screen.getByTestId('milkdown-mock'), 'Some content');
-    await user.click(screen.getByRole('button', { name: /save to brain/i }));
+
+    // Advance past the 2s debounce
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith('/ingest', {
@@ -118,15 +127,12 @@ describe('NoteEditor', () => {
     await waitFor(() => {
       expect(onSave).toHaveBeenCalled();
     });
+
+    expect(screen.getByTestId('save-status')).toHaveTextContent('Saved');
   });
 
-  it('disables save when content is empty', () => {
-    render(<NoteEditor onSave={onSave} onCancel={onCancel} />);
-    expect(screen.getByRole('button', { name: /save to brain/i })).toBeDisabled();
-  });
-
-  it('shows error on failed save', async () => {
-    const user = userEvent.setup();
+  it('shows error on failed auto-save', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       status: 500,
@@ -134,18 +140,48 @@ describe('NoteEditor', () => {
 
     render(<NoteEditor onSave={onSave} onCancel={onCancel} />);
 
-    await user.type(screen.getByPlaceholderText('Untitled'), 'Fail');
+    await waitFor(() => {
+      expect(screen.getByTestId('milkdown-mock')).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId('milkdown-mock'), 'Content');
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('save-status')).toHaveTextContent('Save failed');
+    });
+
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('saves immediately when navigating back with unsaved changes', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ concepts: [], doc_id: 'x' }),
+    } as Response);
+
+    render(<NoteEditor onSave={onSave} onCancel={onCancel} />);
 
     await waitFor(() => {
       expect(screen.getByTestId('milkdown-mock')).toBeInTheDocument();
     });
-    await user.type(screen.getByTestId('milkdown-mock'), 'Content');
-    await user.click(screen.getByRole('button', { name: /save to brain/i }));
 
+    await user.type(screen.getByTestId('milkdown-mock'), 'Unsaved work');
+
+    // Click back without waiting for debounce
+    await user.click(screen.getByRole('button', { name: /back to graph/i }));
+
+    expect(onCancel).toHaveBeenCalled();
+
+    // The save should have been triggered immediately
     await waitFor(() => {
-      expect(screen.getByText(/failed to save/i)).toBeInTheDocument();
+      expect(fetch).toHaveBeenCalledWith('/ingest', expect.objectContaining({
+        method: 'POST',
+      }));
     });
-
-    expect(onSave).not.toHaveBeenCalled();
   });
 });

@@ -179,8 +179,8 @@ GLTFLoader -- load human-brain.glb, center the model at the scene origin, derive
 
 The sidebar has a "New Note" button and a file upload option:
 
-1. **New Note** - clicking opens a full-page WYSIWYG markdown editor (NoteEditor) that covers the entire viewport. The editor uses Milkdown Crepe (ProseMirror-based) which renders markdown inline as you type — headings appear as headings, bold renders as bold, lists indent, LaTeX math renders via KaTeX (`$inline$` and `$$block$$`). A toolbar provides formatting buttons. Markdown shortcuts work like Obsidian: type `###` for a heading, `**` for bold, `-` for a list. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
-2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped with a `"duplicate"` reason. On completion, a summary shows the total ingested count, or a partial-failure message if some files failed.
+1. **New Note** - clicking opens a full-page WYSIWYG markdown editor (NoteEditor) that covers the entire viewport. The editor uses Milkdown Crepe (ProseMirror-based) which renders markdown inline as you type — headings appear as headings, bold renders as bold, lists indent, LaTeX math renders via KaTeX (`$inline$` and `$$block$$`). A toolbar provides formatting buttons. Markdown shortcuts work like Obsidian: type `###` for a heading, `**` for bold, `-` for a list. The editor **auto-saves** with a 2-second debounce after typing stops, firing `POST /ingest` in the background. A status indicator shows the current save state (idle / saving / saved / error). Clicking the Back button triggers an immediate save if there are unsaved changes, then returns to the graph view. There is no manual Save button — all persistence is automatic like Obsidian.
+2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) have their old chunks deleted and are re-ingested with the new content. On completion, a summary shows the total ingested count, or a partial-failure message if some files failed.
 
 3. **Import from Notion** - user clicks "Import from Notion" in the sidebar, enters their Notion integration token and a page/database URL, and clicks Import. The frontend `POST /ingest/notion` sends `{token, url}`. The backend parses the URL to determine page vs database, fetches content via the Notion API, converts blocks to markdown, and runs each page through the standard ingest pipeline. Success shows the number of pages imported.
 
@@ -334,10 +334,9 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 - Returns: `{"answer": "...", "discovery_concepts": [...]}`
 
 ### `GET /api/graph`
-- Intended payload: `{"nodes": [...], "edges": [...]}`
-- Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
-- Returns: `{"nodes": [{"id", "type", "name"}], "edges": [{"source", "target", "type"}]}`
-- Full graph for frontend 3D visualization
+- Returns: `{"nodes": [{"id", "type", "name", "colorScore?"}], "edges": [{"source", "target", "type", "reason?"}]}`
+- Concept nodes come from Kuzu with `colorScore`. Document nodes and `MENTIONS` edges are derived at query time from LanceDB chunk metadata.
+- Frontend falls back to local mock data if the endpoint is unavailable or returns invalid data.
 
 ### `GET /api/concepts`
 - Returns: `{"concepts": [{"name", "document_count", "related_concepts"}]}`
@@ -355,7 +354,7 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 - Accepts `.md`, `.txt`, `.pdf`, `.zip` files
 - PDFs are converted to text server-side via PyMuPDF
 - Zip files are extracted in-memory; `__MACOSX`/hidden files skipped, only `.md`/`.txt`/`.pdf` entries processed
-- Duplicate documents (matching `doc_name` in LanceDB) are skipped with `{"skipped": true, "reason": "duplicate"}`
+- Duplicate documents (matching `doc_name` in LanceDB) have their old chunks deleted and are re-ingested
 - Returns: `{"imported": N, "results": [{"title", "doc_id", "chunks", "concepts"}]}`
 - Errors: `400` with `{"error": "..."}` for unsupported file types
 

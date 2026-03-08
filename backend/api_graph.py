@@ -60,7 +60,7 @@ def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
 
 @graph_router.get("/graph")
 def get_graph(conn: kuzu.Connection = Depends(get_db_connection)):
-    """Return all concept nodes and edges for frontend visualization."""
+    """Return all concept nodes, document nodes, and edges for frontend visualization."""
     nodes = []
     result = conn.execute("MATCH (c:Concept) RETURN c.name, c.colorScore")
     while result.has_next():
@@ -68,6 +68,23 @@ def get_graph(conn: kuzu.Connection = Depends(get_db_connection)):
         nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name, "colorScore": color_score})
 
     edges = [edge.model_dump() for edge in get_related_to_edges(conn)]
+
+    # Derive Document nodes and MENTIONS edges from LanceDB chunk metadata
+    _, table = init_lancedb()
+    df = table.to_pandas()
+    if not df.empty:
+        concept_ids = {n["name"] for n in nodes}
+        for doc_id, group in df.groupby("doc_id", sort=False):
+            doc_name = group["doc_name"].iloc[0]
+            nodes.append({"id": f"doc:{doc_id}", "type": "Document", "name": doc_name})
+            doc_concepts = group["concepts"].explode().dropna().unique()
+            for concept in doc_concepts:
+                if concept in concept_ids:
+                    edges.append({
+                        "source": f"doc:{doc_id}",
+                        "target": f"concept:{concept}",
+                        "type": "MENTIONS",
+                    })
 
     return {"nodes": nodes, "edges": edges}
 

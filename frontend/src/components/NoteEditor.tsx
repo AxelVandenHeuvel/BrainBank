@@ -52,13 +52,72 @@ interface NoteEditorProps {
   onCancel: () => void;
 }
 
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
 export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const editorRoot = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef<string>('');
+  const lastSavedTitleRef = useRef<string>('');
+  const savingRef = useRef(false);
+
+  async function triggerSave(text: string, noteTitle: string) {
+    if (savingRef.current) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    savingRef.current = true;
+    setSaveStatus('saving');
+
+    try {
+      const response = await fetch('/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: noteTitle.trim() || 'Untitled', text: trimmed }),
+      });
+
+      if (!response.ok) throw new Error('Save failed');
+
+      lastSavedRef.current = text;
+      lastSavedTitleRef.current = noteTitle;
+      setSaveStatus('saved');
+      onSave();
+    } catch {
+      setSaveStatus('error');
+    } finally {
+      savingRef.current = false;
+    }
+  }
+
+  // Debounced auto-save: 2s after content or title changes
+  useEffect(() => {
+    if (!content.trim()) return;
+    if (content === lastSavedRef.current && title === lastSavedTitleRef.current) return;
+
+    setSaveStatus('idle');
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      triggerSave(content, title);
+    }, 2000);
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [content, title]);
+
+  function handleBack() {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    // Save immediately if there are unsaved changes
+    if (content.trim() && (content !== lastSavedRef.current || title !== lastSavedTitleRef.current)) {
+      triggerSave(content, title);
+    }
+    onCancel();
+  }
 
   useEffect(() => {
     if (!editorRoot.current || crepeRef.current) return;
@@ -136,51 +195,35 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
     };
   }, []);
 
-  async function handleSave() {
-    const trimmedTitle = title.trim() || 'Untitled';
-    const markdown = crepeRef.current?.getMarkdown() ?? content;
-    if (!markdown.trim()) return;
-
-    setSaving(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: trimmedTitle, text: markdown.trim() }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to save (${response.status})`);
-      }
-
-      onSave();
-    } catch {
-      setError('Failed to save. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  }
+  const statusText =
+    saveStatus === 'saving' ? 'Saving...' :
+    saveStatus === 'saved' ? 'Saved' :
+    saveStatus === 'error' ? 'Save failed' :
+    null;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
       {/* Header bar */}
       <div className="flex items-center justify-between border-b border-white/10 px-6 py-3">
         <button
-          onClick={onCancel}
+          onClick={handleBack}
           className="text-sm text-slate-400 transition hover:text-slate-200"
         >
           Back to graph
         </button>
 
-        <button
-          onClick={handleSave}
-          disabled={!content.trim() || saving}
-          className="rounded-2xl bg-cyan-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:opacity-40 disabled:hover:bg-cyan-600"
-        >
-          {saving ? 'Saving...' : 'Save to Brain'}
-        </button>
+        {statusText && (
+          <span
+            data-testid="save-status"
+            className={`text-xs ${
+              saveStatus === 'error' ? 'text-red-400' :
+              saveStatus === 'saved' ? 'text-emerald-400' :
+              'text-slate-400'
+            }`}
+          >
+            {statusText}
+          </span>
+        )}
       </div>
 
       {/* Title */}
@@ -198,10 +241,6 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
       <div className="flex-1 overflow-auto px-6 py-4">
         <div ref={editorRoot} />
       </div>
-
-      {error && (
-        <p className="px-6 pb-4 text-xs text-red-400">{error}</p>
-      )}
     </div>
   );
 }
