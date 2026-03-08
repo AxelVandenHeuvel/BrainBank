@@ -3,6 +3,9 @@ from unittest.mock import Mock, patch
 from backend.services.llm import (
     extract_concepts,
     generate_answer,
+    generate_community_summary,
+    generate_partial_answer,
+    synthesize_answers,
     generate_test_answer,
 )
 
@@ -124,6 +127,63 @@ class TestModelSelection:
 
         assert result == "Answer"
         assert client.models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash"
+
+    @patch.dict("backend.services.llm.os.environ", {}, clear=True)
+    @patch("backend.services.llm._get_client")
+    def test_generate_partial_answer_uses_summary_and_member_concepts(self, mock_get_client):
+        client = Mock()
+        client.models.generate_content.return_value = _mock_response("Partial")
+        mock_get_client.return_value = client
+
+        result = generate_partial_answer(
+            "Summarize the corpus",
+            "This community is about calculus.",
+            ["Calculus", "Derivatives"],
+        )
+
+        assert result == "Partial"
+        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        assert "Summarize the corpus" in prompt
+        assert "This community is about calculus." in prompt
+        assert "Calculus, Derivatives" in prompt
+
+    @patch.dict("backend.services.llm.os.environ", {}, clear=True)
+    @patch("backend.services.llm._get_client")
+    def test_synthesize_answers_combines_partials(self, mock_get_client):
+        client = Mock()
+        client.models.generate_content.return_value = _mock_response("Synthesized")
+        mock_get_client.return_value = client
+
+        result = synthesize_answers(
+            "What are the main ideas?",
+            ["Partial answer 1", "Partial answer 2"],
+        )
+
+        assert result == "Synthesized"
+        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        assert "What are the main ideas?" in prompt
+        assert "Partial answer 1" in prompt
+        assert "Partial answer 2" in prompt
+
+    @patch.dict("backend.services.llm.os.environ", {}, clear=True)
+    @patch("backend.services.llm._get_client")
+    def test_generate_community_summary_uses_member_concepts_and_evidence(self, mock_get_client):
+        client = Mock()
+        client.models.generate_content.return_value = _mock_response("Community summary")
+        mock_get_client.return_value = client
+
+        result = generate_community_summary(
+            "community:0001",
+            ["Calculus", "Limits"],
+            ["Chunk evidence one", "Chunk evidence two"],
+        )
+
+        assert result == "Community summary"
+        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        assert "community:0001" in prompt
+        assert "Calculus, Limits" in prompt
+        assert "Chunk evidence one" in prompt
+        assert "Chunk evidence two" in prompt
 
     @patch.dict("backend.services.llm.os.environ", {"BRAINBANK_LLM_PROVIDER": "ollama"}, clear=False)
     @patch("backend.services.llm.urlopen")

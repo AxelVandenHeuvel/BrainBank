@@ -2,11 +2,17 @@ import kuzu as _kuzu
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
-from backend.retrieval.context import build_context_text
+from backend.retrieval.context import build_local_context
+from backend.retrieval.global_search import run_global_search
 from backend.retrieval.local_search import run_local_search
+from backend.retrieval.routing import QueryRoute, classify_query_route
 from backend.retrieval.types import QueryResult, RetrievalConfig
 from backend.services.embeddings import embed_query
-from backend.services.llm import generate_answer
+from backend.services.llm import (
+    generate_answer,
+    generate_partial_answer,
+    synthesize_answers,
+)
 
 
 def _get_query_connection(shared_kuzu_db, kuzu_db_path: str):
@@ -26,12 +32,36 @@ def query_brainbank(
     if config is None:
         config = RetrievalConfig()
 
-    _, table = init_lancedb(lance_db_path)
+    db, table = init_lancedb(lance_db_path)
     kuzu_db, conn, own_db = _get_query_connection(shared_kuzu_db, kuzu_db_path)
     query_vector = embed_query(user_query)
 
     try:
-        search_result = run_local_search(table, conn, query_vector, config)
+        route = classify_query_route(user_query)
+        if route == QueryRoute.GLOBAL:
+            global_result = run_global_search(
+                db,
+                user_query,
+                query_vector,
+                config,
+                partial_answer_fn=generate_partial_answer,
+                synthesize_fn=synthesize_answers,
+            )
+            if global_result is not None:
+                return QueryResult(
+                    answer=global_result.answer,
+                    source_concepts=global_result.source_concepts,
+                    discovery_concepts=global_result.discovery_concepts,
+                ).to_response()
+
+        search_result = run_local_search(
+            db,
+            table,
+            conn,
+            user_query,
+            query_vector,
+            config,
+        )
         if not search_result.seed_chunks:
             return QueryResult(
                 answer="No relevant information found.",
@@ -39,22 +69,19 @@ def query_brainbank(
                 discovery_concepts=(),
             ).to_response()
 
-        source_concepts = tuple(sorted(search_result.source_concepts))
-        discovery_concept_names = tuple(
-            sorted(concept.name for concept in search_result.discovery_concepts)
+        source_concepts = tuple(hit.name for hit in search_result.source_concepts)
+        discovery_concepts = tuple(hit.name for hit in search_result.discovery_concepts)
+        context = build_local_context(search_result, config.max_context_words)
+        answer = generate_answer(
+            user_query,
+            context,
+            list(source_concepts) + list(discovery_concepts),
         )
-        all_concepts = list(source_concepts) + list(discovery_concept_names)
-        context = build_context_text(
-            search_result.seed_chunks,
-            search_result.discovery_chunks,
-            config.max_context_words,
-        )
-        answer = generate_answer(user_query, context, all_concepts)
 
         return QueryResult(
             answer=answer,
             source_concepts=source_concepts,
-            discovery_concepts=discovery_concept_names,
+            discovery_concepts=discovery_concepts,
         ).to_response()
     finally:
         conn.close()

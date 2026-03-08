@@ -1332,6 +1332,9 @@ export function Graph3D({
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
+        linkLineDash={(link) =>
+          isGhostLink(link as GraphLink) ? [2, 1] : undefined
+        }
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
         linkOpacity={0.82}
@@ -1403,7 +1406,6 @@ export function Graph3D({
     </div>
   );
 }
-
 
 
 
