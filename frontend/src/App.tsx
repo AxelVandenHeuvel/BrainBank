@@ -48,11 +48,8 @@ export default function App() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 lg:h-screen lg:overflow-hidden">
       <div
-        className={`mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:h-screen lg:overflow-hidden lg:px-6 ${
-          isChatOpen
-            ? 'lg:grid-cols-[22rem_minmax(0,1fr)_24rem]'
-            : 'lg:grid-cols-[22rem_minmax(0,1fr)]'
-        }`}
+        data-testid="app-shell"
+        className="relative mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:h-screen lg:grid-cols-[22rem_minmax(0,1fr)] lg:overflow-hidden lg:px-6"
       >
         <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:min-h-0 lg:overflow-y-auto">
           <div>
@@ -156,7 +153,10 @@ export default function App() {
         </section>
 
         <aside
-          className={`relative min-h-[70vh] lg:min-h-0 lg:overflow-hidden ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
+          data-testid="chat-overlay"
+          className={`relative min-h-[70vh] lg:absolute lg:inset-y-4 lg:right-0 lg:z-20 lg:w-[24rem] lg:min-h-0 ${
+            isChatOpen ? 'flex lg:pointer-events-auto' : 'hidden lg:flex lg:pointer-events-none'
+          }`}
           aria-hidden={!isChatOpen}
         >
           <button
@@ -171,7 +171,7 @@ export default function App() {
           </button>
           <div
             hidden={!isChatOpen}
-            className={`flex w-full transition ${
+            className={`flex w-full transition lg:h-full ${
               isChatOpen
                 ? 'visible translate-x-0 opacity-100'
                 : 'invisible translate-x-8 opacity-0'
