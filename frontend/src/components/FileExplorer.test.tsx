@@ -33,9 +33,14 @@ const MOCK_TREE = [
 
 describe('FileExplorer', () => {
   it('renders concept folders', () => {
-    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
-
-    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     expect(screen.getByTestId('file-explorer-scroll-shell')).toBeInTheDocument();
     expect(screen.getByTestId('file-explorer-scroll-container')).toBeInTheDocument();
@@ -48,10 +53,16 @@ describe('FileExplorer', () => {
   });
 
   it('clicking a folder expands it showing documents', async () => {
-    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
     const user = userEvent.setup();
 
-    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     // Documents should not be visible initially
     expect(screen.queryByText('Derivatives Notes')).not.toBeInTheDocument();
@@ -65,10 +76,16 @@ describe('FileExplorer', () => {
   });
 
   it('clicking an expanded folder collapses it', async () => {
-    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
     const user = userEvent.setup();
 
-    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     // Expand
     await user.click(screen.getByText('Calculus'));
@@ -80,11 +97,17 @@ describe('FileExplorer', () => {
   });
 
   it('clicking a document calls onOpenDocument with correct args', async () => {
-    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
     const user = userEvent.setup();
     const onOpenDocument = vi.fn();
 
-    render(<FileExplorer highlightedConcept={null} onOpenDocument={onOpenDocument} />);
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={onOpenDocument}
+      />,
+    );
 
     // Expand Calculus folder
     await user.click(screen.getByText('Calculus'));
@@ -96,9 +119,14 @@ describe('FileExplorer', () => {
   });
 
   it('highlightedConcept auto-expands that folder', async () => {
-    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
-
-    render(<FileExplorer highlightedConcept="Physics" onOpenDocument={vi.fn()} />);
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept="Physics"
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     // Physics folder should be auto-expanded
     await waitFor(() => {
@@ -107,10 +135,13 @@ describe('FileExplorer', () => {
   });
 
   it('changing highlightedConcept expands the new folder', async () => {
-    mockUseFileTree.mockReturnValue({ tree: MOCK_TREE, isLoading: false, refetch: vi.fn() });
-
     const { rerender } = render(
-      <FileExplorer highlightedConcept="Physics" onOpenDocument={vi.fn()} />,
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept="Physics"
+        onOpenDocument={vi.fn()}
+      />,
     );
 
     // Physics should be expanded
@@ -119,7 +150,14 @@ describe('FileExplorer', () => {
     });
 
     // Change to Algebra
-    rerender(<FileExplorer highlightedConcept="Algebra" onOpenDocument={vi.fn()} />);
+    rerender(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept="Algebra"
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText('Linear Equations')).toBeInTheDocument();
@@ -127,18 +165,49 @@ describe('FileExplorer', () => {
   });
 
   it('shows loading state', () => {
-    mockUseFileTree.mockReturnValue({ tree: [], isLoading: true, refetch: vi.fn() });
-
-    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+    render(
+      <FileExplorer
+        tree={[]}
+        isLoading={true}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
   it('shows empty state when tree is empty', () => {
-    mockUseFileTree.mockReturnValue({ tree: [], isLoading: false, refetch: vi.fn() });
-
-    render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
+    render(
+      <FileExplorer
+        tree={[]}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText(/no concepts yet/i)).toBeInTheDocument();
+  });
+
+  it('filters based on searchQuery and auto-expands matches', () => {
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+        searchQuery="Deriv"
+      />,
+    );
+
+    // Should show the matching document parent folder
+    expect(screen.getByText('Calculus')).toBeInTheDocument();
+    // Should be auto-expanded and show the matching document
+    expect(screen.getByText('Deriv')).toBeInTheDocument(); // It will show 'Deriv' as part of 'Derivatives Notes'
+    expect(screen.getByText('atives Notes')).toBeInTheDocument(); // Highlighting splits text
+
+    // Should NOT show Algebra as it doesn't match and doesn't contain matching docs
+    expect(screen.queryByText('Algebra')).not.toBeInTheDocument();
   });
 });

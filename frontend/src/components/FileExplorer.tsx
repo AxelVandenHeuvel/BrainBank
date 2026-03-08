@@ -1,18 +1,25 @@
-import { useEffect, useRef, useState, forwardRef } from 'react';
+import { useEffect, useRef, useState, forwardRef, useMemo } from 'react';
 
-import { useFileTree } from '../hooks/useFileTree';
 import type { FileTreeConcept } from '../hooks/useFileTree';
 import type { GraphData } from '../types/graph';
 
 interface FileExplorerProps {
+  tree: FileTreeConcept[];
+  isLoading: boolean;
   highlightedConcept: string | null;
   onOpenDocument: (docId: string, name: string, conceptName: string) => void;
-  refetchSignal?: number;
   graphData?: GraphData;
+  searchQuery?: string;
 }
 
-export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal, graphData }: FileExplorerProps) {
-  const { tree, isLoading, refetch } = useFileTree(graphData);
+export function FileExplorer({
+  tree,
+  isLoading,
+  highlightedConcept,
+  onOpenDocument,
+  graphData,
+  searchQuery = '',
+}: FileExplorerProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [scrollThumbStyle, setScrollThumbStyle] = useState<{
     height: string;
@@ -24,14 +31,33 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
     opacity: 0,
   });
 
-  // Re-fetch when parent signals a change (e.g. after save or ingest)
-  useEffect(() => {
-    if (refetchSignal && refetchSignal > 0) {
-      refetch();
-    }
-  }, [refetchSignal, refetch]);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<string>>(new Set());
   const conceptRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+
+  const filteredTree = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    if (!normalizedQuery) return tree;
+
+    return tree
+      .map((concept) => {
+        const isConceptMatch = concept.name.toLowerCase().includes(normalizedQuery);
+        const matchingDocs = concept.documents.filter((doc) =>
+          doc.name.toLowerCase().includes(normalizedQuery),
+        );
+
+        if (isConceptMatch || matchingDocs.length > 0) {
+          return {
+            ...concept,
+            // If concept matches, show all its documents (or should we?)
+            // If concept doesn't match, only show matching documents
+            documents: isConceptMatch ? concept.documents : matchingDocs,
+            isConceptMatch,
+          };
+        }
+        return null;
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+  }, [tree, searchQuery]);
 
   // Auto-expand and scroll to highlighted concept
   useEffect(() => {
@@ -50,6 +76,17 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
       });
     }
   }, [highlightedConcept, tree]);
+
+  // Auto-expand everything on search
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      setExpandedConcepts((prev) => {
+        const next = new Set(prev);
+        filteredTree.forEach((c) => next.add(c.name));
+        return next;
+      });
+    }
+  }, [searchQuery, filteredTree]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -111,7 +148,7 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
         cancelAnimationFrame(frameId);
       }
     };
-  }, [tree, expandedConcepts, highlightedConcept]);
+  }, [filteredTree, expandedConcepts, highlightedConcept]);
 
   function toggleConcept(name: string) {
     setExpandedConcepts((prev) => {
@@ -132,7 +169,7 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
         data-testid="file-explorer-scroll-container"
         className="sidebar-files-scroll-container h-full overflow-y-auto"
       >
-        {isLoading ? (
+        {isLoading && tree.length === 0 ? (
           <div className="space-y-2 p-2">
             <p className="text-sm text-neutral-500">Loading...</p>
             <div className="space-y-1">
@@ -141,18 +178,21 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
               ))}
             </div>
           </div>
-        ) : tree.length === 0 ? (
+        ) : filteredTree.length === 0 ? (
           <div className="p-2">
-            <p className="text-sm text-neutral-500">No concepts yet</p>
+            <p className="text-sm text-neutral-500">
+              {searchQuery.trim() ? "No matches found" : "No concepts yet"}
+            </p>
           </div>
         ) : (
           <div data-testid="file-explorer-tree" className="sidebar-files-content space-y-0.5">
-            {tree.map((concept) => (
+            {filteredTree.map((concept) => (
               <ConceptFolder
                 key={concept.name}
                 concept={concept}
                 isExpanded={expandedConcepts.has(concept.name)}
                 isHighlighted={highlightedConcept === concept.name}
+                searchQuery={searchQuery}
                 onToggle={() => toggleConcept(concept.name)}
                 onOpenDocument={onOpenDocument}
                 ref={(el) => {
@@ -178,28 +218,32 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
 }
 
 interface ConceptFolderProps {
-  concept: FileTreeConcept;
+  concept: FileTreeConcept & { isConceptMatch?: boolean };
   isExpanded: boolean;
   isHighlighted: boolean;
+  searchQuery: string;
   onToggle: () => void;
   onOpenDocument: (docId: string, name: string, conceptName: string) => void;
 }
 
 const ConceptFolder = forwardRef<HTMLDivElement, ConceptFolderProps>(
-  function ConceptFolder({ concept, isExpanded, isHighlighted, onToggle, onOpenDocument }, ref) {
+  function ConceptFolder({ concept, isExpanded, isHighlighted, searchQuery, onToggle, onOpenDocument }, ref) {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
     return (
       <div ref={ref}>
         <button
           type="button"
           onClick={onToggle}
-          className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-sm transition hover:bg-white/[0.03] ${
-            isHighlighted ? 'bg-pink-500/10 text-pink-300' : 'text-neutral-400'
-          }`}
+          className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-sm transition hover:bg-white/[0.03] ${isHighlighted ? 'bg-pink-500/10 text-pink-300' : 'text-neutral-400'
+            }`}
         >
           <span className="shrink-0 text-xs text-neutral-600">
             {isExpanded ? '\u25BE' : '\u25B8'}
           </span>
-          <span className="truncate">{concept.name}</span>
+          <span className="truncate">
+            <HighlightedText text={concept.name} highlight={normalizedQuery} />
+          </span>
           <span className="ml-auto shrink-0 text-xs text-neutral-600">
             {concept.documents.length}
           </span>
@@ -214,7 +258,9 @@ const ConceptFolder = forwardRef<HTMLDivElement, ConceptFolderProps>(
                 onClick={() => onOpenDocument(doc.docId, doc.name, concept.name)}
                 className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm text-neutral-500 transition hover:bg-white/[0.03] hover:text-neutral-300"
               >
-                <span className="truncate">{doc.name}</span>
+                <span className="truncate">
+                  <HighlightedText text={doc.name} highlight={normalizedQuery} />
+                </span>
               </button>
             ))}
           </div>
@@ -223,3 +269,22 @@ const ConceptFolder = forwardRef<HTMLDivElement, ConceptFolderProps>(
     );
   },
 );
+
+function HighlightedText({ text, highlight }: { text: string; highlight: string }) {
+  if (!highlight) return <>{text}</>;
+
+  const parts = text.split(new RegExp(`(${highlight})`, 'gi'));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === highlight.toLowerCase() ? (
+          <span key={i} className="bg-pink-500/30 text-pink-100 ring-1 ring-pink-500/40">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
