@@ -26,6 +26,7 @@ export interface GraphEdge {
   target: string;
   type: string;
   reason?: string;
+  weight?: number;
 }
 
 export interface GraphApiResponse {
@@ -38,6 +39,8 @@ export interface GraphLink {
   target: string | GraphNode;
   type: string;
   reason?: string;
+  weight?: number;
+  isGhost?: boolean;
 }
 
 export interface GraphData {
@@ -61,4 +64,14 @@ export interface RelationshipDetails {
   source_documents: RelationshipDocument[];
   target_documents: RelationshipDocument[];
   shared_document_ids: string[];
+}
+
+export interface DiscoveryResultItem {
+  doc_name: string;
+  similarity_score: number;
+}
+
+export interface DiscoveryResponse {
+  concept_name: string;
+  results: DiscoveryResultItem[];
 }

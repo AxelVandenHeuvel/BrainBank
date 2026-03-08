@@ -29,14 +29,17 @@ function isGraphEdge(value: unknown): value is GraphEdge {
   }
 
   const edge = value as Record<string, unknown>;
+  const hasValidReasonShape =
+    edge.reason === undefined || edge.reason === null || typeof edge.reason === 'string';
+  const hasValidWeightShape =
+    edge.weight === undefined || edge.weight === null || typeof edge.weight === 'number';
 
   return (
     typeof edge.source === 'string' &&
     typeof edge.target === 'string' &&
     typeof edge.type === 'string' &&
-    (edge.type !== 'RELATED_TO' ||
-      (typeof edge.reason === 'string' && edge.reason.length > 0)) &&
-    (edge.reason === undefined || typeof edge.reason === 'string')
+    hasValidReasonShape &&
+    hasValidWeightShape
   );
 }
 
@@ -47,17 +50,22 @@ export function validateGraphApiResponse(value: unknown): value is GraphApiRespo
 
   const payload = value as Record<string, unknown>;
 
-  return (
-    Array.isArray(payload.nodes) &&
-    payload.nodes.every(isGraphNode) &&
-    Array.isArray(payload.edges) &&
-    payload.edges.every(isGraphEdge)
-  );
+  // Accept any payload with array-shaped nodes/edges; invalid items are filtered in normalizeGraphData.
+  return Array.isArray(payload.nodes) && Array.isArray(payload.edges);
 }
 
 export function normalizeGraphData(response: GraphApiResponse): GraphData {
+  const safeNodes = response.nodes.filter(isGraphNode).map((node) => ({ ...node }));
+  const safeEdges = response.edges
+    .filter(isGraphEdge)
+    .map((edge) => ({
+      ...edge,
+      reason: edge.reason ?? undefined,
+      weight: edge.weight ?? 1,
+    }));
+
   return {
-    nodes: response.nodes.map((node) => ({ ...node })),
-    links: response.edges.map((edge) => ({ ...edge })),
+    nodes: safeNodes,
+    links: safeEdges,
   };
 }

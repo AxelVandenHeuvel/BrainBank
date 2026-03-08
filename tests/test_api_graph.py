@@ -122,6 +122,7 @@ class TestGetGraph:
         assert "source" in edge
         assert "target" in edge
         assert "type" in edge
+        assert "weight" in edge
 
     def test_related_edges_use_stable_type_and_reason(self):
         _ingest_sample()
@@ -133,7 +134,36 @@ class TestGetGraph:
         )
 
         assert related_edge["type"] == "RELATED_TO"
-        assert related_edge["reason"] == "contains"
+        assert related_edge["reason"] == "shared_document"
+        assert related_edge["weight"] == 1.0
+
+    def test_related_edge_weight_increases_across_documents(self):
+        _ingest_document(
+            title="Doc One",
+            text="Calculus and Derivatives both appear here.",
+            extraction={"concepts": ["Calculus", "Derivatives"], "relationships": []},
+        )
+        _ingest_document(
+            title="Doc Two",
+            text="Calculus and Derivatives appear again.",
+            extraction={"concepts": ["Calculus", "Derivatives"], "relationships": []},
+        )
+
+        response = client.get("/api/graph")
+        edges = response.json()["edges"]
+        related_edge = next(
+            edge for edge in edges if edge["source"] == "concept:Calculus" and edge["target"] == "concept:Derivatives"
+        )
+
+        assert related_edge["weight"] == 2.0
+
+    def test_all_graph_edges_return_numeric_weight(self):
+        _ingest_sample()
+        response = client.get("/api/graph")
+        edges = response.json()["edges"]
+
+        assert len(edges) > 0
+        assert all(isinstance(edge.get("weight"), (int, float)) for edge in edges)
 
 
 class TestGetConcepts:
@@ -264,7 +294,7 @@ class TestGetRelationshipDetails:
         assert data["source"] == "Calculus"
         assert data["target"] == "Derivatives"
         assert data["type"] == "RELATED_TO"
-        assert data["reason"] == "shared foundation"
+        assert data["reason"] == "shared_document"
 
         source_names = {document["name"] for document in data["source_documents"]}
         target_names = {document["name"] for document in data["target_documents"]}
@@ -309,7 +339,7 @@ class TestGetRelationshipDetails:
         assert data["source"] == "Derivatives"
         assert data["target"] == "Calculus"
         assert data["type"] == "RELATED_TO"
-        assert data["reason"] == "shared foundation"
+        assert data["reason"] == "shared_document"
 
     def test_shared_document_ids_only_include_overlap(self):
         _ingest_document(
@@ -393,3 +423,53 @@ class TestGetStats:
         assert data["total_chunks"] >= 1
         assert data["total_concepts"] >= 1
         assert data["total_relationships"] >= 1
+
+class TestGetLatentDiscovery:
+    def test_returns_top_five_similar_documents_excluding_existing_concept_docs(self, lance_path):
+        db, chunks = real_init_lancedb(lance_path)
+        centroids = db.open_table("document_centroids")
+
+        base_vector = [1.0] + [0.0] * 383
+
+        chunks.add(
+            [
+                {
+                    "chunk_id": "c1",
+                    "doc_id": "doc-calc",
+                    "doc_name": "Calculus Core",
+                    "text": "Calculus basics",
+                    "concepts": ["Calculus"],
+                    "vector": base_vector,
+                }
+            ]
+        )
+
+        centroids.add(
+            [
+                {"doc_id": "doc-calc", "doc_name": "Calculus Core", "centroid_vector": base_vector},
+                {"doc_id": "doc-1", "doc_name": "Doc 1", "centroid_vector": [1.00] + [0.0] * 383},
+                {"doc_id": "doc-2", "doc_name": "Doc 2", "centroid_vector": [0.99] + [0.0] * 383},
+                {"doc_id": "doc-3", "doc_name": "Doc 3", "centroid_vector": [0.98] + [0.0] * 383},
+                {"doc_id": "doc-4", "doc_name": "Doc 4", "centroid_vector": [0.97] + [0.0] * 383},
+                {"doc_id": "doc-5", "doc_name": "Doc 5", "centroid_vector": [0.96] + [0.0] * 383},
+                {"doc_id": "doc-6", "doc_name": "Doc 6", "centroid_vector": [0.95] + [0.0] * 383},
+            ]
+        )
+
+        response = client.get("/api/discovery/latent/Calculus")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["concept_name"] == "Calculus"
+        assert len(data["results"]) == 5
+        assert all(item["doc_name"] != "Calculus Core" for item in data["results"])
+        assert all("doc_name" in item and "similarity_score" in item for item in data["results"])
+        assert all(isinstance(item["similarity_score"], float) for item in data["results"])
+
+    def test_returns_empty_results_when_concept_is_missing(self):
+        response = client.get("/api/discovery/latent/NonExistent")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["concept_name"] == "NonExistent"
+        assert data["results"] == []
+

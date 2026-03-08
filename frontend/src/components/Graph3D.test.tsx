@@ -138,6 +138,8 @@ function getLatestGraphProps() {
     nodeColor: (node: GraphNode) => string;
     linkColor: (link: GraphLink) => string;
     linkWidth: (link: GraphLink) => number;
+    linkLineDash?: (link: GraphLink) => [number, number] | undefined;
+    graphData: GraphData;
     linkOpacity: number;
     linkDirectionalParticles: number;
     linkDirectionalParticleWidth?: number;
@@ -733,6 +735,38 @@ describe('Graph3D', () => {
     expect(getLatestGraphProps().linkOpacity).toBeGreaterThan(0.7);
   });
 
+  it('renders unhighlighted edges as translucent bluish white for baseline visibility', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    expect(props.linkColor(graph.links[0])).toBe('rgba(186, 224, 255, 0.52)');
+  });
+
+  it('shows a meaningful visual width difference between low and high weighted links', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const low = props.linkWidth({ ...graph.links[0], weight: 1 });
+    const high = props.linkWidth({ ...graph.links[0], weight: 6 });
+
+    expect(high).toBeGreaterThan(low * 2);
+  });
   it('renders edges as plain lines without directional particles', () => {
     render(
       <Graph3D
@@ -1199,8 +1233,8 @@ describe('Graph3D', () => {
 
     expect(focusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
     expect(focusedProps.linkColor(graph.links[1])).toBe('rgba(125, 211, 252, 0.9)');
-    expect(focusedProps.linkWidth(graph.links[0])).toBe(0.7);
-    expect(focusedProps.linkWidth(graph.links[1])).toBe(0.7);
+    expect(focusedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(focusedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
 
     await act(async () => {
       getLatestGraphProps().onNodeClick(graph.nodes[1]);
@@ -1210,8 +1244,8 @@ describe('Graph3D', () => {
 
     expect(refocusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
     expect(refocusedProps.linkColor(graph.links[1])).toBe('rgba(51, 65, 85, 0.22)');
-    expect(refocusedProps.linkWidth(graph.links[0])).toBe(0.7);
-    expect(refocusedProps.linkWidth(graph.links[1])).toBe(0.7);
+    expect(refocusedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(refocusedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
   });
 
   it('selected edge styling takes precedence over hover styling', async () => {
@@ -1242,8 +1276,8 @@ describe('Graph3D', () => {
     };
 
     expect(selectedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
-    expect(selectedProps.linkWidth(graph.links[0])).toBe(0.7);
-    expect(selectedProps.linkWidth(graph.links[1])).toBe(0.7);
+    expect(selectedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(selectedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
   });
 
   it('closing the panel clears selected edge state', async () => {
@@ -1274,7 +1308,7 @@ describe('Graph3D', () => {
       linkWidth: (link: GraphLink) => number;
     };
 
-    expect(clearedProps.linkWidth(graph.links[0])).toBe(0.7);
+    expect(clearedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
   });
 
   it('pressing Escape clears selected edge state', async () => {
@@ -1313,7 +1347,7 @@ describe('Graph3D', () => {
       linkWidth: (link: GraphLink) => number;
     };
 
-    expect(clearedProps.linkWidth(graph.links[0])).toBe(0.7);
+    expect(clearedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
   });
 
   it('pressing Escape also exits node-focused rotation mode', async () => {
@@ -1386,4 +1420,73 @@ describe('Graph3D', () => {
     expect(screen.getByText('Limits and Continuity Review')).toBeInTheDocument();
     expect(mockFetch).not.toHaveBeenCalled();
   });
+  it('uses weighted link width scaling for established edges', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    expect(props.linkWidth({ ...graph.links[0], weight: 8 })).toBeCloseTo(Math.log(9) * 3.5, 6);
+  });
+
+  it('injects latent ghost links on concept click and hides them when discovery mode is off', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+        if (url.includes('/api/discovery/latent/Calculus')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              concept_name: 'Calculus',
+              results: [{ doc_name: 'Latent Doc', similarity_score: 0.87 }],
+            }),
+          });
+        }
+
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }),
+    );
+
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    const withGhost = getLatestGraphProps();
+    const ghostLink = withGhost.graphData.links.find((link) => link.type === 'LATENT_DISCOVERY');
+
+    expect(ghostLink).toBeTruthy();
+    if (ghostLink) {
+      expect(withGhost.linkLineDash?.(ghostLink)).toEqual([2, 1]);
+      expect(withGhost.linkWidth(ghostLink)).toBeCloseTo(0.8, 6);
+    }
+
+    fireEvent.click(screen.getByLabelText('Discovery mode'));
+
+    const withoutGhost = getLatestGraphProps();
+    expect(withoutGhost.graphData.links.some((link) => link.type === 'LATENT_DISCOVERY')).toBe(false);
+  });
 });
+
+
+
+
+
+

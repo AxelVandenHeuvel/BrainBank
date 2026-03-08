@@ -11,6 +11,8 @@ _client = None
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+EXTRACTION_MIN_CONCEPTS = 4
+EXTRACTION_MAX_CONCEPTS = 8
 
 
 def _get_client():
@@ -62,21 +64,40 @@ def _parse_json_response(raw_text: str) -> dict:
     return json.loads(raw.strip())
 
 
-def extract_concepts(text: str, doc_name: str) -> dict:
-    client = _get_client()
-    prompt = (
-        "Analyze the do the following steps:\n"
-        '1. A list of meaningful core themes. These are the main ideas, topics, or entities that have clear conceptual meaning. Nothing like dates or times should be extracted. Instead, extract meaningful ideas such as "Machine Learning", "Meal Prep", "Ideas on Death", etc.\n'
-        "2. Now combine these concepts into at most 4 overarching concepts"
+def _build_extraction_prompt(text: str, doc_name: str) -> str:
+    return (
+        "You extract concepts for a knowledge-graph-driven notes system.\n"
+        "Goal: produce concepts that create useful cross-document connections without noisy one-off terms.\n\n"
+        "Concept selection rules:\n"
+        f"- Return between {EXTRACTION_MIN_CONCEPTS} and {EXTRACTION_MAX_CONCEPTS} concepts when enough signal exists.\n"
+        "- Prefer a balanced set: 1-2 high-level anchor concepts and 2-6 specific method/entity concepts.\n"
+        "- Use noun phrases (1-4 words), Title Case, and stable canonical wording.\n"
+        "- Keep concepts that are reusable across notes; avoid dates, course admin terms, and vague words.\n"
+        "- Include key techniques/rules when they materially matter to the note.\n\n"
+        "Relationship selection rules:\n"
+        "- Return 3-10 directed relationships between returned concepts.\n"
+        "- Use concise relationship labels (1-4 words) that explain why the concepts connect.\n"
+        "- Do not invent concepts not in the concept list.\n\n"
         f"Document title: {doc_name}\n"
         f"Document text:\n{text}\n\n"
-        "Respond ONLY with valid JSON in this format:\n"
-        '{"concepts": ["concept1", "concept2", concept3, concept4 '
+        "Respond ONLY with valid JSON using this exact shape:\n"
+        "{\n"
+        '  "concepts": ["Concept 1", "Concept 2"],\n'
+        '  "relationships": [\n'
+        '    {"from": "Concept 1", "to": "Concept 2", "relationship": "supports"}\n'
+        "  ]\n"
+        "}\n"
     )
+
+
+def extract_concepts(text: str, doc_name: str) -> dict:
+    client = _get_client()
+    prompt = _build_extraction_prompt(text=text, doc_name=doc_name)
     response = client.models.generate_content(
         model=_get_model_name(), contents=prompt
     )
     return _parse_json_response(response.text)
+
 
 def generate_answer(query: str, context: str, concepts: list[str]) -> str:
     prompt = (

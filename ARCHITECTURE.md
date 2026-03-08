@@ -32,7 +32,17 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | concepts | STRING[]          | Concepts mentioned in this chunk         |
 | vector   | FLOAT32[384]      | Embedding vector                         |
 
-LanceDB is the sole source of document identity and the concept→document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph.
+LanceDB is the sole source of document identity and the concept-to-document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph.
+
+### LanceDB: `document_centroids` table
+
+| Column          | Type         | Description                                     |
+|-----------------|--------------|-------------------------------------------------|
+| doc_id          | STRING       | Parent document ID                              |
+| doc_name        | STRING       | Human-readable document title                   |
+| centroid_vector | FLOAT32[384] | Mean embedding vector across all document chunks |
+
+`backend/services/embeddings.py` computes this centroid by averaging all chunk `vector` values that share the same `doc_id`.
 
 ### Kuzu: Graph Schema
 
@@ -43,13 +53,13 @@ LanceDB is the sole source of document identity and the concept→document link.
 - `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Relationship Tables:**
-- `RELATED_TO(Concept -> Concept, reason STRING)` - semantic relationships between concepts
+- `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE)` - shared-document relationship with accumulated frequency weight
 - `APPLIED_TO_PROJECT(Concept -> Project)` - concept is applied in a project
 - `GENERATED_TASK(Concept -> Task)` - concept generated a task
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. When the current Kuzu Python binding reports a same-path concurrent-open failure as `IndexError: unordered_map::at: key not found`, `backend/db/kuzu.py` now translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
+Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.), `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend now opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -69,7 +79,7 @@ frontend/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
       ConceptDocumentOverlay.tsx - Related-document overlay with document selection state
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
-      Graph3D.tsx            - 3D graph scene, edge selection, and interaction behavior
+      Graph3D.tsx            - 3D graph scene, weighted link styling, latent tether discovery, and interaction behavior
       IngestPanel.tsx        - New Note button + file upload + Notion import
       MarkdownDocumentViewer.tsx - Read-only markdown renderer for selected documents
       NoteEditor.tsx         - Full-page markdown note editor
@@ -92,15 +102,15 @@ frontend/
       chat.ts                - Shared chat message and session types
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
-    lance.py                - LanceDB init + chunks table schema + duplicate document lookup
+    lance.py                - LanceDB init + chunks/document_centroids schemas + duplicate document lookup
     kuzu.py                 - Kuzu init + graph schema (nodes + edges) + clear concurrent-open error translation
   services/
-    embeddings.py           - Sentence-transformer embedding functions
+    embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
@@ -184,9 +194,7 @@ Graph3D -- react-force-graph-3d scene
   |         |                 or around the currently focused concept node
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
   |         +-- scroll wheel -> zoom camera in or out around the current focus point
-  |         +-- single-click node -> smooth camera fly to that node (no overlay)
-  |         +-- double-click node -> fly closer and open its documents in the expansion overlay
-  |         +-- click document title in overlay -> render that document in the markdown reader
+  |         +-- single-click node -> smooth camera fly to that node and request latent discovery tethers`r`n  |         +-- double-click node -> fly closer and open its documents in the expansion overlay`r`n  |         +-- click document title in overlay -> render that document in the markdown reader
   |         +-- clicked concept node -> becomes the active rotation pivot
   |         +-- double-click empty space / Escape -> restore brain-centered pivot
   |         +-- right-button drag -> rotate the scene object instead of orbiting the camera
@@ -206,9 +214,9 @@ The sidebar has a "New Note" button and a file upload option:
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, reserves left-click for node interactions (single click = smooth camera fly to node, double click = fly closer and open document expansion overlay), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target, resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation, and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, and clicking a document title sends that document into `MarkdownDocumentViewer`, which renders `full_text` in-place via `react-markdown` without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+<<The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, reserves left-click for node interactions (single click = smooth camera fly to node and latent discovery tether request, double click = fly closer and open document expansion overlay), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width now scales by relationship weight (`Math.log((weight || 1) + 1) * 3.5`) to make co-occurrence strength differences easier to see. Unfocused edges use a translucent bluish-white base color so graph structure remains visible before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target, resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation, and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, and clicking a document title sends that document into `MarkdownDocumentViewer`, which renders `full_text` in-place via `react-markdown` without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
-When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. That panel can be dismissed either with its close button or by pressing `Escape`.
+When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. Discovery Mode adds temporary latent tethers from the selected concept to semantically similar documents returned by `/api/discovery/latent/{concept_name}`; these ghost links are dashed and use a distinct violet tint, and the user can toggle them on or off from the graph UI. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. That panel can be dismissed either with its close button or by pressing `Escape`.
 
 ## Frontend Chat Flow
 
@@ -244,7 +252,7 @@ Chat state now persists in browser `localStorage` under explicit `brainbank.chat
 Input: text + title
   |
   v
-llm.extract_concepts() -- Gemini extracts concepts + relationships
+llm.extract_concepts() -- Gemini extracts 4-8 balanced concepts (1-2 anchors + 2-6 specific methods/entities) plus concise relationships to improve graph connectivity without concept sprawl
   |
   v
 chunker.semantic_chunk_text() -- split by topic shift using sentence similarity
@@ -256,10 +264,16 @@ embeddings.embed_texts() -- sentence-transformers -> 384-dim vectors
 LanceDB.add() -- store chunks with doc_name, concepts[], and vectors
   |              concepts field is the doc<->concept bridge (no Kuzu Document node)
   v
+embeddings.calculate_document_centroid() -- average chunk vectors for this doc_id
+  |
+  v
+LanceDB.add() -- store centroid row in document_centroids
+  |
+  v
 Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
-Kuzu CREATE -- RELATED_TO edges (concept->concept with reason)
+Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
 ```
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
@@ -344,7 +358,7 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
 - Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
-- Returns: `{"nodes": [{"id", "type", "name"}], "edges": [{"source", "target", "type"}]}`
+- Returns: `{"nodes": [{"id", "type", "name", "colorScore"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
 - Full graph for frontend 3D visualization
 
 ### `GET /api/concepts`
@@ -373,6 +387,13 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 - Returns: `{"imported": N, "pages": [{"title", "doc_id", "chunks", "concepts"}]}`
 - Errors: `400` with `{"error": "..."}` for invalid URLs or Notion API failures
 
+
+### `GET /api/discovery/latent/{concept_name}`
+- Returns: `{"concept_name": "...", "results": [{"doc_name", "similarity_score"}]}`
+- Computes a concept centroid from chunk vectors tagged with `concept_name`.
+- Searches `document_centroids` by vector similarity.
+- Excludes documents that already contain `concept_name`.
+- Returns at most 5 latent-similar documents.
 ### `GET /api/stats`
 - Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`
 
@@ -396,8 +417,14 @@ Run: `uv run pytest tests/ -v`
 
 Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, brain containment math, mock fallback behavior, and the graph shell UI.
 
-Frontend utility modules keep only runtime-facing exports; tests avoid depending on private helper-only camera/orbit utilities, and `graphView` is limited to the helpers the UI still calls at runtime.
+Frontend utility modules keep only runtime-facing exports; tests avoid depending on private helper-only camera/orbit utilities, and `graphView` is limited to the helpers the UI still calls at runtime. Graph payload validation accepts optional or null `reason` values and optional/null numeric `weight` on edges, then normalizes missing/null weights to `1` for rendering. The graph loader also tolerates `links` as a legacy alias for `edges` when normalizing API responses, and the backend graph route defaults absent relationship weights to `1.0`.
 
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
+
+
+
+
+
+

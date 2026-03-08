@@ -90,6 +90,44 @@ class TestIngestMarkdown:
 
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch(
+        "backend.ingestion.processor.extract_concepts",
+        return_value={
+            "concepts": ["Calculus", "Calculus", "Derivatives", "Integrals"],
+            "relationships": [],
+        },
+    )
+    def test_related_to_edges_created_for_unique_concept_pairs(
+        self, _mock_llm, _mock_emb, _mock_score, lance_path, kuzu_path
+    ):
+        ingest_markdown("Any text", "Math Notes", lance_path, kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
+        result = conn.execute("MATCH (:Concept)-[r:RELATED_TO]->(:Concept) RETURN count(r)")
+        assert result.get_next()[0] == 3
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch(
+        "backend.ingestion.processor.extract_concepts",
+        return_value={"concepts": ["Calculus", "Derivatives"], "relationships": []},
+    )
+    def test_related_to_edge_weight_increments_by_shared_documents(
+        self, _mock_llm, _mock_emb, _mock_score, lance_path, kuzu_path
+    ):
+        ingest_markdown("Doc one", "Doc 1", lance_path, kuzu_path)
+        ingest_markdown("Doc two", "Doc 2", lance_path, kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
+        result = conn.execute(
+            "MATCH (a:Concept {name: 'Calculus'})-[r:RELATED_TO]->(b:Concept {name: 'Derivatives'}) "
+            "RETURN r.weight, r.reason"
+        )
+        assert result.has_next()
+        weight, reason = result.get_next()
+        assert weight == 2.0
+        assert reason == "shared_document"
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     def test_color_score_stored_on_concept(self, _mock_llm, _mock_emb, _mock_score, lance_path, kuzu_path):
         ingest_markdown("Calculus basics", "Doc 1", lance_path, kuzu_path)
@@ -97,3 +135,19 @@ class TestIngestMarkdown:
         result = conn.execute("MATCH (c:Concept {name: 'Calculus'}) RETURN c.colorScore")
         assert result.has_next()
         assert result.get_next()[0] == 0.5
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_document_centroid_stored_after_ingest(self, _mock_llm, _mock_emb, _mock_score, lance_path, kuzu_path):
+        result = ingest_markdown("Calculus basics and derivatives", "Doc 1", lance_path, kuzu_path)
+
+        db, _ = init_lancedb(lance_path)
+        centroids = db.open_table("document_centroids")
+        df = centroids.to_pandas()
+        matching = df[df["doc_id"] == result["doc_id"]]
+
+        assert len(matching) == 1
+        assert matching.iloc[0]["doc_name"] == "Doc 1"
+        centroid_vector = matching.iloc[0]["centroid_vector"]
+        assert len(centroid_vector) == 384

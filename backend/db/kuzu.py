@@ -1,9 +1,12 @@
 import os
+import threading
+
 import kuzu
 
 # The single Database instance that holds the OS file lock.
 # Opened exactly once; all connections are spawned from it.
 _db_instance = None
+_db_instance_lock = threading.Lock()
 
 
 def _open_database(db_path: str) -> kuzu.Database:
@@ -11,7 +14,11 @@ def _open_database(db_path: str) -> kuzu.Database:
         return kuzu.Database(db_path)
     except IndexError as error:
         message = str(error)
-        if "unordered_map::at: key not found" not in message:
+        lock_conflict_message = (
+            "unordered_map::at: key not found" in message
+            or "invalid unordered_map<K, T> key" in message
+        )
+        if not lock_conflict_message:
             raise
 
         raise RuntimeError(
@@ -35,7 +42,7 @@ def _init_schema(conn: kuzu.Connection) -> None:
         "CREATE NODE TABLE IF NOT EXISTS Reflection(reflection_id STRING, text STRING, PRIMARY KEY (reflection_id))"
     )
     conn.execute(
-        "CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept, reason STRING)"
+        "CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept, reason STRING, weight DOUBLE)"
     )
     conn.execute("CREATE REL TABLE IF NOT EXISTS APPLIED_TO_PROJECT(FROM Concept TO Project)")
     conn.execute("CREATE REL TABLE IF NOT EXISTS GENERATED_TASK(FROM Concept TO Task)")
@@ -46,14 +53,19 @@ def _init_schema(conn: kuzu.Connection) -> None:
 def get_kuzu_engine(db_path: str = "./data/kuzu") -> kuzu.Database:
     """Return the singleton Database, opening and initialising it on first call."""
     global _db_instance
-    if _db_instance is None:
-        parent_dir = os.path.dirname(db_path)
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
-        _db_instance = _open_database(db_path)
-        conn = kuzu.Connection(_db_instance)
-        _init_schema(conn)
-        conn.close()
+    if _db_instance is not None:
+        return _db_instance
+
+    with _db_instance_lock:
+        if _db_instance is None:
+            parent_dir = os.path.dirname(db_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            _db_instance = _open_database(db_path)
+            conn = kuzu.Connection(_db_instance)
+            _init_schema(conn)
+            conn.close()
+
     return _db_instance
 
 
