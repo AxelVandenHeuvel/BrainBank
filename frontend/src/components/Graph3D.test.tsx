@@ -47,8 +47,6 @@ class MockResizeObserver {
   disconnect = vi.fn();
 }
 
-vi.stubGlobal('ResizeObserver', MockResizeObserver);
-
 vi.mock('react-force-graph-3d', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
 
@@ -135,6 +133,7 @@ const hoveredNode: GraphNode = {
 describe('Graph3D', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.stubGlobal('ResizeObserver', MockResizeObserver);
     sceneObject = new THREE.Scene();
     resizeObserverCallback = null;
     currentCameraPosition = { x: 200, y: 60, z: 200 };
@@ -142,16 +141,22 @@ describe('Graph3D', () => {
     controls.update.mockClear();
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => relationshipDetails,
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith('/api/relationships/details')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => relationshipDetails,
+          });
+        }
+
+        return Promise.resolve({
+          ok: true,
+          json: async () => [],
+        });
       }),
     );
-    // Default: fetch returns empty doc list so existing tests don't crash
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve([]),
-    });
   });
 
   afterEach(() => {
@@ -176,12 +181,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(39.05, 2),
-        z: 338,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(12.01, 2),
+        y: expect.closeTo(22.52, 2),
         z: 0,
       }),
       1200,
@@ -219,12 +224,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(39.05, 2),
-        z: 338,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(12.01, 2),
+        y: expect.closeTo(22.52, 2),
         z: 0,
       }),
       1200,
@@ -280,6 +285,7 @@ describe('Graph3D', () => {
     const { container } = render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -376,12 +382,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(39.05, 2),
-        z: 338,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(12.01, 2),
+        y: expect.closeTo(22.52, 2),
         z: 0,
       }),
       1200,
@@ -432,12 +438,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(39.05, 2),
-        z: 338,
+        y: expect.closeTo(51.64, 2),
+        z: 364,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(12.01, 2),
+        y: expect.closeTo(22.52, 2),
         z: 0,
       }),
       1200,

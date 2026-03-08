@@ -86,7 +86,7 @@ class TestGetGraph:
         assert len(data["nodes"]) > 0
         node_types = {n["type"] for n in data["nodes"]}
         assert "Concept" in node_types
-        assert "Document" not in node_types
+        assert "Document" in node_types
 
     def test_returns_edges_after_ingest(self):
         _ingest_sample()

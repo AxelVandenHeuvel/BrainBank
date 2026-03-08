@@ -5,13 +5,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import {
   ACTIVE_LINK_COLOR,
+  DIMMED_LINK_COLOR,
+  DIMMED_NODE_COLOR,
+  DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
   centerCameraOnTarget,
   createFocusSet,
-  DIMMED_LINK_COLOR,
-  DIMMED_NODE_COLOR,
-  DIMMED_SEARCH_COLOR,
   findMatchingNodeIds,
   getConnectionCount,
   isDirectHoverLink,
@@ -25,7 +25,10 @@ import {
   centerObject3DAtOrigin,
   rotateObjectFromPointerDelta,
 } from '../lib/brainScene';
-import { mockRelationshipDetailsByEdge } from '../mock/mockGraph';
+import {
+  getMockDocumentsForConcept,
+  mockRelationshipDetailsByEdge,
+} from '../mock/mockGraph';
 import type {
   GraphData,
   GraphLink,
@@ -107,16 +110,14 @@ const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
-const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
-const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.08;
-const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 const POINTER_ROTATION_SPEED = 0.005;
 const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
-// Radius of the transparent container sphere in graph units
 const CONTAINER_SPHERE_RADIUS = 22;
-// Distance from concept center at which doc nodes are pinned
 const DOC_ORBIT_RADIUS = 15;
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
+const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
 
 export function Graph3D({
   data,
@@ -131,36 +132,23 @@ export function Graph3D({
   const brainHomeViewRef = useRef<BrainHomeView | null>(null);
   const idleTimeoutRef = useRef<number | null>(null);
   const idleRotationIntervalRef = useRef<number | null>(null);
-  const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(
-    null,
-  );
+  const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const isRightDragRotatingRef = useRef(false);
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
-
-  // Ref used inside the async fetch callback to detect stale expansions.
   const expandedConceptIdRef = useRef<string | null>(null);
-  // State copy so nodeThreeObject re-renders when expansion changes.
+
   const [expandedConceptId, setExpandedConceptId] = useState<string | null>(null);
   const [injectedNodes, setInjectedNodes] = useState<GraphNode[]>([]);
   const [injectedLinks, setInjectedLinks] = useState<GraphLink[]>([]);
-
-  const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(
-    null,
-  );
+  const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(
-    null,
-  );
-  const [relationshipDetails, setRelationshipDetails] =
-    useState<RelationshipDetails | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(null);
+  const [relationshipDetails, setRelationshipDetails] = useState<RelationshipDetails | null>(null);
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
 
-  // Merge base graph with injected document leaf nodes.
-  // useMemo prevents ForceGraph3D from treating a new object reference as a
-  // full data reset (restarting the physics simulation) on every render.
   const displayData = useMemo(
     () =>
       injectedNodes.length === 0
@@ -169,7 +157,7 @@ export function Graph3D({
             nodes: [...data.nodes, ...injectedNodes],
             links: [...data.links, ...injectedLinks],
           },
-    [data, injectedNodes, injectedLinks],
+    [data, injectedLinks, injectedNodes],
   );
 
   const adjacency = buildAdjacencyMap(displayData);
@@ -205,14 +193,14 @@ export function Graph3D({
     setIsRelationshipLoading(false);
   }
 
-  // Build the transparent container sphere rendered in place of the expanded concept.
   function getNodeThreeObject(node: GraphNode): THREE.Object3D | null {
-    if (node.id !== expandedConceptId) return null;
+    if (node.id !== expandedConceptId) {
+      return null;
+    }
 
     const color = new THREE.Color(NODE_TYPE_COLORS[node.type]);
     const group = new THREE.Group();
 
-    // Semi-transparent solid fill
     group.add(
       new THREE.Mesh(
         new THREE.SphereGeometry(CONTAINER_SPHERE_RADIUS, 20, 20),
@@ -226,7 +214,6 @@ export function Graph3D({
       ),
     );
 
-    // Wireframe shell so the boundary is visible
     group.add(
       new THREE.Mesh(
         new THREE.SphereGeometry(CONTAINER_SPHERE_RADIUS, 10, 10),
@@ -297,10 +284,7 @@ export function Graph3D({
     return rotationRoot.localToWorld(worldPoint);
   }
 
-  function focusPoint(
-    point: { x: number; y: number; z: number },
-    distance: number,
-  ) {
+  function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
     const worldPoint = toWorldPoint(point);
 
     lookAtTargetRef.current = {
@@ -376,10 +360,7 @@ export function Graph3D({
       return;
     }
 
-    if (
-      event.target instanceof HTMLElement &&
-      event.target.closest('button')
-    ) {
+    if (event.target instanceof HTMLElement && event.target.closest('button')) {
       return;
     }
 
@@ -463,7 +444,6 @@ export function Graph3D({
     const conceptNodeId = node.id;
     const conceptPos = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
 
-    // Same concept clicked again — collapse
     if (expandedConceptIdRef.current === conceptNodeId) {
       expandedConceptIdRef.current = null;
       setExpandedConceptId(null);
@@ -472,52 +452,45 @@ export function Graph3D({
       return;
     }
 
-    // New concept — clear previous expansion immediately
     expandedConceptIdRef.current = conceptNodeId;
     setExpandedConceptId(conceptNodeId);
     setInjectedNodes([]);
     setInjectedLinks([]);
 
-    // Try the real API first; fall back to mock data so the UI is testable
-    // even when the backend is not running.
     let docs: Array<{ doc_id: string; name: string; full_text: string }> = [];
 
     try {
-      const response = await fetch(
-        `/api/concepts/${encodeURIComponent(node.name)}/documents`,
-      );
+      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`);
       if (response.ok) {
         docs = (await response.json()) as typeof docs;
       }
     } catch {
-      // Backend unavailable — fall through to mock
+      // Fall back to bundled mock data when the backend is unavailable.
     }
 
     if (docs.length === 0) {
       docs = getMockDocumentsForConcept(node.name);
     }
 
-    // Guard: user may have clicked a different concept while fetch was in flight
-    if (expandedConceptIdRef.current !== conceptNodeId) return;
+    if (expandedConceptIdRef.current !== conceptNodeId) {
+      return;
+    }
 
-    // Pin doc nodes at evenly-spaced positions on a sphere inside the container
     const count = docs.length;
     setInjectedNodes(
-      docs.map((doc, i) => {
-        const theta = (2 * Math.PI * i) / count;
-        const phi = Math.PI * (0.35 + 0.3 * (i % 2 === 0 ? 1 : -1));
+      docs.map((doc, index) => {
+        const theta = (2 * Math.PI * index) / count;
+        const phi = Math.PI * (0.35 + 0.3 * (index % 2 === 0 ? 1 : -1));
         return {
           id: `doc:${doc.doc_id}`,
           type: 'Document' as const,
           name: doc.name,
-          // fx/fy/fz pins the node so the simulation can't push it away
           fx: conceptPos.x + DOC_ORBIT_RADIUS * Math.sin(phi) * Math.cos(theta),
           fy: conceptPos.y + DOC_ORBIT_RADIUS * Math.cos(phi),
           fz: conceptPos.z + DOC_ORBIT_RADIUS * Math.sin(phi) * Math.sin(theta),
         };
       }),
     );
-
     setInjectedLinks(
       docs.map((doc) => ({
         source: conceptNodeId,
@@ -528,12 +501,12 @@ export function Graph3D({
   }
 
   function handleNodeClick(node: GraphNode) {
-    // Injected document leaf nodes are intentionally non-interactive
-    if (node.type === 'Document') return;
+    if (node.type === 'Document') {
+      return;
+    }
 
     const now = Date.now();
 
-    // Double-click: zoom in close
     if (
       lastNodeClickRef.current &&
       lastNodeClickRef.current.nodeId === node.id &&
@@ -552,8 +525,6 @@ export function Graph3D({
     }
 
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
-
-    // Single click: gentle zoom toward the node + expand/collapse its documents
     focusPoint(
       {
         x: node.x ?? 0,
@@ -562,7 +533,6 @@ export function Graph3D({
       },
       160,
     );
-
     void handleConceptExpansion(node);
   }
 
@@ -693,9 +663,7 @@ export function Graph3D({
         ),
         target: {
           x: centeredBrain.orbitTarget.x,
-          y:
-            centeredBrain.orbitTarget.y +
-            framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
+          y: centeredBrain.orbitTarget.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
           z: centeredBrain.orbitTarget.z,
         },
       };
@@ -750,8 +718,7 @@ export function Graph3D({
       if (
         nextSize.width > 0 &&
         nextSize.height > 0 &&
-        (nextSize.width !== previousSize.width ||
-          nextSize.height !== previousSize.height)
+        (nextSize.width !== previousSize.width || nextSize.height !== previousSize.height)
       ) {
         containerSizeRef.current = nextSize;
         setViewportSize(nextSize);
@@ -772,8 +739,7 @@ export function Graph3D({
       if (
         nextSize.width <= 0 ||
         nextSize.height <= 0 ||
-        (nextSize.width === previousSize.width &&
-          nextSize.height === previousSize.height)
+        (nextSize.width === previousSize.width && nextSize.height === previousSize.height)
       ) {
         return;
       }
@@ -826,11 +792,7 @@ export function Graph3D({
         y: hoveredNode.y ?? 0,
         z: hoveredNode.z ?? 0,
       });
-      const coords = graphRef.current?.graph2ScreenCoords(
-        worldPoint.x,
-        worldPoint.y,
-        worldPoint.z,
-      );
+      const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
       if (coords) {
         setTooltipPosition(coords);
@@ -848,21 +810,15 @@ export function Graph3D({
 
   function getNodeColor(node: GraphNode): string {
     if (selectedEdge) {
-      return selectedNodeIds.has(node.id)
-        ? NODE_TYPE_COLORS[node.type]
-        : DIMMED_NODE_COLOR;
+      return selectedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
     if (hoveredNode) {
-      return focusedNodeIds.has(node.id)
-        ? NODE_TYPE_COLORS[node.type]
-        : DIMMED_NODE_COLOR;
+      return focusedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
     if (query.trim()) {
-      return matchedNodeIds.has(node.id)
-        ? NODE_TYPE_COLORS[node.type]
-        : DIMMED_SEARCH_COLOR;
+      return matchedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_SEARCH_COLOR;
     }
 
     return NODE_TYPE_COLORS[node.type];
@@ -874,9 +830,7 @@ export function Graph3D({
     }
 
     if (hoveredNode) {
-      return isDirectHoverLink(link, hoveredNode)
-        ? ACTIVE_LINK_COLOR
-        : DIMMED_LINK_COLOR;
+      return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
     }
 
     return 'rgba(56, 189, 248, 0.24)';
@@ -900,6 +854,7 @@ export function Graph3D({
           clearSelectedEdge();
         }
       }}
+      onContextMenu={(event) => event.preventDefault()}
       onMouseMove={handleMouseMove}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseEnd}
@@ -916,13 +871,10 @@ export function Graph3D({
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
         nodeVal={(node) => {
-          const n = node as GraphNode;
-          // Injected doc nodes are half the size of concept nodes
-          return n.fx !== undefined ? 0.5 : 1;
+          const candidate = node as GraphNode;
+          return candidate.fx !== undefined ? 0.5 : 1;
         }}
-        nodeThreeObject={(node) =>
-          getNodeThreeObject(node as GraphNode) as THREE.Object3D
-        }
+        nodeThreeObject={(node) => getNodeThreeObject(node as GraphNode) as THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
