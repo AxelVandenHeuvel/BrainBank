@@ -13,8 +13,10 @@ def init_kuzu(db_path: str = "./data/kuzu"):
     
     # --- 1. CORE NODES ---
     # The central hub
+    # NOTE: if you have an existing ./data/kuzu without colorScore, delete that
+    # directory and re-ingest — Kuzu does not support ALTER TABLE ADD COLUMN.
     conn.execute(
-        "CREATE NODE TABLE IF NOT EXISTS Concept(name STRING, PRIMARY KEY (name))"
+        "CREATE NODE TABLE IF NOT EXISTS Concept(name STRING, colorScore DOUBLE, PRIMARY KEY (name))"
     )
     
     # The tangible "worked on" items

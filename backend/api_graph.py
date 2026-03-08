@@ -6,20 +6,23 @@ from backend.schemas import DocumentResponse
 
 graph_router = APIRouter(prefix="/api")
 
+# 🚀 THE FIX: Initialize embedded databases EXACTLY ONCE globally
+kuzu_db, conn = init_kuzu()
+_, table = init_lancedb()
+
 
 @graph_router.get("/graph")
 def get_graph():
     """Return all nodes and edges for frontend visualization."""
-    _, conn = init_kuzu()
-
     nodes = []
     edges = []
 
     # Concept nodes from Kuzu
-    result = conn.execute("MATCH (c:Concept) RETURN c.name")
+    result = conn.execute("MATCH (c:Concept) RETURN c.name, c.colorScore")
     while result.has_next():
-        name = result.get_next()[0]
-        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
+        row = result.get_next()
+        name, color_score = row[0], row[1]
+        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name, "colorScore": color_score})
 
     # RELATED_TO edges from Kuzu
     result = conn.execute(
@@ -30,15 +33,14 @@ def get_graph():
         edges.append(
             {"source": f"concept:{row[0]}", "target": f"concept:{row[1]}", "type": row[2]}
         )
-
+    print(f"Nodes: {nodes}")
+    print(f"Edges: {edges}")
     return {"nodes": nodes, "edges": edges}
 
 
 @graph_router.get("/concepts")
 def get_concepts():
     """Return all concepts with document counts and related concepts."""
-    _, conn = init_kuzu()
-    _, table = init_lancedb()
     df = table.to_pandas()
 
     concepts = []
@@ -73,7 +75,6 @@ def get_concepts():
 @graph_router.get("/documents")
 def get_documents():
     """Return all documents with chunk counts and linked concepts."""
-    _, table = init_lancedb()
     df = table.to_pandas()
 
     if df.empty:
@@ -94,7 +95,6 @@ def get_documents():
 @graph_router.get("/concepts/{concept_name}/documents", response_model=list[DocumentResponse])
 def get_concept_documents(concept_name: str):
     """Return full text of every document whose chunks are tagged with concept_name."""
-    _, table = init_lancedb()
     df = table.to_pandas()
 
     if df.empty:
@@ -118,8 +118,6 @@ def get_concept_documents(concept_name: str):
 @graph_router.get("/stats")
 def get_stats():
     """Return aggregate counts across the knowledge graph."""
-    _, conn = init_kuzu()
-    _, table = init_lancedb()
     df = table.to_pandas()
 
     concept_result = conn.execute("MATCH (c:Concept) RETURN count(c)")

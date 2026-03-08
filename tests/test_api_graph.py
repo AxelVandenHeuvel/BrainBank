@@ -19,6 +19,7 @@ def _ingest_sample():
             "backend.ingestion.processor.extract_concepts",
             side_effect=mock_extract_concepts,
         ),
+        patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
     ):
         client.post(
             "/ingest",
@@ -61,6 +62,14 @@ class TestGetGraph:
         assert "id" in node
         assert "type" in node
         assert "name" in node
+
+    def test_node_has_color_score(self):
+        _ingest_sample()
+        response = client.get("/api/graph")
+        node = response.json()["nodes"][0]
+        assert "colorScore" in node
+        assert isinstance(node["colorScore"], float)
+        assert 0.0 <= node["colorScore"] <= 1.0
 
     def test_edge_shape(self):
         _ingest_sample()

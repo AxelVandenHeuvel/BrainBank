@@ -29,6 +29,19 @@ export const NODE_TYPE_COLORS: Record<GraphNodeType, string> = {
   Reflection: '#a855f7',
 };
 
+/**
+ * Returns an HSL color for a Concept node based on its colorScore.
+ * 0.0 (logical) → red (hue 0), 1.0 (creative) → blue (hue 240).
+ * Falls back to the default Concept color when score is not available.
+ */
+export function conceptColorFromScore(score: number | undefined): string {
+  if (score === undefined || score === null) {
+    return NODE_TYPE_COLORS.Concept;
+  }
+  const hue = Math.round(score * 240);
+  return `hsl(${hue}, 75%, 60%)`;
+}
+
 export const DIMMED_NODE_COLOR = 'rgba(148, 163, 184, 0.2)';
 export const DIMMED_SEARCH_COLOR = 'rgba(71, 85, 105, 0.35)';
 export const DIMMED_LINK_COLOR = 'rgba(51, 65, 85, 0.22)';

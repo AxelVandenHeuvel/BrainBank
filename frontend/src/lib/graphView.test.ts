@@ -5,6 +5,7 @@ import {
   autoRotateCamera,
   buildAdjacencyMap,
   centerCameraOnTarget,
+  conceptColorFromScore,
   findMatchingNodeIds,
   getConnectionCount,
   zoomToNode,
@@ -32,6 +33,13 @@ const graph: GraphData = {
 };
 
 describe('graphView helpers', () => {
+  it('maps score 0 to red, score 1 to blue, and undefined to the default concept color', () => {
+    expect(conceptColorFromScore(0)).toBe('hsl(0, 75%, 60%)');
+    expect(conceptColorFromScore(0.5)).toBe('hsl(120, 75%, 60%)');
+    expect(conceptColorFromScore(1)).toBe('hsl(240, 75%, 60%)');
+    expect(conceptColorFromScore(undefined)).toBe(NODE_TYPE_COLORS.Concept);
+  });
+
   it('maps each node type to the required color', () => {
     expect(NODE_TYPE_COLORS).toEqual({
       Concept: '#3b82f6',
