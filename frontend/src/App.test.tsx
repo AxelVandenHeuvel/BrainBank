@@ -56,10 +56,19 @@ describe('App', () => {
     render(<App />);
 
     expect(screen.getByRole('main')).toHaveClass('lg:h-screen', 'lg:overflow-hidden');
+    expect(screen.getByTestId('app-shell')).toHaveClass(
+      'lg:grid-cols-[22rem_minmax(0,1fr)]',
+    );
     expect(screen.getByTestId('graph-scene')).toBeInTheDocument();
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
     expect(screen.getByText('BrainBank').closest('aside')).toHaveClass('lg:min-h-0', 'lg:overflow-y-auto');
     expect(screen.getByTestId('graph-scene').parentElement).toHaveClass('lg:min-h-0', 'lg:overflow-hidden');
+    expect(screen.getByTestId('chat-overlay')).toHaveClass(
+      'lg:absolute',
+      'lg:inset-y-4',
+      'lg:right-0',
+      'lg:w-[24rem]',
+    );
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
     expect(screen.getByText('BrainBank')).toBeInTheDocument();
     expect(screen.getByText('Mock data')).toBeInTheDocument();
@@ -71,6 +80,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Close chat panel' }));
 
     expect(screen.getByTestId('chat-panel')).not.toBeVisible();
+    expect(screen.getByTestId('chat-overlay')).toHaveClass('lg:pointer-events-none');
     expect(screen.getByRole('button', { name: 'Open chat panel' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Open chat panel' }));

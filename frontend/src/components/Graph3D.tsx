@@ -786,6 +786,24 @@ export function Graph3D({
   }, [displayData.nodes, query]);
 
   useEffect(() => {
+    if (!selectedEdge) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        clearSelectedEdge();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedEdge]);
+
+  useEffect(() => {
     if (!hoveredNode) {
       setTooltipPosition(null);
       return;

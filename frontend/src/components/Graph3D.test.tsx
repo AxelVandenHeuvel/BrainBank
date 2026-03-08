@@ -906,6 +906,45 @@ describe('Graph3D', () => {
     expect(clearedProps.linkWidth(graph.links[0])).toBe(0.7);
   });
 
+  it('pressing Escape clears selected edge state', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => relationshipDetails,
+      }),
+    );
+
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+    };
+
+    await act(async () => {
+      await props.onLinkClick(graph.links[0]);
+    });
+    expect(screen.getByText('Derivative Rules')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByText('Derivative Rules')).not.toBeInTheDocument();
+
+    const clearedProps = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      linkWidth: (link: GraphLink) => number;
+    };
+
+    expect(clearedProps.linkWidth(graph.links[0])).toBe(0.7);
+  });
+
   it('uses bundled relationship details when the graph is in mock mode', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', mockFetch);
