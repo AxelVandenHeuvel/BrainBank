@@ -290,6 +290,11 @@ export function ChatPanel({
                       }`}
                     >
                       <p>{message.content}</p>
+                      <InlineDocumentLinks
+                        sourceDocuments={message.sourceDocuments ?? []}
+                        discoveryDocuments={message.discoveryDocuments ?? []}
+                        onOpenDocument={onOpenDocument}
+                      />
                       <div className="mt-3 space-y-3">
                         {message.sourceConcepts?.length ? (
                           <ConceptSection title="Source concepts" concepts={message.sourceConcepts} />
@@ -298,20 +303,6 @@ export function ChatPanel({
                           <ConceptSection
                             title="Discovery concepts"
                             concepts={message.discoveryConcepts}
-                          />
-                        ) : null}
-                        {message.sourceDocuments?.length ? (
-                          <DocumentSection
-                            title="Source documents"
-                            documents={message.sourceDocuments}
-                            onOpenDocument={onOpenDocument}
-                          />
-                        ) : null}
-                        {message.discoveryDocuments?.length ? (
-                          <DocumentSection
-                            title="Discovery documents"
-                            documents={message.discoveryDocuments}
-                            onOpenDocument={onOpenDocument}
                           />
                         ) : null}
                         {(message.sourceChunks?.length || message.discoveryChunks?.length) ? (
@@ -465,32 +456,73 @@ function ConceptSection({ title, concepts }: ConceptSectionProps) {
   );
 }
 
-interface DocumentSectionProps {
-  title: string;
+interface InlineDocumentSectionProps {
+  label: string;
   documents: ChatDocumentCitation[];
   onOpenDocument?: (docId: string, name: string) => void;
 }
 
-function DocumentSection({ title, documents, onOpenDocument }: DocumentSectionProps) {
+function InlineDocumentSection({ label, documents, onOpenDocument }: InlineDocumentSectionProps) {
   return (
-    <section>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="text-xs text-neutral-500">{label}</span>
+      {documents.map((document, index) => (
+        <a
+          key={`${label}-${document.docId}`}
+          href={`#document-${document.docId}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            onOpenDocument?.(document.docId, document.name);
+          }}
+          className="bg-transparent text-xs font-medium text-emerald-200 underline decoration-emerald-300/60 underline-offset-2 transition hover:text-emerald-100"
+        >
+          {document.name}
+          {index < documents.length - 1 ? ',' : ''}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+interface InlineDocumentLinksProps {
+  sourceDocuments: ChatDocumentCitation[];
+  discoveryDocuments: ChatDocumentCitation[];
+  onOpenDocument?: (docId: string, name: string) => void;
+}
+
+function InlineDocumentLinks({
+  sourceDocuments,
+  discoveryDocuments,
+  onOpenDocument,
+}: InlineDocumentLinksProps) {
+  const hasAnyDocuments = sourceDocuments.length > 0 || discoveryDocuments.length > 0;
+
+  return (
+    <section className="mt-3 rounded-2xl border border-white/[0.04] bg-black/20 px-3 py-2.5">
       <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
-        {title}
+        Linked documents
       </p>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {documents.map((document) => (
-          <button
-            key={`${title}-${document.docId}`}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenDocument?.(document.docId, document.name);
-            }}
-            className="border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200 transition hover:border-emerald-300/40"
-          >
-            {document.name}
-          </button>
-        ))}
+      <div className="mt-2 space-y-2">
+        {sourceDocuments.length > 0 ? (
+          <InlineDocumentSection
+            label="Source:"
+            documents={sourceDocuments}
+            onOpenDocument={onOpenDocument}
+          />
+        ) : null}
+        {discoveryDocuments.length > 0 ? (
+          <InlineDocumentSection
+            label="Discovery:"
+            documents={discoveryDocuments}
+            onOpenDocument={onOpenDocument}
+          />
+        ) : null}
+        {!hasAnyDocuments ? (
+          <p className="text-xs text-neutral-500">
+            No linked documents were returned for this response.
+          </p>
+        ) : null}
       </div>
     </section>
   );
