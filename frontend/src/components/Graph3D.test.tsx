@@ -302,7 +302,7 @@ describe('Graph3D', () => {
     });
   });
 
-  it('loads the neuron model asset for nodes, keeps the existing color mapping, and scales it up', async () => {
+  it('creates dodecahedron node with correct color and label', () => {
     render(
       <Graph3D
         data={graph}
@@ -313,21 +313,12 @@ describe('Graph3D', () => {
       />,
     );
 
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(gltfLoadSpy).toHaveBeenCalledWith('/assets/neuron-spinous-stellate-cell.glb');
-
     const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[0]);
-    expect(nodeObject).not.toBeNull();
+    expect(nodeObject).toBeDefined();
 
-    const modelGroup = nodeObject?.getObjectByName('neuron-model');
-    expect(modelGroup).not.toBeNull();
-
-    const bounds = new THREE.Box3().setFromObject(modelGroup!);
-    const diagonal = bounds.getSize(new THREE.Vector3()).length();
-    expect(diagonal).toBeCloseTo(26, 1);
+    const shape = nodeObject?.getObjectByName('node-shape') as THREE.Mesh;
+    expect(shape).toBeDefined();
+    expect(shape.geometry.type).toBe('DodecahedronGeometry');
 
     const expectedColorScore = String(graph.nodes[0].id)
       .split('')
@@ -337,19 +328,10 @@ describe('Graph3D', () => {
       expectedColorScore,
     );
 
-    const neuronMeshes: THREE.Mesh[] = [];
-    modelGroup?.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        neuronMeshes.push(child);
-      }
-    });
+    const material = shape.material as THREE.MeshStandardMaterial;
+    expect(material.color.getHex()).toBe(expectedColor.getHex());
+    expect(material.flatShading).toBe(true);
 
-    expect(neuronMeshes).toHaveLength(2);
-    expect(neuronMeshes[0].geometry.type).toBe('ConeGeometry');
-    neuronMeshes.forEach((mesh) => {
-      const material = mesh.material as THREE.MeshStandardMaterial;
-      expect(material.color.getHex()).toBe(expectedColor.getHex());
-    });
     expect(nodeObject?.children.some((child) => child instanceof THREE.Sprite)).toBe(true);
   });
 
@@ -499,7 +481,7 @@ describe('Graph3D', () => {
     expect(cameraPosition.mock.calls.length).toBe(callCountAfterIdle);
   });
 
-  it('rotates around the clicked concept node after focus is set', async () => {
+  it('does not auto-rotate around a clicked concept node (rotation only resumes on reset)', async () => {
     render(
       <Graph3D
         data={graph}
@@ -516,34 +498,22 @@ describe('Graph3D', () => {
       await getLatestGraphProps().onNodeClick(graph.nodes[0]);
     });
 
-    // Let the rAF camera animation finish before checking idle rotation
+    // Let the rAF camera animation finish
     vi.advanceTimersByTime(1300);
 
     sceneObject.rotation.set(0, 0, 0);
     sceneObject.position.set(0, 0, 0);
     cameraPosition.mockClear();
 
+    // Wait well past the old idle delay — rotation should NOT resume
     vi.advanceTimersByTime(5000);
     vi.advanceTimersByTime(32);
-    sceneObject.updateMatrixWorld(true);
 
-    const pivotWorld = sceneObject.localToWorld(
-      new THREE.Vector3(
-        graph.nodes[0].x ?? 0,
-        graph.nodes[0].y ?? 0,
-        graph.nodes[0].z ?? 0,
-      ),
-    );
-
-    expect(sceneObject.rotation.y).not.toBe(0);
-    expect(sceneObject.position.length()).toBeGreaterThan(0);
-    expect(pivotWorld.x).toBeCloseTo(0, 3);
-    expect(pivotWorld.y).toBeCloseTo(0, 3);
-    expect(pivotWorld.z).toBeCloseTo(0, 3);
-    expect(cameraPosition).not.toHaveBeenCalled();
+    expect(sceneObject.rotation.y).toBe(0);
+    expect(sceneObject.position.length()).toBe(0);
   });
 
-  it('keeps the selected node center as the pivot when that node position updates', async () => {
+  it('does not reposition the scene on engine tick after clicking a node', async () => {
     render(
       <Graph3D
         data={graph}
@@ -560,21 +530,18 @@ describe('Graph3D', () => {
       await getLatestGraphProps().onNodeClick(graph.nodes[0]);
     });
 
-    graph.nodes[0].x = 24;
-    graph.nodes[0].y = 6;
-    graph.nodes[0].z = -8;
-    sceneObject.rotation.order = 'YXZ';
-    sceneObject.rotation.y = Math.PI / 3;
+    vi.advanceTimersByTime(1300);
+
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.position.set(0, 0, 0);
 
     act(() => {
       getLatestGraphProps().onEngineTick();
     });
 
-    const pivotWorld = sceneObject.localToWorld(new THREE.Vector3(24, 6, -8));
-
-    expect(pivotWorld.x).toBeCloseTo(0, 3);
-    expect(pivotWorld.y).toBeCloseTo(0, 3);
-    expect(pivotWorld.z).toBeCloseTo(0, 3);
+    // Engine tick should not reposition the scene after a node click
+    expect(sceneObject.rotation.y).toBe(0);
+    expect(sceneObject.position.length()).toBe(0);
   });
 
   it('rotates the scene on pointer drag without moving the camera', () => {
@@ -594,24 +561,24 @@ describe('Graph3D', () => {
     const callCountBeforeDrag = cameraPosition.mock.calls.length;
 
     fireEvent.mouseDown(root, {
-      button: 2,
-      buttons: 2,
+      button: 0,
+      buttons: 1,
       clientX: 100,
       clientY: 120,
     });
     fireEvent.mouseMove(root, {
-      buttons: 2,
+      buttons: 1,
       clientX: 140,
       clientY: 90,
     });
-    fireEvent.mouseUp(root, { button: 2 });
+    fireEvent.mouseUp(root, { button: 0 });
 
     expect(sceneObject.rotation.x).not.toBe(0);
     expect(sceneObject.rotation.y).not.toBe(0);
     expect(cameraPosition.mock.calls.length).toBe(callCountBeforeDrag);
   });
 
-  it('right-drag rotation uses the focused concept node as the pivot', async () => {
+  it('left-drag rotation uses the focused concept node as the pivot', async () => {
     const { container } = render(
       <Graph3D
         data={graph}
@@ -634,17 +601,17 @@ describe('Graph3D', () => {
 
     const root = container.firstChild as HTMLElement;
     fireEvent.mouseDown(root, {
-      button: 2,
-      buttons: 2,
+      button: 0,
+      buttons: 1,
       clientX: 100,
       clientY: 120,
     });
     fireEvent.mouseMove(root, {
-      buttons: 2,
+      buttons: 1,
       clientX: 140,
       clientY: 90,
     });
-    fireEvent.mouseUp(root, { button: 2 });
+    fireEvent.mouseUp(root, { button: 0 });
     sceneObject.updateMatrixWorld(true);
 
     const pivotWorld = sceneObject.localToWorld(
@@ -664,7 +631,7 @@ describe('Graph3D', () => {
     expect(cameraPosition).not.toHaveBeenCalled();
   });
 
-  it('does not rotate the scene on left-button drag so node interaction stays available', () => {
+  it('does not rotate the scene on right-button drag', () => {
     const { container } = render(
       <Graph3D
         data={graph}
@@ -676,21 +643,23 @@ describe('Graph3D', () => {
     );
 
     vi.advanceTimersByTime(200);
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.updateMatrixWorld(true);
 
     const root = container.firstChild as HTMLElement;
 
     fireEvent.mouseDown(root, {
-      button: 0,
-      buttons: 1,
+      button: 2,
+      buttons: 2,
       clientX: 100,
       clientY: 120,
     });
     fireEvent.mouseMove(root, {
-      buttons: 1,
+      buttons: 2,
       clientX: 140,
       clientY: 90,
     });
-    fireEvent.mouseUp(root, { button: 0 });
+    fireEvent.mouseUp(root, { button: 2 });
 
     expect(sceneObject.rotation.x).toBe(0);
     expect(sceneObject.rotation.y).toBe(0);
@@ -1006,6 +975,8 @@ describe('Graph3D', () => {
     );
 
     vi.advanceTimersByTime(200);
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.updateMatrixWorld(true);
     cameraPosition.mockClear();
 
     await act(async () => {
@@ -1042,6 +1013,8 @@ describe('Graph3D', () => {
     );
 
     vi.advanceTimersByTime(200);
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.updateMatrixWorld(true);
 
     await act(async () => {
       await getLatestGraphProps().onNodeClick(graph.nodes[0]);
@@ -1058,9 +1031,10 @@ describe('Graph3D', () => {
 
     vi.advanceTimersByTime(1300);
 
-    expect(sceneObject.rotation.x).toBeCloseTo(0, 6);
-    expect(sceneObject.rotation.y).toBeCloseTo(0, 6);
-    expect(sceneObject.position.length()).toBeCloseTo(0, 6);
+    // After reset the scene is nearly zeroed; small idle rotation may have resumed
+    expect(sceneObject.rotation.x).toBeCloseTo(0, 1);
+    expect(sceneObject.rotation.y).toBeCloseTo(0, 1);
+    expect(sceneObject.position.length()).toBeCloseTo(0, 1);
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
@@ -1095,17 +1069,17 @@ describe('Graph3D', () => {
     const root = container.firstChild as HTMLElement;
 
     fireEvent.mouseDown(root, {
-      button: 2,
-      buttons: 2,
+      button: 0,
+      buttons: 1,
       clientX: 100,
       clientY: 120,
     });
     fireEvent.mouseMove(root, {
-      buttons: 2,
+      buttons: 1,
       clientX: 140,
       clientY: 90,
     });
-    fireEvent.mouseUp(root, { button: 2 });
+    fireEvent.mouseUp(root, { button: 0 });
 
     const centeredPoint = sceneObject.localToWorld(
       new THREE.Vector3(
@@ -1650,6 +1624,8 @@ describe('Graph3D', () => {
     );
 
     vi.advanceTimersByTime(200);
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.updateMatrixWorld(true);
 
     await act(async () => {
       await getLatestGraphProps().onNodeClick(graph.nodes[0]);
@@ -1665,9 +1641,10 @@ describe('Graph3D', () => {
 
     vi.advanceTimersByTime(1300);
 
-    expect(sceneObject.rotation.x).toBeCloseTo(0, 6);
-    expect(sceneObject.rotation.y).toBeCloseTo(0, 6);
-    expect(sceneObject.position.length()).toBeCloseTo(0, 6);
+    // After reset the scene is nearly zeroed; small idle rotation may have resumed
+    expect(sceneObject.rotation.x).toBeCloseTo(0, 1);
+    expect(sceneObject.rotation.y).toBeCloseTo(0, 1);
+    expect(sceneObject.position.length()).toBeCloseTo(0, 1);
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,

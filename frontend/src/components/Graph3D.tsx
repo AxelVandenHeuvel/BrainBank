@@ -113,7 +113,6 @@ interface SelectedRelationshipEdge {
 }
 
 const BRAIN_MODEL_URL = '/assets/human-brain.glb';
-const NEURON_MODEL_URL = '/assets/neuron-spinous-stellate-cell.glb';
 const CAMERA_MOVE_DURATION_MS = 1200;
 const AUTO_CENTER_PADDING = 120;
 const IDLE_ROTATE_DELAY_MS = 5000;
@@ -135,7 +134,7 @@ const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 325;
-const NEURON_MODEL_TARGET_DIAGONAL = 26;
+const NEURON_MODEL_TARGET_DIAGONAL = 10;
 const NODE_LABEL_Y_OFFSET = 16;
 const NODE_LAYOUT_ANCHORS: ReadonlyArray<FixedNodeAnchor> = [
   { x: 0, y: 30.9, z: 0 },
@@ -272,17 +271,15 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
   return sprite;
 }
 
-function createColoredNeuronMaterial(nodeColor: THREE.Color): THREE.MeshPhysicalMaterial {
-  return new THREE.MeshPhysicalMaterial({
+function createNodeMaterial(nodeColor: THREE.Color): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
     color: nodeColor,
-    emissive: nodeColor.clone().multiplyScalar(0.08),
-    roughness: 0.38,
-    metalness: 0.08,
-    clearcoat: 0.22,
-    transmission: 0.12,
+    emissive: nodeColor.clone().multiplyScalar(0.15),
+    roughness: 0.6,
+    metalness: 0.1,
+    flatShading: true,
     transparent: true,
-    opacity: 0.92,
-    side: THREE.DoubleSide,
+    opacity: 0.9,
   });
 }
 
@@ -308,7 +305,7 @@ export function Graph3D({
   const suppressBackgroundDoubleClickUntilRef = useRef(0);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const sceneFocusPointRef = useRef({ x: 0, y: 0, z: 0 });
-  const isRightDragRotatingRef = useRef(false);
+  const isDragRotatingRef = useRef(false);
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const expandedConceptIdRef = useRef<string | null>(null);
@@ -328,7 +325,6 @@ export function Graph3D({
   const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
   const [discoveryModeEnabled, setDiscoveryModeEnabled] = useState(true);
   const [latentLinks, setLatentLinks] = useState<GraphLink[]>([]);
-  const [neuronTemplate, setNeuronTemplate] = useState<THREE.Object3D | null>(null);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -450,11 +446,7 @@ export function Graph3D({
     setIsRelationshipLoading(false);
   }
 
-  const getNodeThreeObject = useCallback((node: GraphNode): THREE.Object3D | null => {
-    if (!neuronTemplate) {
-      return null;
-    }
-
+  const getNodeThreeObject = useCallback((node: GraphNode): THREE.Object3D => {
     const group = new THREE.Group();
 
     const nodeColor =
@@ -462,26 +454,22 @@ export function Graph3D({
         ? new THREE.Color(communityColor(node.community_id))
         : getVisualNodeColor(node);
     const hexColor = `#${nodeColor.getHexString()}`;
+    const material = createNodeMaterial(nodeColor);
 
-    const modelGroup = neuronTemplate.clone(true);
-    modelGroup.name = 'neuron-model';
-    modelGroup.traverse((child) => {
-      if (!(child instanceof THREE.Mesh)) {
-        return;
-      }
-
-      child.material = createColoredNeuronMaterial(nodeColor);
-      child.castShadow = false;
-      child.receiveShadow = false;
-    });
-    group.add(modelGroup);
+    const radius = NEURON_MODEL_TARGET_DIAGONAL / 2;
+    const geo = new THREE.DodecahedronGeometry(radius, 0);
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.name = 'node-shape';
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    group.add(mesh);
 
     const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
     labelSprite.position.set(0, NODE_LABEL_Y_OFFSET, 0);
     group.add(labelSprite);
 
     return group;
-  }, [neuronTemplate]);
+  }, []);
 
   function clampNodesWithinBrain(refresh = false) {
     const containment = brainContainmentRef.current;
@@ -618,30 +606,37 @@ export function Graph3D({
     }
   }
 
-  function scheduleIdleRotation() {
+  function startIdleRotation() {
+    stopIdleRotation();
+    idleRotationIntervalRef.current = window.setInterval(() => {
+      const rotationRoot = getRotationRoot();
+
+      if (!rotationRoot) {
+        return;
+      }
+
+      rotationRoot.rotation.order = 'YXZ';
+      rotationRoot.rotation.y += IDLE_ROTATION_SPEED;
+      applySceneFocusPoint();
+    }, IDLE_ROTATE_INTERVAL_MS);
+  }
+
+  function scheduleIdleRotation(delayMs: number = IDLE_ROTATE_DELAY_MS) {
     if (idleTimeoutRef.current !== null) {
       window.clearTimeout(idleTimeoutRef.current);
     }
 
     idleTimeoutRef.current = window.setTimeout(() => {
-      stopIdleRotation();
-      idleRotationIntervalRef.current = window.setInterval(() => {
-        const rotationRoot = getRotationRoot();
-
-        if (!rotationRoot) {
-          return;
-        }
-
-        rotationRoot.rotation.order = 'YXZ';
-        rotationRoot.rotation.y += IDLE_ROTATION_SPEED;
-        applySceneFocusPoint();
-      }, IDLE_ROTATE_INTERVAL_MS);
-    }, IDLE_ROTATE_DELAY_MS);
+      startIdleRotation();
+    }, delayMs);
   }
 
   function handleInteraction() {
+    if (idleTimeoutRef.current !== null) {
+      window.clearTimeout(idleTimeoutRef.current);
+      idleTimeoutRef.current = null;
+    }
     stopIdleRotation();
-    scheduleIdleRotation();
   }
 
   function handleReset() {
@@ -664,6 +659,7 @@ export function Graph3D({
         },
         target,
       );
+      scheduleIdleRotation(CAMERA_MOVE_DURATION_MS);
       return;
     }
 
@@ -671,10 +667,12 @@ export function Graph3D({
     sceneFocusPointRef.current = { x: 0, y: 0, z: 0 };
     lookAtTargetRef.current = getGraphCenter();
     graphRef.current?.zoomToFit(CAMERA_MOVE_DURATION_MS, AUTO_CENTER_PADDING);
+    scheduleIdleRotation(CAMERA_MOVE_DURATION_MS);
+    scheduleIdleRotation();
   }
 
   function handleMouseDown(event: React.MouseEvent<HTMLDivElement>) {
-    if (event.button !== 2) {
+    if (event.button !== 0) {
       return;
     }
 
@@ -682,24 +680,21 @@ export function Graph3D({
       return;
     }
 
-    isRightDragRotatingRef.current = true;
+    isDragRotatingRef.current = true;
     lastDragPositionRef.current = {
       x: event.clientX,
       y: event.clientY,
     };
     handleInteraction();
-    event.preventDefault();
   }
 
   function handleMouseMove(event: React.MouseEvent<HTMLDivElement>) {
-    handleInteraction();
-
-    if (!isRightDragRotatingRef.current) {
+    if (!isDragRotatingRef.current) {
       return;
     }
 
-    if ((event.buttons & 2) !== 2) {
-      isRightDragRotatingRef.current = false;
+    if ((event.buttons & 1) !== 1) {
+      isDragRotatingRef.current = false;
       return;
     }
 
@@ -727,7 +722,7 @@ export function Graph3D({
   }
 
   function handleMouseEnd() {
-    isRightDragRotatingRef.current = false;
+    isDragRotatingRef.current = false;
   }
 
   function handleZoom(scale: number) {
@@ -892,9 +887,13 @@ export function Graph3D({
     const cam = graphRef.current?.cameraPosition();
     if (!cam) return;
 
-    const dx = cam.x - worldPos.x;
-    const dy = cam.y - worldPos.y;
-    const dz = cam.z - worldPos.z;
+    // Use direction from current lookAt to camera (the viewing direction).
+    // This stays stable during rapid successive clicks, unlike cam-to-node
+    // which degenerates when the camera passes close to a node mid-flight.
+    const lookAt = lookAtTargetRef.current;
+    const dx = cam.x - lookAt.x;
+    const dy = cam.y - lookAt.y;
+    const dz = cam.z - lookAt.z;
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 
     animateCamera(
@@ -908,6 +907,7 @@ export function Graph3D({
   }
 
   function handleNodeClick(node: GraphNode) {
+    handleInteraction();
     const now = Date.now();
     const nodePoint = {
       x: node.x ?? 0,
@@ -923,7 +923,7 @@ export function Graph3D({
     if (node.type !== 'Concept') {
       lastNodeClickRef.current = null;
       setLatentLinks([]);
-      smoothFlyToNode(nodePoint, 160);
+      smoothFlyToNode(nodePoint, 140);
       return;
     }
 
@@ -941,11 +941,12 @@ export function Graph3D({
 
     // Single click: fly to node only
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
-    smoothFlyToNode(nodePoint, 160);
+    smoothFlyToNode(nodePoint, 140);
     void loadLatentDiscovery(node);
   }
 
   async function handleLinkClick(link: GraphLink) {
+    handleInteraction();
     if (isGhostLink(link)) {
       return;
     }
@@ -1040,7 +1041,7 @@ export function Graph3D({
   }, []);
 
   useEffect(() => {
-    scheduleIdleRotation();
+    startIdleRotation();
 
     return () => {
       if (idleTimeoutRef.current !== null) {
@@ -1118,23 +1119,6 @@ export function Graph3D({
     };
   }, []);
 
-  useEffect(() => {
-    const loader = new GLTFLoader();
-    let cancelled = false;
-
-    loader.load(NEURON_MODEL_URL, (gltf) => {
-      if (cancelled) {
-        return;
-      }
-
-      const centeredNeuron = centerObject3DAtOrigin(gltf.scene, NEURON_MODEL_TARGET_DIAGONAL);
-      setNeuronTemplate(centeredNeuron.pivot);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     clampNodesWithinBrain(true);
@@ -1263,18 +1247,12 @@ export function Graph3D({
         const isDimmed = hasQuery && !matchedNodeIds.has(node.id);
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh && child.material) {
-            const mat = child.material as THREE.MeshBasicMaterial | THREE.MeshPhysicalMaterial;
-            if (child.parent?.name === 'halo') {
-              mat.color.set(isDimmed ? 0x334155 : 0xffffff);
-              mat.opacity = isDimmed ? 0.15 : 1;
-              mat.transparent = true;
-            } else if ('transmission' in mat) {
-              // Main sphere
-              (mat as any).opacity = isDimmed ? 0.06 : 0.4;
-            }
+            const mat = child.material as THREE.MeshStandardMaterial;
+            mat.opacity = isDimmed ? 0.08 : 0.9;
+            mat.transparent = true;
           }
           if (child instanceof THREE.Sprite && child.material) {
-            child.material.opacity = isDimmed ? 0.1 : 1;
+            child.material.opacity = isDimmed ? 0.08 : 1;
           }
         });
       });
@@ -1286,7 +1264,6 @@ export function Graph3D({
 
   useEffect(() => {
     if (expandedConcept) stopIdleRotation();
-    else scheduleIdleRotation();
   }, [expandedConcept]);
 
   useEffect(() => {
@@ -1436,9 +1413,6 @@ export function Graph3D({
   const onNodeHover = useCallback((node: object | null) => onHoverNodeRef.current((node as GraphNode | null) ?? null), []);
   const onEngineTick = useCallback(() => {
     clampNodesWithinBrainRef.current();
-    if (activeRotationNodeIdRef.current) {
-      applySceneFocusPoint();
-    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const dashedLinkProps = {
@@ -1503,10 +1477,7 @@ export function Graph3D({
         height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
-        nodeVal={(node) => {
-          const candidate = node as GraphNode;
-          return candidate.fx !== undefined ? 0.5 : 1;
-        }}
+        nodeVal={() => 4}
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
@@ -1523,6 +1494,12 @@ export function Graph3D({
         onLinkClick={onLinkClick}
         onNodeClick={onNodeClick}
         onNodeHover={onNodeHover}
+        onBackgroundClick={() => {
+          clearSelectedEdge();
+          setSelectedNode(null);
+          setRotationPivotNode(null);
+          setLatentLinks([]);
+        }}
         enableNodeDrag={false}
         enableNavigationControls={false}
         controlType="orbit"
