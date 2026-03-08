@@ -108,7 +108,10 @@ backend/
     chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
-    query.py                - Query pipeline: search -> expand -> answer
+    context.py              - Context dedupe + budgeted prompt assembly for retrieval
+    local_search.py         - Seed retrieval, graph expansion, and discovery chunk ranking
+    query.py                - Query orchestration: embed -> local search -> context -> answer
+    types.py                - Retrieval dataclasses and internal config defaults
 sample_data/
   college_math_notes/
     catalog.json            - Metadata for the sample math note corpus
@@ -134,6 +137,8 @@ tests/
   test_api_notion.py        - Notion import API endpoint tests
   test_api_upload.py        - File upload API endpoint tests
   retrieval/
+    test_context.py         - Context ordering, dedupe, and budget tests
+    test_local_search.py    - Seed retrieval, traversal, and discovery chunk tests
     test_query.py           - Query pipeline tests
 ```
 
@@ -287,27 +292,33 @@ The Notion service (`backend/services/notion.py`) handles URL parsing, rich text
 Input: question
   |
   v
+api.py -> get_kuzu_engine() -- reuse the shared Kuzu Database handle
+  |
+  v
 embeddings.embed_query() -- embed question to 384-dim vector
   |
   v
-LanceDB.search() -- top 5 nearest chunks (vector similarity)
+local_search.build_chunk_seed_set() -- top 5 nearest chunks + ordered source concepts
   |
   v
-LanceDB chunk metadata -- read per-chunk `concepts[]` as source concepts
+local_search.expand_related_concepts() -- configurable BFS over RELATED_TO edges
   v
-Kuzu: 1-hop expansion -- for each source Concept, find RELATED_TO
-  |                       neighbors = "discovery concepts"
+local_search.select_discovery_chunks() -- ranked extra chunks for discovery concepts
   v
-LanceDB chunk metadata -- get extra chunk texts for discovery concepts
+context.assemble_context_chunks() -- seed chunks first, then discovery chunks,
+  |                                 dedupe by chunk id/text, apply word budget
   |
   v
-llm.generate_answer() -- Gemini or Ollama generates grounded answer from all context
+context.build_context_text() -- join selected chunk texts with separators
+  |
+  v
+llm.generate_answer() -- Gemini or Ollama generates grounded answer from ordered context
   |
   v
 Output: { answer, source_concepts, discovery_concepts }
 ```
 
-The 1-hop graph expansion is what surfaces "hidden" connections - concepts not in the original search results but semantically linked through the knowledge graph.
+The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. The retrieval path is still local-search-only in this phase, but it is now split into explicit steps with an internal `RetrievalConfig` for seed limits, graph-hop depth, discovery-chunk limits, and context budget. Default behavior stays equivalent to the old path: top-5 chunk seeds, 1-hop graph expansion, and the same external `/query` response shape.
 
 ## API Endpoints
 
@@ -317,7 +328,7 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 
 ### `POST /query`
 - Body: `{"question": "..."}`
-- Returns: `{"answer": "...", "discovery_concepts": [...]}`
+- Returns: `{"answer": "...", "source_concepts": [...], "discovery_concepts": [...]}`
 
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
