@@ -1526,25 +1526,27 @@ export function Graph3D({
           if (child instanceof THREE.Mesh && child.material) {
             if (child.name === 'node-shape') {
               const mat = child.material as THREE.MeshStandardMaterial;
-              const baseMeshOpacity =
-                diveFade > 0 && !isDocExpand ? 0.9 * (1 - diveFade) : 0.9;
-              mat.color.copy(targetColor);
-              mat.emissive.copy(targetEmissive);
-              mat.opacity = isDimmed ? dimOpacity : baseMeshOpacity;
+              const interpolatedOpacity = obj.userData.currentOpacity;
+              const finalMeshOpacity =
+                diveFade > 0 && !isDocExpand ? interpolatedOpacity * (1 - diveFade) : interpolatedOpacity;
+
+              mat.color.copy(obj.userData.currentColor);
+              mat.emissive.copy(obj.userData.currentEmissive);
+              mat.opacity = finalMeshOpacity;
               mat.transparent = true;
             }
 
             if (child.name === 'node-outline') {
               const outlineMat = child.material as THREE.MeshBasicMaterial;
-              child.visible = isChatDiscovery && !isExpandHidden;
-              outlineMat.opacity = child.visible ? 0.95 : 0;
+              child.visible = obj.userData.currentOutlineOpacity > 0.01 || targetOutlineOpacity > 0;
+              outlineMat.opacity = obj.userData.currentOutlineOpacity;
             }
           }
           if (child instanceof THREE.Sprite && child.material) {
-            const baseSpriteOpacity =
-              diveFade > 0 && !isDocExpand ? 1 * (1 - diveFade) : 1;
-            child.material.opacity =
-              isExpandHidden || isSearchDimmed || isChatDimmed ? 0 : baseSpriteOpacity;
+            const interpolatedSpriteOpacity = obj.userData.currentSpriteOpacity;
+            const finalSpriteOpacity =
+              diveFade > 0 && !isDocExpand ? interpolatedSpriteOpacity * (1 - diveFade) : interpolatedSpriteOpacity;
+            child.material.opacity = finalSpriteOpacity;
           }
         });
       });
