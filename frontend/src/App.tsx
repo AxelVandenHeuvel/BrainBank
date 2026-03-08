@@ -139,14 +139,6 @@ export default function App() {
         </aside>
 
         <section className="min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
-        <section className="min-h-[70vh]">
-          <Graph3D
-            data={data}
-            source={source}
-            query={deferredQuery}
-            hoveredNode={hoveredNode}
-            onHoverNode={setHoveredNode}
-          />
           {view === 'editor' ? (
             <NoteEditor
               onSave={handleNoteSaved}
@@ -155,6 +147,7 @@ export default function App() {
           ) : (
             <Graph3D
               data={data}
+              source={source}
               query={deferredQuery}
               hoveredNode={hoveredNode}
               onHoverNode={setHoveredNode}
@@ -162,18 +155,8 @@ export default function App() {
           )}
         </section>
 
-        {isChatOpen ? (
-          <aside className="relative flex min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
-            <button
-              type="button"
-              aria-label={getChatToggleLabel(true)}
-              onClick={() => setIsChatOpen(false)}
-              className="absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl]"
-            >
-              Chat
-            </button>
         <aside
-          className={`relative min-h-[70vh] ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
+          className={`relative min-h-[70vh] lg:min-h-0 lg:overflow-hidden ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
           aria-hidden={!isChatOpen}
         >
           <button
