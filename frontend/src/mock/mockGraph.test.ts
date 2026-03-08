@@ -3,61 +3,38 @@ import { describe, expect, it } from 'vitest';
 import { getMockDocumentsForConcept, mockGraphApiResponse } from './mockGraph';
 
 describe('mockGraph', () => {
-  it('covers roughly one hundred nodes across many different subject areas', () => {
-    const conceptNames = new Set(mockGraphApiResponse.nodes.map((node) => node.name));
-    const representativeConcepts = [
-      'Calculus',
-      'Newton\'s Laws',
-      'Epistemology',
-      'Motivation',
-      'Machine Learning',
-      'Biology',
-      'Economics',
-      'Psychology',
-      'Product Design',
-      'History',
-      'Arts',
-      'Data Science',
-    ];
+  it('has a focused set of student concepts across math, physics, philosophy, and personal', () => {
+    const names = new Set(mockGraphApiResponse.nodes.map((n) => n.name));
 
-    expect(mockGraphApiResponse.nodes.length).toBeGreaterThanOrEqual(95);
-    representativeConcepts.forEach((conceptName) => {
-      expect(conceptNames.has(conceptName)).toBe(true);
-    });
+    expect(names.has('Calculus')).toBe(true);
+    expect(names.has("Newton's Laws")).toBe(true);
+    expect(names.has('Epistemology')).toBe(true);
+    expect(names.has('Motivation')).toBe(true);
+    expect(names.has('Linear Algebra')).toBe(true);
+    expect(names.has('Probability')).toBe(true);
+
+    // Should be a focused set, not 100+ generated nodes
+    expect(mockGraphApiResponse.nodes.length).toBeGreaterThanOrEqual(25);
+    expect(mockGraphApiResponse.nodes.length).toBeLessThan(40);
   });
 
-  it('includes cross-domain bridges instead of only isolated subject clusters', () => {
+  it('has cross-domain edges connecting different subjects', () => {
     expect(mockGraphApiResponse.edges).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          source: 'concept:Machine Learning',
-          target: 'concept:Statistics',
-        }),
-        expect.objectContaining({
-          source: 'concept:Behavioral Economics',
-          target: 'concept:Cognitive Biases',
-        }),
-        expect.objectContaining({
-          source: 'concept:Ethics',
-          target: 'concept:Accessibility',
-        }),
-        expect.objectContaining({
-          source: 'concept:Differential Equations',
-          target: 'concept:Control Theory',
-        }),
+        expect.objectContaining({ source: 'concept:Calculus', target: 'concept:Classical Mechanics' }),
+        expect.objectContaining({ source: 'concept:Entropy', target: 'concept:Determinism' }),
+        expect.objectContaining({ source: 'concept:Existentialism', target: 'concept:Motivation' }),
+        expect.objectContaining({ source: 'concept:Epistemology', target: 'concept:Probability' }),
       ]),
     );
   });
 
-  it('returns domain-specific mock documents for generated concepts', () => {
-    const documents = getMockDocumentsForConcept('Machine Learning');
+  it('returns hand-written documents for curated concepts', () => {
+    const docs = getMockDocumentsForConcept('Calculus');
+    expect(docs.length).toBeGreaterThan(0);
+    expect(docs[0].full_text).toContain('Professor Lin');
 
-    expect(documents[0]).toEqual(
-      expect.objectContaining({
-        name: expect.stringContaining('Machine Learning'),
-        full_text: expect.stringContaining('Computer Science'),
-      }),
-    );
-    expect(documents[0]?.full_text).toContain('Statistics');
+    const physicsDocs = getMockDocumentsForConcept('Classical Mechanics');
+    expect(physicsDocs[0].full_text).toContain("Newton's Laws");
   });
 });

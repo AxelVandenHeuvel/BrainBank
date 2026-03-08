@@ -41,18 +41,18 @@ export function ConceptDocumentOverlay({
     documents?.find((document) => document.doc_id === selectedDocumentId) ?? null;
 
   return (
-    <div className="absolute inset-0 z-30 flex flex-col overflow-y-auto bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="sticky top-0 z-40 mb-8 flex w-full items-center justify-between border-b border-white/10 bg-slate-950/40 px-8 py-6 backdrop-blur-lg">
+    <div className="absolute inset-0 z-30 flex flex-col overflow-y-auto bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="sticky top-0 z-40 mb-6 flex w-full items-center justify-between border-b border-white/[0.06] bg-black/60 px-8 py-5 backdrop-blur-lg">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200/70">
+          <p className="text-[10px] font-medium uppercase tracking-widest text-pink-400/70">
             Related Documents
           </p>
-          <h2 className="mt-2 text-3xl font-bold text-slate-100">{conceptName}</h2>
+          <h2 className="mt-1.5 text-2xl font-bold text-neutral-100">{conceptName}</h2>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-full bg-indigo-600/90 px-6 py-2.5 text-sm font-semibold text-slate-100 shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-500"
+          className="bg-pink-500 px-5 py-2 text-sm font-medium text-white transition hover:bg-pink-400"
         >
           Back to graph (Esc)
         </button>
@@ -60,20 +60,20 @@ export function ConceptDocumentOverlay({
 
       <div className="grid w-full flex-1 gap-6 px-8 pb-20 lg:grid-cols-[22rem_minmax(0,1fr)]">
         {documents === null ? (
-          <div className="col-span-full mt-20 text-center text-xl text-slate-400 animate-pulse">
+          <div className="col-span-full mt-20 text-center text-xl text-neutral-500 animate-pulse">
             Loading documents...
           </div>
         ) : documents.length === 0 ? (
-          <div className="col-span-full rounded-[1.75rem] border border-dashed border-white/10 bg-slate-900/50 px-8 py-14 text-center text-slate-400">
+          <div className="col-span-full border border-dashed border-white/[0.06] px-8 py-14 text-center text-neutral-500">
             No related documents are available for this concept yet.
           </div>
         ) : (
           <>
-            <aside className="rounded-[1.75rem] border border-white/10 bg-slate-900/60 p-4 shadow-xl shadow-slate-950/30">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-200/70">
+            <aside className="border-r border-white/[0.06] pr-4">
+              <p className="text-[10px] font-medium uppercase tracking-widest text-pink-400/70">
                 Documents
               </p>
-              <div className="mt-4 space-y-3">
+              <div className="mt-4 space-y-1">
                 {documents.map((document) => {
                   const isSelected = document.doc_id === selectedDocumentId;
 
@@ -84,16 +84,16 @@ export function ConceptDocumentOverlay({
                       onClick={() => setSelectedDocumentId(document.doc_id)}
                       aria-label={document.name}
                       aria-pressed={isSelected}
-                      className={`w-full rounded-[1.25rem] border px-4 py-4 text-left transition ${
+                      className={`w-full px-4 py-3 text-left transition ${
                         isSelected
-                          ? 'border-cyan-300/40 bg-cyan-300/10 shadow-lg shadow-cyan-950/20'
-                          : 'border-white/10 bg-slate-950/70 hover:border-cyan-300/25 hover:bg-slate-900'
+                          ? 'bg-pink-500/10 text-pink-300'
+                          : 'text-neutral-400 hover:bg-white/[0.03]'
                       }`}
                     >
-                      <span className="block text-lg font-semibold text-slate-100">
+                      <span className="block text-sm font-medium text-neutral-100">
                         {document.name}
                       </span>
-                      <span className="mt-2 block text-sm leading-6 text-slate-400">
+                      <span className="mt-1 block text-xs leading-5 text-neutral-500">
                         {getDocumentPreviewText(document.full_text)}
                       </span>
                     </button>
@@ -105,7 +105,7 @@ export function ConceptDocumentOverlay({
             {selectedDocument ? (
               <MarkdownDocumentViewer document={selectedDocument} />
             ) : (
-              <section className="flex min-h-[24rem] items-center justify-center rounded-[1.75rem] border border-dashed border-white/10 bg-slate-950/60 p-8 text-center text-slate-400">
+              <section className="flex min-h-[24rem] items-center justify-center border border-dashed border-white/[0.06] p-8 text-center text-neutral-500">
                 Select a document to read its markdown.
               </section>
             )}

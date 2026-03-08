@@ -134,16 +134,16 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
     : 'Upload .md / .txt / .pdf / .zip';
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
-      <div className="flex flex-col gap-3">
+    <section className="space-y-2">
+      <div className="flex flex-col gap-2">
         <button
           onClick={onNewNote}
-          className="w-full rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-500"
+          className="w-full bg-pink-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-pink-400"
         >
           New Note
         </button>
 
-        <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-slate-600 px-4 py-2.5 text-center text-xs text-slate-400 transition hover:border-cyan-300/40 hover:text-slate-300">
+        <label className="flex cursor-pointer items-center justify-center border border-dashed border-neutral-700 px-4 py-2 text-center text-xs text-neutral-500 transition hover:border-pink-500/40 hover:text-neutral-300">
           {labelText}
           <input
             ref={fileInputRef}
@@ -159,37 +159,37 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
         {!showNotion ? (
           <button
             onClick={() => setShowNotion(true)}
-            className="w-full rounded-2xl border border-dashed border-slate-600 px-4 py-2.5 text-xs text-slate-400 transition hover:border-cyan-300/40 hover:text-slate-300"
+            className="w-full border border-dashed border-neutral-700 px-4 py-2 text-xs text-neutral-500 transition hover:border-pink-500/40 hover:text-neutral-300"
           >
             Import from Notion
           </button>
         ) : (
-          <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+          <div className="flex flex-col gap-2 border border-white/[0.06] bg-neutral-950 p-3">
             <input
               type="password"
               placeholder="Notion integration token"
               value={notionToken}
               onChange={(e) => setNotionToken(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-cyan-600"
+              className="w-full border border-white/[0.06] bg-transparent px-3 py-2 text-xs text-neutral-200 outline-none placeholder:text-neutral-600 focus:border-pink-500/40"
             />
             <input
               type="text"
               placeholder="Page or database URL"
               value={notionUrl}
               onChange={(e) => setNotionUrl(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-cyan-600"
+              className="w-full border border-white/[0.06] bg-transparent px-3 py-2 text-xs text-neutral-200 outline-none placeholder:text-neutral-600 focus:border-pink-500/40"
             />
             <div className="flex gap-2">
               <button
                 onClick={handleNotionImport}
                 disabled={!notionToken.trim() || !notionUrl.trim()}
-                className="flex-1 rounded-xl bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:opacity-40"
+                className="flex-1 bg-pink-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-pink-400 disabled:opacity-40"
               >
                 {uploadProgress ? 'Importing...' : 'Import'}
               </button>
               <button
                 onClick={() => { setShowNotion(false); setNotionToken(''); setNotionUrl(''); }}
-                className="rounded-xl px-3 py-1.5 text-xs text-slate-400 transition hover:text-slate-200"
+                className="px-3 py-1.5 text-xs text-neutral-500 transition hover:text-neutral-300"
               >
                 Cancel
               </button>
@@ -200,7 +200,7 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
 
       {result && (
         <p
-          className={`mt-3 text-xs ${
+          className={`text-xs ${
             result.type === 'success' ? 'text-emerald-400' : 'text-red-400'
           }`}
         >

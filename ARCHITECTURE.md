@@ -96,20 +96,25 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset (neuron GLB removed; nodes are procedural dodecahedrons)
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell, view switching (graph/editor), search
+    App.tsx                  - Layout shell with collapsible sidebar, top search bar, fully wired tab system, FileExplorer, EditorArea, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
       ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
+      DocumentEditor.tsx     - Auto-saving Milkdown Crepe editor with debounced save (POST /ingest for new, lightweight PUT /api/documents/{id} for existing)
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
-      Graph3D.tsx            - 3D graph scene, enlarged brain shell, dodecahedron nodes, fixed layout anchors, and interaction behavior
+      EditorArea.tsx         - Container combining TabBar + DocumentEditor, keyed by activeTabId for remount on tab switch
+      Graph3D.tsx            - 3D graph scene, enlarged brain shell, dodecahedron nodes, force-directed layout, concept dive-in with document sub-graph, and callback props (onOpenDocument, onConceptFocused) for parent tab integration
+      FileExplorer.tsx       - Sidebar file tree: collapsible concept folders with document items, auto-expand on highlight, refetchSignal prop for parent-triggered refresh
       IngestPanel.tsx        - New Note button + file upload + Notion import
       MarkdownDocumentViewer.tsx - Read-only markdown renderer for selected documents
-      NoteEditor.tsx         - Full-page markdown note editor
-      NodeTooltip.tsx        - Hover or selected-node card with optional action button
-      SearchBar.tsx          - Controlled search input
+      NoteEditor.tsx         - Full-page markdown note editor (legacy, replaced by DocumentEditor for tab system)
+      NodeTooltip.tsx        - Hover or selected-node card showing node name, type, and connection count
+      SearchBar.tsx          - Slim horizontal search input for the top bar
+      TabBar.tsx             - Horizontal tab bar with active highlighting, close buttons, and new-tab italic indicator
     hooks/
       useChat.ts             - POST /query hook for chat state, retrieval answers, and concept metadata
+      useFileTree.ts         - GET /api/concepts + /api/documents hook, builds concept->document tree for sidebar
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
@@ -118,20 +123,22 @@ frontend/
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
-      mockGraph.ts           - Large multi-domain mock graph with curated notes, generated concept docs, and bridge edges
+      mockGraph.ts           - Focused 29-concept student knowledge graph with hand-written documents and weighted edges
     test/
       setup.ts               - Vitest setup
     types/
       chat.ts                - Shared chat message and session types
+      graph.ts               - Graph node, edge, link, and discovery types
+      notes.ts               - OpenTab interface for the tab system
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/documents/{doc_id} (PUT lightweight + POST reingest), /api/stats, /api/concepts/{name}/documents
   graph_visualization.py    - Terminal-friendly concept graph loading from Kuzu with LanceDB fallback and ASCII rendering
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
-    lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup
+    lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup + delete_document_chunks
     kuzu.py                 - Kuzu init + graph schema (nodes + edges) + update_node_communities() + clear concurrent-open error translation
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
@@ -204,12 +211,14 @@ Each file has a single responsibility. Tests mirror the source structure.
 
 ## Mock Data
 
-`frontend/src/mock/mockGraph.ts` now provides a broader fallback dataset with about 100 concept nodes so the 3D brain does not collapse into a sparse center-heavy cluster during offline or demo use. The original college-student knowledge base is still there as the curated core:
+`frontend/src/mock/mockGraph.ts` provides a focused, hand-curated fallback dataset of 29 concept nodes representing a university student's knowledge graph across four domains:
 
-- **Calculus / Physics / Philosophy / Personal reflection** keep the hand-written notes and relationship snippets that power the richer document overlays.
-- **Computer Science, Biology, Economics, Psychology, Product Design, History, Arts, and Data Science** expand the graph into additional study areas so the brain has multiple visible lobes and more cross-cluster bridges.
+- **Math** (9 nodes): Calculus, Limits, Derivatives, Integrals, Chain Rule, Fundamental Theorem of Calculus, Differential Equations, Linear Algebra, Probability
+- **Physics** (7 nodes): Classical Mechanics, Newton's Laws, Conservation of Energy, Electromagnetism, Maxwell's Equations, Thermodynamics, Entropy
+- **Philosophy** (8 nodes): Epistemology, Rationalism, Empiricism, Ethics, Utilitarianism, Existentialism, Free Will, Determinism
+- **Personal** (5 nodes): Study Habits, Time Management, Motivation, Career Goals
 
-The fallback graph currently ships with 98 concept nodes and a much denser set of `RELATED_TO` edges. Cross-domain bridges intentionally connect technical, human, and reflective areas, such as Machine Learning↔Statistics, Behavioral Economics↔Cognitive Biases, Ethics↔Accessibility, Differential Equations↔Control Theory, and Entropy↔Information Theory. Curated concepts still use the detailed markdown notes in `MOCK_CONCEPT_DOCUMENTS`, while generated concepts use domain-aware document text so opening a node still shows a useful note instead of an empty placeholder.
+The graph has 35 edges with numeric `weight` values (1–6) reflecting relationship strength. Stronger weights (e.g., Calculus↔Derivatives at 6) appear as thicker lines in the 3D graph. Cross-domain bridges connect subjects meaningfully: Calculus↔Classical Mechanics, Entropy↔Determinism, Existentialism↔Motivation, Epistemology↔Probability. All concepts have hand-written student documents with personal voice (references to professors, midterm reflections, study struggles). `getMockDocumentsForConcept()` returns these documents with a simple fallback for unmapped concepts.
 
 ## Frontend Graph Flow
 
@@ -237,10 +246,9 @@ Graph3D -- react-force-graph-3d scene
   |         |                    when the reset button is pressed
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
   |         +-- scroll wheel -> zoom camera in or out around the current focus point
-  |         +-- single-click node -> smooth camera fly to that node (same animation as search), pin a translucent card above it, and request latent discovery tethers
-  |         +-- card "Open docs" -> open the clicked concept's related documents overlay
-  |         +-- double-click node -> fly closer and open its documents in the expansion overlay
-  |         +-- click document title in overlay -> render that document in the markdown reader
+  |         +-- single-click node -> smooth camera fly to that node (same animation as search), pin a translucent card above it, request latent discovery tethers, and call onConceptFocused callback
+  |         +-- double-click concept node -> "dive into" concept: zoom very close, inject document sub-nodes in a ring around the concept with connecting edges, dim all other nodes
+  |         +-- double-click doc sub-node -> call onOpenDocument callback to open that document in the editor
   |         +-- clicked concept node -> becomes the active rotation pivot
   |         +-- double-click empty space / Escape -> restore brain-centered pivot
   |         +-- left-button drag -> rotate the scene object instead of orbiting the camera
@@ -253,16 +261,30 @@ GLTFLoader -- load human-brain.glb for the wireframe shell; nodes are procedural
 
 The sidebar has a "New Note" button and a file upload option:
 
-1. **New Note** - clicking opens a full-page WYSIWYG markdown editor (NoteEditor) that covers the entire viewport. The editor uses Milkdown Crepe (ProseMirror-based) which renders markdown inline as you type — headings appear as headings, bold renders as bold, lists indent, LaTeX math renders via KaTeX (`$inline$` and `$$block$$`). A toolbar provides formatting buttons. Markdown shortcuts work like Obsidian: type `###` for a heading, `**` for bold, `-` for a list. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
+1. **New Note** - clicking will open a document in the tab system (wired by other agents). The NoteEditor full-page overlay has been removed in favor of the new tab-based editing flow.
 2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped, and the frontend shows a notification naming which files already exist (e.g. "notes already exists"). On completion, a summary shows the total ingested count, duplicate names, or a partial-failure message.
 
 3. **Import from Notion** - user clicks "Import from Notion" in the sidebar, enters their Notion integration token and a page/database URL, and clicks Import. The frontend `POST /ingest/notion` sends `{token, url}`. The backend parses the URL to determine page vs database, fetches content via the Notion API, converts blocks to markdown, and runs each page through the standard ingest pipeline. Success shows the number of pages imported.
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend uses the loaded brain mesh as a real containment boundary for the graph, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the dodecahedron nodes stay inside the shell. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales it to a larger target diagonal (`325`) so the default framing gives the visualization more room. That shell is rendered as a very light wireframe overlay (`opacity: 0.06`) so it frames the brain without competing with the nodes. Each graph node is rendered as a procedural `DodecahedronGeometry` with flat shading and a text label sprite above it, colored by community palette when a `community_id` is present or by the red-to-blue score gradient otherwise.
+The desktop layout uses a flex-based shell with a collapsible left sidebar (default expanded at 22rem, collapsed to 3rem with a chevron toggle and CSS transitions), a top search bar spanning the main content area, and the 3D graph below it. The graph is always mounted in the DOM; when `activeTabId` is set, the graph section is hidden with CSS (`invisible h-0`) to preserve Three.js state, and the `EditorArea` component appears in its place. Tab system state (`openTabs`, `activeTabId`, `highlightedConcept`, `fileTreeRefetchSignal`) is declared in `App.tsx` and fully wired to all child components. The `OpenTab` interface is exported from `types/notes.ts`. The old `view: 'graph' | 'editor'` state machine and NoteEditor full-page overlay have been removed.
 
-Node placement is now deterministic. `Graph3D` assigns each node id a hardcoded 3D anchor from a fixed layout table, pins that anchor with `fx`, `fy`, and `fz`, and then lets the brain containment pass make any final inward adjustment that is needed. That keeps nodes distributed throughout the brain volume instead of drifting toward the center, and it makes click fly-to animations smoother because the target node no longer slides under the camera while the scene is animating. `Graph3D` disables the built-in navigation controls, keeps idle motion and left-button drag on the scene object's own rotation, reserves single-click for node interactions (single click = smooth camera fly to node using the same ease-out cubic animation as search, pin a semi-translucent card above the selected node, and request latent discovery tether request for concepts; double click = fly closer and open document expansion overlay), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. The scene spins by default on load and stops permanently when the user drags, clicks a node, or clicks an edge; rotation resumes only when the reset button is pressed (after the camera-return animation completes). The selected-node card reuses the tooltip positioning path, but once a node is clicked it stays anchored above that node until the user clears selection or opens another target; concept cards expose an `Open docs` button that opens the same related-document overlay as the double-click path. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width scales by relationship weight (`Math.log((weight || 1) + 1) * 2.2`) so stronger relationships still read clearly without dominating the scene, and discovery ghost links stay dashed with `[2, 1]` line dashes so they read as temporary tethers. Semantic bridge edges from `heal_graph` use a distinct amber tint and thinner width. Unfocused edges use a softer translucent bluish-white base color, the graph-level edge opacity is lowered, and ghost tethers are thinner so the nodes remain the visual priority before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. When a concept node is focused, `Graph3D` stores that node's id as the active rotation target and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. During search, non-matching nodes and their labels are dimmed to 8% opacity while matched nodes stay fully visible. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, automatically opens the first document in `MarkdownDocumentViewer`, and still lets the user switch documents from the left-hand list without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The sidebar renders a `FileExplorer` below the data source panel. FileExplorer shows concept folders with nested document items. Clicking a document fetches its content via `GET /api/concepts/{conceptName}/documents` and opens it in a new tab. The `highlightedConcept` state flows from `Graph3D` (via `onConceptFocused`) to `FileExplorer`, which auto-expands and scrolls to the highlighted folder. After a document save or ingest, `App.tsx` increments `fileTreeRefetchSignal` which triggers FileExplorer to re-fetch its tree data.
+
+`Graph3D` receives two callback props wired in App.tsx: `onOpenDocument(docId, name, content)` creates or activates a tab for the document, and `onConceptFocused(conceptName | null)` updates the `highlightedConcept` state. The IngestPanel's "New Note" button creates a blank tab with a generated ID, `isNew: true`, and activates it.
+
+### Tab System
+
+The tabbed editor system consists of three components:
+
+- **TabBar** (`TabBar.tsx`) - Horizontal row of tabs showing document titles. The active tab has a pink accent border. Each tab has a close button (x) that stops propagation to avoid also selecting. New/unsaved tabs display their title in italic. Returns null when no tabs are open.
+- **DocumentEditor** (`DocumentEditor.tsx`) - Auto-saving Milkdown Crepe editor. Reuses the same Crepe configuration as the legacy NoteEditor (ProseMirror WYSIWYG with LaTeX support). On every content change, a 1.5-second debounce timer starts. When it fires, new documents POST to `/ingest` and existing documents PUT to `/api/documents/{docId}`. Shows a subtle save status indicator ("Saving...", "Saved", or "Error"). Title changes propagate via `onTitleChange`. Pending saves flush immediately on unmount.
+- **EditorArea** (`EditorArea.tsx`) - Container that combines TabBar at the top with DocumentEditor below. Uses a `key` prop tied to `activeTabId` to force remount when switching tabs. Returns null when no active tab exists.
+
+The layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend uses the loaded brain mesh as a real containment boundary for the graph, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the dodecahedron nodes stay inside the shell. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales it to a larger target diagonal (`325`) so the default framing gives the visualization more room. That shell is rendered as a very light wireframe overlay (`opacity: 0.06`) so it frames the brain without competing with the nodes. Each graph node is rendered as a procedural `DodecahedronGeometry` with flat shading and a text label sprite above it, colored by community palette when a `community_id` is present or by the red-to-blue score gradient otherwise.
+
+Node placement uses a force-directed layout: each node id is seeded to a deterministic position via hash, then d3-force-3d runs with charge repulsion (`-150`), collision avoidance (`forceCollide(18)`), and weight-based link distance/strength. After the simulation settles, all node positions are pinned (`fx/fy/fz`) so they never move again — subsequent reheats are immediately suppressed by re-pinning from a saved position map on every engine tick. Brain containment clamping runs during simulation ticks to keep nodes inside the shell. `Graph3D` disables the built-in navigation controls, keeps idle motion and left-button drag on the scene object's own rotation, reserves single-click for node interactions (single click = smooth camera fly to node using the same ease-out cubic animation as search, pin a semi-translucent card above the selected node, and request latent discovery tether request for concepts; double click = "dive into" the concept), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. The scene spins by default on load and stops permanently when the user drags, clicks a node, or clicks an edge; rotation resumes only when the reset button is pressed (after the camera-return animation completes). The selected-node card reuses the tooltip positioning path, but once a node is clicked it stays anchored above that node until the user clears selection or opens another target. Double-clicking a concept node triggers a "dive-in" experience: the camera zooms very close to the concept, document sub-nodes are injected in a ring around it (with concept-to-doc and doc-to-doc ring edges), and all other nodes are dimmed to 8% opacity. Double-clicking a document sub-node opens it in the editor via the `onOpenDocument` callback. Pressing Escape, clicking reset, or clicking the background exits the expanded view and restores the brain overview. `Graph3D` accepts two callback props for the tab system: `onOpenDocument(docId, name, content)` is called when a document sub-node is double-clicked in dive-in view, and `onConceptFocused(conceptName | null)` is called when a concept node gains or loses focus. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width scales by relationship weight (`Math.log((weight || 1) + 1) * 2.2`) so stronger relationships still read clearly without dominating the scene, and discovery ghost links stay dashed with `[2, 1]` line dashes so they read as temporary tethers. Semantic bridge edges from `heal_graph` use a distinct amber tint and thinner width. Unfocused edges use a softer translucent bluish-white base color, the graph-level edge opacity is lowered, and ghost tethers are thinner so the nodes remain the visual priority before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. When a concept node is focused, `Graph3D` stores that node's id as the active rotation target and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. During search, non-matching nodes and their labels are dimmed to 8% opacity while matched nodes stay fully visible. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. Discovery Mode adds temporary latent tethers from the selected concept to semantically similar documents returned by `/api/discovery/latent/{concept_name}`; these ghost links are dashed and use a distinct violet tint, and the user can toggle them on or off from the graph UI. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. That panel can be dismissed either with its close button or by pressing `Escape`.
 
@@ -322,13 +344,9 @@ Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
 Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
-  |
-  v
-clustering.run_leiden_clustering() -- build igraph from RELATED_TO edges, run Leiden (weighted)
-  |
-  v
-kuzu.update_node_communities() -- SET c.community_id on every Concept node
 ```
+
+Note: Per-ingest Leiden clustering has been removed. Community detection now runs only via batch rebuild (`scripts/rebuild_graphrag_artifacts.py`) or the `/api/recluster` endpoint.
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
 
@@ -483,6 +501,17 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 
 ### `GET /api/documents`
 - Returns: `{"documents": [{"doc_id", "name", "chunk_count", "concepts"}]}`
+
+### `PUT /api/documents/{doc_id}`
+- Body: `{"text": "...", "title": "..."}`
+- Lightweight save: updates document text in LanceDB without re-running LLM extraction, embedding, or clustering
+- Returns: `{"doc_id": "...", "status": "saved"}`
+- Returns `404` if `doc_id` does not exist
+
+### `POST /api/documents/{doc_id}/reingest`
+- Body: `{"text": "...", "title": "..."}`
+- Full re-ingest: deletes old chunks, re-embeds, re-extracts concepts, rebuilds graph edges
+- Returns: `{"doc_id": "...", "chunks": N, "concepts": [...]}`
 
 ### `GET /api/concepts/{concept_name}/documents`
 - Returns: `[{"doc_id", "name", "full_text"}]`

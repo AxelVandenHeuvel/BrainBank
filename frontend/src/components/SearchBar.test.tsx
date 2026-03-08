@@ -17,11 +17,25 @@ describe('SearchBar', () => {
       />,
     );
 
-    const input = screen.getByLabelText('Search graph');
+    const input = screen.getByLabelText('Search');
     await user.type(input, 'c');
 
     expect(onQueryChange).toHaveBeenCalled();
     expect(screen.getByText('2 matches')).toBeInTheDocument();
   });
-});
 
+  it('renders as a slim horizontal bar for the top position', () => {
+    render(
+      <SearchBar
+        query=""
+        matchCount={0}
+        onQueryChange={() => {}}
+      />,
+    );
+
+    // The container should use flex-row layout for horizontal positioning
+    const container = screen.getByTestId('search-bar');
+    expect(container).toBeInTheDocument();
+    expect(container).toHaveClass('flex-row');
+  });
+});

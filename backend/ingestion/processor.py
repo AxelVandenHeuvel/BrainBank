@@ -2,10 +2,9 @@ import kuzu as _kuzu
 import uuid
 from itertools import combinations
 
-from backend.db.kuzu import init_kuzu, update_node_communities
+from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
 from backend.ingestion.chunker import semantic_chunk_text as chunk_text
-from backend.services.clustering import run_leiden_clustering
 from backend.services.embeddings import (
     calculate_color_score,
     calculate_document_centroid,
@@ -23,6 +22,7 @@ def ingest_markdown(
     lance_db_path: str = "./data/lancedb",
     kuzu_db_path: str = "./data/kuzu",
     shared_kuzu_db=None,
+    doc_id: str | None = None,
 ) -> dict:
     db, table = init_lancedb(lance_db_path)
     centroids_table = db.open_table("document_centroids")
@@ -39,7 +39,8 @@ def ingest_markdown(
         kuzu_db, conn = init_kuzu(kuzu_db_path)
         own_db = True
     try:
-        doc_id = str(uuid.uuid4())
+        if doc_id is None:
+            doc_id = str(uuid.uuid4())
         chunks = chunk_text(text)
         chunk_ids = [str(uuid.uuid4()) for _ in chunks]
         vectors = embed_texts(chunks)
@@ -108,9 +109,6 @@ def ingest_markdown(
                     "reason": SHARED_DOCUMENT_REASON,
                 },
             )
-
-        community_map = run_leiden_clustering(conn)
-        update_node_communities(conn, community_map)
 
         return {"doc_id": doc_id, "chunks": len(chunks), "concepts": concepts}
     finally:

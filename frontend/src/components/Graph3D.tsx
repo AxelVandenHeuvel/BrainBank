@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
+import { forceCollide } from 'd3-force-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -40,7 +41,6 @@ import type {
   RelationshipDocument,
   RelationshipDetails,
 } from '../types/graph';
-import { ConceptDocumentOverlay } from './ConceptDocumentOverlay';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { NodeTooltip } from './NodeTooltip';
 
@@ -83,12 +83,6 @@ interface TooltipPosition {
   y: number;
 }
 
-interface FixedNodeAnchor {
-  x: number;
-  y: number;
-  z: number;
-}
-
 interface BrainHomeView {
   distance: number;
   focusPoint: {
@@ -104,6 +98,8 @@ interface Graph3DProps {
   query: string;
   hoveredNode?: GraphNode | null;
   onHoverNode?: (node: GraphNode | null) => void;
+  onOpenDocument?: (docId: string, name: string, content: string) => void;
+  onConceptFocused?: (conceptName: string | null) => void;
 }
 
 interface SelectedRelationshipEdge {
@@ -133,75 +129,28 @@ const SEMANTIC_BRIDGE_COLOR = 'rgba(251, 191, 36, 0.6)';
 const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
-const BRAIN_MODEL_TARGET_DIAGONAL = 325;
+const BRAIN_MODEL_TARGET_DIAGONAL = 500;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
+const EXPANDED_DOC_RADIUS = 12;
+const EXPANDED_DIVE_DISTANCE = 40;
 const NODE_LABEL_Y_OFFSET = 16;
-const NODE_LAYOUT_ANCHORS: ReadonlyArray<FixedNodeAnchor> = [
-  { x: 0, y: 30.9, z: 0 },
-  { x: -39.9, y: 8.5, z: -31.6 },
-  { x: 4.5, y: -20.5, z: 44.1 },
-  { x: 27.4, y: 29.1, z: -30.9 },
-  { x: -65.6, y: -2.4, z: 10 },
-  { x: 33.5, y: -36.5, z: 18.4 },
-  { x: -16.9, y: 19.2, z: -54.2 },
-  { x: -31.7, y: -16.4, z: 52.8 },
-  { x: 32.4, y: 43.1, z: -10.2 },
-  { x: -70.5, y: 6.2, z: -25.2 },
-  { x: 25.6, y: -32.3, z: 47.2 },
-  { x: 19.2, y: 30.7, z: -52.9 },
-  { x: -69.4, y: -8.8, z: 34.8 },
-  { x: 29.4, y: -49.6, z: 5.6 },
-  { x: -46, y: 16.5, z: -56.5 },
-  { x: -9.7, y: -25.2, z: 64.8 },
-  { x: 41.5, y: 43.2, z: -30.2 },
-  { x: -87.3, y: 0.7, z: -3.1 },
-  { x: 41.4, y: -42.8, z: 35.6 },
-  { x: -3.6, y: 28, z: -67.5 },
-  { x: -55.6, y: -16.2, z: 57.6 },
-  { x: 26.1, y: 56.4, z: -3 },
-  { x: -74.3, y: 11.5, z: -44.7 },
-  { x: 16.8, y: -34.2, z: 64.6 },
-  { x: 34.9, y: 40.3, z: -52.7 },
-  { x: -90, y: -6, z: 24.8 },
-  { x: 44, y: -53.2, z: 17.6 },
-  { x: -34.6, y: 23.3, z: -71.4 },
-  { x: -30.3, y: -24.5, z: 72.9 },
-  { x: 46.3, y: 53.5, z: -21 },
-  { x: -95.3, y: 5.2, z: -21.7 },
-  { x: 39.4, y: -43.8, z: 53 },
-  { x: 14.1, y: 35.8, z: -71.2 },
-  { x: -78.1, y: -13.7, z: 52.3 },
-  { x: 23.1, y: -63.8, z: 1.7 },
-  { x: -67.1, y: 17.3, z: -62.7 },
-  { x: 0.4, y: -33.3, z: 77.1 },
-  { x: 47.3, y: 49.1, z: -45.1 },
-  { x: -103.9, y: -2, z: 8.3 },
-  { x: 50.9, y: -53.7, z: 33.4 },
-  { x: -17, y: 30.1, z: -80.6 },
-  { x: -53.6, y: -22, z: 73.6 },
-  { x: 41.6, y: 63, z: -9.9 },
-  { x: -94.5, y: 10.4, z: -41.9 },
-  { x: 29.7, y: -42.7, z: 69.2 },
-  { x: 32, y: 43.6, z: -68 },
-  { x: -97.7, y: -9.9, z: 40 },
-  { x: 44.7, y: -64, z: 11.9 },
-  { x: -52.6, y: 23.5, z: -77.6 },
-  { x: -21, y: -30.9, z: 84.4 },
-  { x: 54.1, y: 57.6, z: -33.2 },
-  { x: -111, y: 2.8, z: -12 },
-  { x: 50.2, y: -52.5, z: 51 },
-  { x: 3.5, y: 37.2, z: -83.8 },
-  { x: -77.1, y: -18.4, z: 67.6 },
-  { x: 20.4, y: 72.2, z: -0.9 },
-  { x: -86.1, y: 16.2, z: -61.5 },
-  { x: 13.3, y: -40.3, z: 82.6 },
-  { x: 47.3, y: 51.4, z: -59.3 },
-  { x: -112.7, y: -5.4, z: 22.4 },
-  { x: 55.6, y: -62.7, z: 27.2 },
-  { x: -33, y: 30.1, z: -88 },
-  { x: -45.3, y: -27.5, z: 85.9 },
-  { x: 53, y: 66.2, z: -19.4 },
-];
+/** Seed initial position from a deterministic hash so the force simulation starts
+ *  with nodes spread out instead of all at the origin. */
+function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
+  let hash = 0;
+  for (let i = 0; i < nodeId.length; i++) {
+    hash = (hash * 31 + nodeId.charCodeAt(i)) | 0;
+  }
+  const phi = ((hash & 0xffff) / 0xffff) * Math.PI * 2;
+  const cosTheta = ((((hash >> 16) & 0xffff) / 0xffff) * 2) - 1;
+  const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
+  const r = 15 + ((hash & 0xff) / 255) * 20;
+  return {
+    x: r * sinTheta * Math.cos(phi),
+    y: r * cosTheta,
+    z: r * sinTheta * Math.sin(phi),
+  };
+}
 
 function getDeterministicNodeColorScore(node: GraphNode): number {
   if (node.colorScore !== undefined) {
@@ -222,17 +171,6 @@ function getVisualNodeColor(node: GraphNode): THREE.Color {
   );
 }
 
-function createOverflowAnchor(index: number): FixedNodeAnchor {
-  const angle = index * 2.399963229728653;
-  const radius = 88 + (index % 9) * 4;
-  const height = ((index % 7) - 3) * 12;
-
-  return {
-    x: Math.cos(angle) * radius,
-    y: height,
-    z: Math.sin(angle) * radius * 0.82,
-  };
-}
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
   const canvas = document.createElement('canvas');
@@ -289,6 +227,8 @@ export function Graph3D({
   query,
   hoveredNode: hoveredNodeProp,
   onHoverNode: onHoverNodeProp,
+  onOpenDocument,
+  onConceptFocused,
 }: Graph3DProps) {
   const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -308,13 +248,15 @@ export function Graph3D({
   const isDragRotatingRef = useRef(false);
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
-  const expandedConceptIdRef = useRef<string | null>(null);
   const cameraAnimationRef = useRef<number | null>(null);
+  const simulationSettledRef = useRef(false);
+  const pinnedPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
   const lastSearchTargetIdRef = useRef<string | null>(null);
-  const fixedNodeAnchorsRef = useRef<Map<string, FixedNodeAnchor>>(new Map());
+  const preSearchCameraRef = useRef<{
+    pos: { x: number; y: number; z: number };
+    lookAt: { x: number; y: number; z: number };
+  } | null>(null);
 
-  const [expandedConcept, setExpandedConcept] = useState<GraphNode | null>(null);
-  const [expandedDocs, setExpandedDocs] = useState<RelationshipDocument[] | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(null);
@@ -325,6 +267,10 @@ export function Graph3D({
   const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
   const [discoveryModeEnabled, setDiscoveryModeEnabled] = useState(true);
   const [latentLinks, setLatentLinks] = useState<GraphLink[]>([]);
+  const [expandedConcept, setExpandedConcept] = useState<{
+    node: GraphNode;
+    docs: RelationshipDocument[];
+  } | null>(null);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -353,45 +299,94 @@ export function Graph3D({
       nodes.push(...ghostNodes);
       links.push(...latentLinks);
     }
-    const missingNodes = nodes
-      .filter((node) => !fixedNodeAnchorsRef.current.has(node.id))
-      .sort((left, right) => left.id.localeCompare(right.id));
-
-    missingNodes.forEach((node) => {
-      const anchorIndex = fixedNodeAnchorsRef.current.size;
-      const anchor =
-        NODE_LAYOUT_ANCHORS[anchorIndex] ?? createOverflowAnchor(anchorIndex - NODE_LAYOUT_ANCHORS.length);
-      fixedNodeAnchorsRef.current.set(node.id, anchor);
-    });
-
+    // Seed initial positions so the simulation starts spread out
     nodes.forEach((node) => {
-      const anchor = fixedNodeAnchorsRef.current.get(node.id);
-
-      if (!anchor) {
-        return;
+      if (node.x === undefined || node.y === undefined || node.z === undefined) {
+        const pos = seedNodePosition(node.id);
+        node.x = pos.x;
+        node.y = pos.y;
+        node.z = pos.z;
       }
-
-      node.x = anchor.x;
-      node.y = anchor.y;
-      node.z = anchor.z;
-      node.fx = anchor.x;
-      node.fy = anchor.y;
-      node.fz = anchor.z;
-      node.vx = 0;
-      node.vy = 0;
-      node.vz = 0;
     });
+
+    // Re-apply pinned positions so graphData changes never lose fx/fy/fz.
+    // Without this, react-force-graph-3d reheats and nodes escape the brain.
+    const pins = pinnedPositionsRef.current;
+    nodes.forEach((node) => {
+      const pin = pins.get(node.id);
+      if (pin) {
+        node.x = pin.x;
+        node.y = pin.y;
+        node.z = pin.z;
+        node.fx = pin.x;
+        node.fy = pin.y;
+        node.fz = pin.z;
+      }
+    });
+
+    // Inject document sub-nodes when a concept is expanded (dive-in view)
+    if (expandedConcept) {
+      const conceptInGraph = nodes.find((n) => n.id === expandedConcept.node.id);
+      if (conceptInGraph) {
+        const cx = conceptInGraph.x ?? 0;
+        const cy = conceptInGraph.y ?? 0;
+        const cz = conceptInGraph.z ?? 0;
+
+        // Add doc sub-nodes in a ring around the concept position
+        const docIds: string[] = [];
+        expandedConcept.docs.forEach((doc, i) => {
+          const angle = (i / expandedConcept.docs.length) * Math.PI * 2;
+          const docNodeId = `doc-expand:${doc.doc_id}`;
+          docIds.push(docNodeId);
+          if (!existingNodeIds.has(docNodeId)) {
+            existingNodeIds.add(docNodeId);
+            const dx = cx + EXPANDED_DOC_RADIUS * Math.cos(angle);
+            const dy = cy;
+            const dz = cz + EXPANDED_DOC_RADIUS * Math.sin(angle);
+            nodes.push({
+              id: docNodeId,
+              type: 'Document',
+              name: doc.name,
+              x: dx, y: dy, z: dz,
+              fx: dx, fy: dy, fz: dz,
+            });
+          }
+        });
+
+        // Fully-connected edges between all doc pairs (no concept→doc edges)
+        for (let a = 0; a < docIds.length; a++) {
+          for (let b = a + 1; b < docIds.length; b++) {
+            links.push({
+              source: docIds[a],
+              target: docIds[b],
+              type: 'DOC_SIBLING',
+              weight: 1,
+            });
+          }
+        }
+      }
+    }
 
     return {
       nodes,
       links,
     };
-  }, [data, discoveryModeEnabled, latentLinks]);
+  }, [data, discoveryModeEnabled, latentLinks, expandedConcept]);
+
+  const expandedNodeIds = useMemo<Set<string> | null>(() => {
+    if (!expandedConcept) return null;
+    const ids = new Set<string>();
+    expandedConcept.docs.forEach((doc) => ids.add(`doc-expand:${doc.doc_id}`));
+    return ids;
+  }, [expandedConcept]);
+
+  const displayDataRef = useRef(displayData);
+  displayDataRef.current = displayData;
 
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
-  const activeCardNode = expandedConcept ? null : selectedNode ?? hoveredNode;
+  const activeCardNode = selectedNode ?? hoveredNode;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
@@ -480,14 +475,6 @@ export function Graph3D({
 
     const changed = clampNodesToContainment(displayData.nodes, containment);
 
-    displayData.nodes.forEach((node) => {
-      fixedNodeAnchorsRef.current.set(node.id, {
-        x: node.x ?? 0,
-        y: node.y ?? 0,
-        z: node.z ?? 0,
-      });
-    });
-
     if (changed && refresh) {
       graphRef.current?.refresh();
     }
@@ -547,6 +534,14 @@ export function Graph3D({
     activeRotationNodeIdRef.current = nodeId;
     setHasFocusedRotationPivot(nodeId !== null);
     setFocusedEdgeNodeId(nodeId);
+
+    if (onConceptFocused) {
+      if (nodeId !== null && nodeId.startsWith('concept:')) {
+        onConceptFocused(nodeId.slice('concept:'.length));
+      } else {
+        onConceptFocused(null);
+      }
+    }
   }
 
   function toWorldPoint(point: { x: number; y: number; z: number }) {
@@ -643,6 +638,7 @@ export function Graph3D({
     setRotationPivotNode(null);
     setSelectedNode(null);
     setLatentLinks([]);
+    setExpandedConcept(null);
 
     const brainHomeView = brainHomeViewRef.current;
 
@@ -754,7 +750,7 @@ export function Graph3D({
   }
 
   function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
-    if (expandedConcept || event.deltaY === 0) {
+    if (event.deltaY === 0) {
       return;
     }
 
@@ -764,18 +760,6 @@ export function Graph3D({
   }
 
   async function handleConceptExpansion(node: GraphNode) {
-    if (expandedConceptIdRef.current) return;
-
-    expandedConceptIdRef.current = node.id;
-    setExpandedConcept(node);
-    setExpandedDocs(null);
-
-    const controls = graphRef.current?.controls();
-    if (controls) {
-       (controls as any).enableRotate = false;
-       (controls as any).enablePan = false;
-    }
-
     let docs: RelationshipDocument[] = [];
     try {
       const controller = new AbortController();
@@ -791,19 +775,8 @@ export function Graph3D({
 
     if (docs.length === 0) docs = getMockDocumentsForConcept(node.name);
 
-    if (expandedConceptIdRef.current !== node.id) return;
-    setExpandedDocs(docs);
-  }
-
-  function handleCollapse() {
-    expandedConceptIdRef.current = null;
-    setExpandedConcept(null);
-    setExpandedDocs(null);
-
-    const controls = graphRef.current?.controls();
-    if (controls) {
-      (controls as any).enableRotate = true;
-      (controls as any).enablePan = true;
+    if (docs.length > 0) {
+      setExpandedConcept({ node, docs });
     }
   }
 
@@ -915,6 +888,38 @@ export function Graph3D({
       z: node.z ?? 0,
     };
 
+    // Handle doc-expand nodes (shown inside expanded concept view)
+    if (node.id.startsWith('doc-expand:') && expandedConcept) {
+      suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
+
+      if (
+        lastNodeClickRef.current &&
+        lastNodeClickRef.current.nodeId === node.id &&
+        now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
+      ) {
+        // Double-click doc node: open it in the editor
+        const docId = node.id.slice('doc-expand:'.length);
+        const doc = expandedConcept.docs.find((d) => d.doc_id === docId);
+        if (doc && onOpenDocument) {
+          onOpenDocument(doc.doc_id, doc.name, doc.full_text);
+        }
+        lastNodeClickRef.current = null;
+        return;
+      }
+
+      // Single-click doc node: select and zoom to it
+      lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
+      clearSelectedEdge();
+      setSelectedNode(node);
+      focusPoint(nodePoint, 35);
+      return;
+    }
+
+    // Collapse expanded view when clicking a different concept
+    if (expandedConcept && node.id !== expandedConcept.node.id) {
+      setExpandedConcept(null);
+    }
+
     clearSelectedEdge();
     setSelectedNode(node);
     setRotationPivotNode(node.id);
@@ -923,7 +928,8 @@ export function Graph3D({
     if (node.type !== 'Concept') {
       lastNodeClickRef.current = null;
       setLatentLinks([]);
-      smoothFlyToNode(nodePoint, 140);
+      // Reposition scene so node is at origin, then fly camera to face it
+      focusPoint(nodePoint, 140);
       return;
     }
 
@@ -932,16 +938,16 @@ export function Graph3D({
       lastNodeClickRef.current.nodeId === node.id &&
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
-      // Double click: zoom closer and open documents
-      smoothFlyToNode(nodePoint, 100);
+      // Double click: dive into concept — zoom close and show doc sub-graph
+      focusPoint(nodePoint, EXPANDED_DIVE_DISTANCE);
       void handleConceptExpansion(node);
       lastNodeClickRef.current = null;
       return;
     }
 
-    // Single click: fly to node only
+    // Single click: reposition scene so node is centered, then fly camera
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
-    smoothFlyToNode(nodePoint, 140);
+    focusPoint(nodePoint, 140);
     void loadLatentDiscovery(node);
   }
 
@@ -1030,15 +1036,6 @@ export function Graph3D({
     }
   }
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && expandedConceptIdRef.current) {
-        handleCollapse();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   useEffect(() => {
     startIdleRotation();
@@ -1053,11 +1050,23 @@ export function Graph3D({
     };
   }, []);
 
-  // Increase charge repulsion so nodes spread out within the brain volume
+  // Configure forces: repulsion, collision, weighted links, and centering
   useEffect(() => {
     const fg = graphRef.current as any;
     if (!fg?.d3Force) return;
-    fg.d3Force('charge')?.strength(-120);
+    fg.d3Force('charge')?.strength(-150).distanceMax(200);
+    fg.d3Force('center')?.strength(0.15);
+    // Collision force prevents nodes from overlapping (minimum distance between centers)
+    fg.d3Force('collision', forceCollide(18).strength(1).iterations(3));
+    fg.d3Force('link')
+      ?.distance((link: any) => {
+        const w = typeof link.weight === 'number' && link.weight > 0 ? link.weight : 1;
+        return 50 / w;
+      })
+      .strength((link: any) => {
+        const w = typeof link.weight === 'number' && link.weight > 0 ? link.weight : 1;
+        return 0.5 * Math.min(w / 3, 1);
+      });
   }, []);
 
   useEffect(() => {
@@ -1104,7 +1113,19 @@ export function Graph3D({
         },
       };
       clampNodesWithinBrain(true);
+
+      // Update pin map with clamped positions so the reheat doesn't undo the clamping
+      const clampPins = pinnedPositionsRef.current;
+      displayDataRef.current.nodes.forEach((n) => {
+        clampPins.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0 });
+        n.fx = n.x;
+        n.fy = n.y;
+        n.fz = n.z;
+      });
+
       scene.add(brainGroup);
+      // Reheat the simulation so it re-runs with brain containment clamping active
+      (graphRef.current as any)?.d3ReheatSimulation?.();
       handleReset();
     });
 
@@ -1201,7 +1222,13 @@ export function Graph3D({
 
   useEffect(() => {
     if (!query.trim()) {
+      // Query cleared — fly back to where the camera was before search started
+      if (preSearchCameraRef.current && lastSearchTargetIdRef.current) {
+        const { pos, lookAt } = preSearchCameraRef.current;
+        animateCamera(pos, lookAt);
+      }
       lastSearchTargetIdRef.current = null;
+      preSearchCameraRef.current = null;
       return;
     }
 
@@ -1216,6 +1243,17 @@ export function Graph3D({
     // Skip if already flying to this same node (e.g. "c" → "ca" → "cal" all match "Calculus")
     if (firstMatch.id === lastSearchTargetIdRef.current) {
       return;
+    }
+
+    // Save camera position before the first search fly-to
+    if (!preSearchCameraRef.current) {
+      const cam = graphRef.current?.cameraPosition();
+      if (cam) {
+        preSearchCameraRef.current = {
+          pos: { x: cam.x, y: cam.y, z: cam.z },
+          lookAt: { ...lookAtTargetRef.current },
+        };
+      }
     }
 
     lastSearchTargetIdRef.current = firstMatch.id;
@@ -1243,16 +1281,19 @@ export function Graph3D({
           obj.userData.update(time);
         }
 
-        // Dim non-matching nodes during search
-        const isDimmed = hasQuery && !matchedNodeIds.has(node.id);
+        // Dim non-matching nodes during search; hide everything except doc sub-nodes in expanded view
+        const isSearchDimmed = hasQuery && !matchedNodeIds.has(node.id);
+        const isExpandHidden = expandedNodeIds !== null && !expandedNodeIds.has(node.id);
+        const dimOpacity = isExpandHidden ? 0 : 0.08;
+        const isDimmed = isSearchDimmed || isExpandHidden;
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh && child.material) {
             const mat = child.material as THREE.MeshStandardMaterial;
-            mat.opacity = isDimmed ? 0.08 : 0.9;
+            mat.opacity = isDimmed ? dimOpacity : 0.9;
             mat.transparent = true;
           }
           if (child instanceof THREE.Sprite && child.material) {
-            child.material.opacity = isDimmed ? 0.08 : 1;
+            child.material.opacity = isDimmed ? dimOpacity : 1;
           }
         });
       });
@@ -1260,21 +1301,18 @@ export function Graph3D({
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [displayData.nodes, query, matchedNodeIds]);
+  }, [displayData.nodes, query, matchedNodeIds, expandedNodeIds]);
+
 
   useEffect(() => {
-    if (expandedConcept) stopIdleRotation();
-  }, [expandedConcept]);
-
-  useEffect(() => {
-    if (!selectedEdge && !hasFocusedRotationPivot) {
+    if (!selectedEdge && !hasFocusedRotationPivot && !expandedConcept) {
       return;
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         clearSelectedEdge();
-        if (activeRotationNodeIdRef.current) {
+        if (expandedConcept || activeRotationNodeIdRef.current) {
           handleReset();
         }
       }
@@ -1285,7 +1323,7 @@ export function Graph3D({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [hasFocusedRotationPivot, selectedEdge]);
+  }, [hasFocusedRotationPivot, selectedEdge, expandedConcept]);
 
   useEffect(() => {
     if (!activeCardNode) {
@@ -1358,6 +1396,16 @@ export function Graph3D({
       return SEMANTIC_BRIDGE_COLOR;
     }
 
+    // When a concept is expanded, only show doc↔doc links; hide everything else
+    if (expandedNodeIds) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      if (expandedNodeIds.has(sourceId) && expandedNodeIds.has(targetId)) {
+        return ACTIVE_LINK_COLOR;
+      }
+      return 'rgba(0,0,0,0)';
+    }
+
     if (isSelectedLink(link)) {
       return ACTIVE_LINK_COLOR;
     }
@@ -1412,7 +1460,35 @@ export function Graph3D({
   const onLinkClick = useCallback((link: object) => void handleLinkClickRef.current(link as GraphLink), []);
   const onNodeHover = useCallback((node: object | null) => onHoverNodeRef.current((node as GraphNode | null) ?? null), []);
   const onEngineTick = useCallback(() => {
+    // If simulation already settled, immediately re-pin nodes to prevent jiggle on reheat
+    if (simulationSettledRef.current) {
+      const pins = pinnedPositionsRef.current;
+      displayDataRef.current.nodes.forEach((node) => {
+        const pin = pins.get(node.id);
+        if (pin) {
+          node.x = pin.x;
+          node.y = pin.y;
+          node.z = pin.z;
+          node.fx = pin.x;
+          node.fy = pin.y;
+          node.fz = pin.z;
+        }
+      });
+      return;
+    }
     clampNodesWithinBrainRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onEngineStop = useCallback(() => {
+    // Pin all nodes so the simulation never moves them again
+    const pins = pinnedPositionsRef.current;
+    displayDataRef.current.nodes.forEach((node) => {
+      node.fx = node.x;
+      node.fy = node.y;
+      node.fz = node.z;
+      pins.set(node.id, { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 });
+    });
+    simulationSettledRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const dashedLinkProps = {
@@ -1446,6 +1522,7 @@ export function Graph3D({
           setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
+          setExpandedConcept(null);
         }
       }}
       onMouseMove={handleMouseMove}
@@ -1487,10 +1564,12 @@ export function Graph3D({
         linkOpacity={0.55}
         nodeRelSize={5}
         linkDirectionalParticles={0}
-        cooldownTicks={120}
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.15}
+        warmupTicks={0}
+        cooldownTicks={200}
+        d3AlphaDecay={0.06}
+        d3VelocityDecay={0.4}
         onEngineTick={onEngineTick}
+        onEngineStop={onEngineStop}
         onLinkClick={onLinkClick}
         onNodeClick={onNodeClick}
         onNodeHover={onNodeHover}
@@ -1499,37 +1578,34 @@ export function Graph3D({
           setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
+          setExpandedConcept(null);
         }}
         enableNodeDrag={false}
         enableNavigationControls={false}
         controlType="orbit"
       />
       <div className="absolute right-4 top-4 flex flex-col gap-2 z-10">
-        {!expandedConcept && (
-          <>
-            <button
-              type="button"
-              onClick={handleZoomIn}
-              className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              onClick={handleZoomOut}
-              className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
-            >
-              −
-            </button>
-            <button
-              type="button"
-              onClick={handleReset}
-              className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
-            >
-              ⟳
-            </button>
-          </>
-        )}
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
+        >
+          ⟳
+        </button>
       </div>
       {activeCardNode && tooltipPosition ? (
         <NodeTooltip
@@ -1537,24 +1613,8 @@ export function Graph3D({
           connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
-          actionLabel={selectedNode?.type === 'Concept' ? 'Open docs' : undefined}
-          onAction={
-            selectedNode?.type === 'Concept'
-              ? () => {
-                  void handleConceptExpansion(selectedNode);
-                }
-              : undefined
-          }
         />
       ) : null}
-
-      {expandedConcept && (
-        <ConceptDocumentOverlay
-          conceptName={expandedConcept.name}
-          documents={expandedDocs}
-          onClose={handleCollapse}
-        />
-      )}
 
       {selectedEdge ? (
         <EdgeDetailPanel

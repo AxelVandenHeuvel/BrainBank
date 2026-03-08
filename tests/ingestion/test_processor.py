@@ -152,17 +152,3 @@ class TestIngestMarkdown:
         centroid_vector = matching.iloc[0]["centroid_vector"]
         assert len(centroid_vector) == 384
 
-    @patch("backend.ingestion.processor.update_node_communities")
-    @patch(
-        "backend.ingestion.processor.run_leiden_clustering",
-        return_value={"Calculus": 0, "Derivatives": 0, "Integrals": 1},
-    )
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_clustering_triggered_after_ingest(
-        self, _llm, _emb, _score, mock_leiden, mock_update, lance_path, kuzu_path
-    ):
-        ingest_markdown("Calculus basics.", "Doc 1", lance_path, kuzu_path)
-        assert mock_leiden.called
-        assert mock_update.called

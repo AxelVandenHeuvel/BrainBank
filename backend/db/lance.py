@@ -84,6 +84,64 @@ def find_existing_document(title: str, db_path: str = "./data/lancedb") -> dict 
     return {"doc_id": row["doc_id"], "doc_name": row["doc_name"]}
 
 
+def delete_document_chunks(db_path: str, doc_id: str) -> int:
+    """Delete all chunks and the centroid for a doc_id. Returns count of deleted chunks."""
+    db, table = init_lancedb(db_path)
+
+    df = table.to_pandas()
+    if df.empty:
+        return 0
+
+    mask = df["doc_id"] == doc_id
+    deleted_count = int(mask.sum())
+
+    if deleted_count == 0:
+        return 0
+
+    # Delete matching chunks from the chunks table
+    table.delete(f'doc_id = "{doc_id}"')
+
+    # Delete matching centroid from document_centroids
+    try:
+        centroids_table = db.open_table("document_centroids")
+        centroids_table.delete(f'doc_id = "{doc_id}"')
+    except Exception:
+        pass
+
+    return deleted_count
+
+
+def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str) -> bool:
+    """Quick-update a document's text in LanceDB without re-embedding or re-ingesting.
+    Replaces chunk texts with a single merged chunk. Returns True if doc existed."""
+    _, table = init_lancedb(db_path)
+    df = table.to_pandas()
+    if df.empty:
+        return False
+
+    mask = df["doc_id"] == doc_id
+    if not mask.any():
+        return False
+
+    # Preserve existing concepts and reuse first chunk's vector as approximation
+    existing = df[mask]
+    all_concepts = existing["concepts"].explode().dropna().unique().tolist()
+    first_vector = existing.iloc[0]["vector"]
+    first_chunk_id = existing.iloc[0]["chunk_id"]
+
+    # Delete old chunks and insert single merged chunk
+    table.delete(f'doc_id = "{doc_id}"')
+    table.add([{
+        "chunk_id": first_chunk_id,
+        "doc_id": doc_id,
+        "doc_name": doc_name,
+        "text": new_text,
+        "concepts": all_concepts,
+        "vector": first_vector,
+    }])
+    return True
+
+
 def init_lancedb(db_path: str = "./data/lancedb"):
     os.makedirs(db_path, exist_ok=True)
 

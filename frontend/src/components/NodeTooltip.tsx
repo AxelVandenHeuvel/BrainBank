@@ -21,7 +21,7 @@ export function NodeTooltip({
 
   return (
     <div
-      className={`absolute z-20 w-64 rounded-2xl border border-cyan-300/20 bg-slate-950/65 p-4 text-sm text-slate-100 shadow-2xl shadow-cyan-950/30 backdrop-blur ${
+      className={`absolute z-20 w-56 border border-white/[0.08] bg-black/90 p-3 text-sm text-neutral-100 shadow-xl backdrop-blur ${
         isInteractive ? 'pointer-events-auto' : 'pointer-events-none'
       }`}
       style={{
@@ -30,8 +30,8 @@ export function NodeTooltip({
         transform: 'translate(-50%, calc(-100% - 18px))',
       }}
     >
-      <p className="text-lg font-semibold text-white">{node.name}</p>
-      <div className="mt-2 flex items-center justify-between text-slate-300">
+      <p className="font-semibold text-white">{node.name}</p>
+      <div className="mt-1.5 flex items-center justify-between text-xs text-neutral-400">
         <span>{node.type}</span>
         <span>{connectionCount} connections</span>
       </div>
@@ -42,7 +42,7 @@ export function NodeTooltip({
             event.stopPropagation();
             onAction?.();
           }}
-          className="mt-4 inline-flex items-center rounded-full border border-cyan-300/30 bg-cyan-400/12 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100 transition hover:bg-cyan-400/20"
+          className="mt-3 inline-flex items-center border border-pink-500/30 bg-pink-500/10 px-3 py-1.5 text-xs font-medium text-pink-300 transition hover:bg-pink-500/20"
         >
           {actionLabel}
         </button>
