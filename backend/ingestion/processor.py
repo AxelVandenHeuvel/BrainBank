@@ -21,10 +21,14 @@ def ingest_markdown(
         chunk_ids = [str(uuid.uuid4()) for _ in chunks]
         vectors = embed_texts(chunks)
 
-        # Extract concepts first so they can be written alongside each chunk
-        extraction = extract_concepts(text, doc_name)
-        concepts = extraction.get("concepts", [])
-        relationships = extraction.get("relationships", [])
+        # Extract concepts via LLM (graceful — note saves even if LLM is unavailable)
+        try:
+            extraction = extract_concepts(text, doc_name)
+            concepts = extraction.get("concepts", [])
+            relationships = extraction.get("relationships", [])
+        except Exception:
+            concepts = []
+            relationships = []
 
         # Determine which concepts each chunk mentions
         def chunk_concepts(chunk_text_: str) -> list[str]:

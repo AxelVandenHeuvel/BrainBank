@@ -3,6 +3,7 @@ import { startTransition, useDeferredValue, useState } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
+import { NoteEditor } from './components/NoteEditor';
 import { SearchBar } from './components/SearchBar';
 import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
 import { useGraphData } from './hooks/useGraphData';
@@ -29,6 +30,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [view, setView] = useState<'graph' | 'editor'>('graph');
   const [isChatOpen, setIsChatOpen] = useState(true);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
 
@@ -36,6 +38,11 @@ export default function App() {
     startTransition(() => {
       setQuery(nextQuery);
     });
+  }
+
+  function handleNoteSaved() {
+    refetch();
+    setView('graph');
   }
 
   return (
@@ -66,7 +73,10 @@ export default function App() {
             onQueryChange={handleQueryChange}
           />
 
-          <IngestPanel onIngestComplete={refetch} />
+          <IngestPanel
+            onIngestComplete={refetch}
+            onNewNote={() => setView('editor')}
+          />
 
           <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
             <div className="flex items-center justify-between">
@@ -129,12 +139,19 @@ export default function App() {
         </aside>
 
         <section className="min-h-[70vh]">
-          <Graph3D
-            data={data}
-            query={deferredQuery}
-            hoveredNode={hoveredNode}
-            onHoverNode={setHoveredNode}
-          />
+          {view === 'editor' ? (
+            <NoteEditor
+              onSave={handleNoteSaved}
+              onCancel={() => setView('graph')}
+            />
+          ) : (
+            <Graph3D
+              data={data}
+              query={deferredQuery}
+              hoveredNode={hoveredNode}
+              onHoverNode={setHoveredNode}
+            />
+          )}
         </section>
 
         <aside
