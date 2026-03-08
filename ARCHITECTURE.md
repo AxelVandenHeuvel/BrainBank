@@ -73,7 +73,7 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell, view switching (graph/editor), legend, search
+    App.tsx                  - Layout shell, view switching (graph/editor), search
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
@@ -95,7 +95,7 @@ frontend/
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
-      mockGraph.ts           - Development graph payload
+      mockGraph.ts           - Realistic college-student mock data (calculus, physics, philosophy, personal journal)
     test/
       setup.ts               - Vitest setup
     types/
@@ -118,7 +118,10 @@ backend/
     chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
-    query.py                - Query pipeline: search -> expand -> answer
+    context.py              - Context dedupe + budgeted prompt assembly for retrieval
+    local_search.py         - Seed retrieval, graph expansion, and discovery chunk ranking
+    query.py                - Query orchestration: embed -> local search -> context -> answer
+    types.py                - Retrieval dataclasses and internal config defaults
 sample_data/
   college_math_notes/
     catalog.json            - Metadata for the sample math note corpus
@@ -144,6 +147,8 @@ tests/
   test_api_notion.py        - Notion import API endpoint tests
   test_api_upload.py        - File upload API endpoint tests
   retrieval/
+    test_context.py         - Context ordering, dedupe, and budget tests
+    test_local_search.py    - Seed retrieval, traversal, and discovery chunk tests
     test_query.py           - Query pipeline tests
 ```
 
@@ -152,6 +157,17 @@ Each file has a single responsibility. Tests mirror the source structure.
 ## Sample Data Seeding
 
 `sample_data/college_math_notes` contains a small college-student math corpus for frontend document-opening tests. `scripts/seed_college_math_notes.py` loads the catalog, splits each markdown file into paragraph chunks, writes deterministic vectors plus chunk text into LanceDB, and upserts the matching Concept and RELATED_TO graph data into Kuzu. The seeder skips any sample `doc_id` values that are already present, so rerunning it does not duplicate the sample documents.
+
+## Mock Data
+
+`frontend/src/mock/mockGraph.ts` provides a realistic development dataset modeled as a college student's knowledge base across four domains:
+
+- **Calculus** (6 concepts): Limits, Derivatives, Integrals, Chain Rule, Fundamental Theorem of Calculus
+- **Physics** (7 concepts): Classical Mechanics, Newton's Laws, Conservation of Energy, Electromagnetism, Maxwell's Equations, Thermodynamics, Entropy
+- **Philosophy** (7 concepts): Epistemology, Rationalism, Empiricism, Ethics, Utilitarianism, Existentialism, Free Will
+- **Personal** (4 concepts): Study Habits, Time Management, Motivation, Career Goals
+
+Two bridge concepts (Differential Equations, Determinism) connect clusters across disciplines. 12 Document nodes link to concepts via MENTIONS edges. Cross-domain RELATED_TO edges model real interdisciplinary connections (e.g., Derivatives↔Newton's Laws, Entropy↔Determinism, Existentialism↔Motivation, Ethics↔Career Goals). Six `mockRelationshipDetailsByEdge` entries provide evidence documents for the most interesting cross-domain connections.
 
 ## Frontend Graph Flow
 
@@ -172,15 +188,13 @@ Graph3D -- react-force-graph-3d scene
   |         +-- click concept node -> persist highlight on directly connected edges
   |         +-- click RELATED_TO edge -> fetch /api/relationships/details
   |         +-- selected RELATED_TO edge -> strongest highlight + EdgeDetailPanel
-  |         +-- search -> highlight matches, center the first match in the viewport
+  |         +-- search -> highlight matches, smooth camera fly to the first match, dim non-matching nodes
   |         +-- load -> zoomToFit for default framing
   |         +-- idle (5s) -> slow in-place scene rotation around the brain center
   |         |                 or around the currently focused concept node
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
   |         +-- scroll wheel -> zoom camera in or out around the current focus point
-  |         +-- click node -> move that node to screen center, expand its documents, and request latent discovery tethers
-  |         +-- click document title in overlay -> render that document in the markdown reader
-  |         +-- double-click node -> center that node more tightly
+  |         +-- single-click node -> smooth camera fly to that node and request latent discovery tethers`r`n  |         +-- double-click node -> fly closer and open its documents in the expansion overlay`r`n  |         +-- click document title in overlay -> render that document in the markdown reader
   |         +-- clicked concept node -> becomes the active rotation pivot
   |         +-- double-click empty space / Escape -> restore brain-centered pivot
   |         +-- right-button drag -> rotate the scene object instead of orbiting the camera
@@ -194,13 +208,13 @@ GLTFLoader -- load human-brain.glb, center the model at the scene origin, derive
 The sidebar has a "New Note" button and a file upload option:
 
 1. **New Note** - clicking opens a full-page WYSIWYG markdown editor (NoteEditor) that covers the entire viewport. The editor uses Milkdown Crepe (ProseMirror-based) which renders markdown inline as you type — headings appear as headings, bold renders as bold, lists indent, LaTeX math renders via KaTeX (`$inline$` and `$$block$$`). A toolbar provides formatting buttons. Markdown shortcuts work like Obsidian: type `###` for a heading, `**` for bold, `-` for a list. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
-2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped with a `"duplicate"` reason. On completion, a summary shows the total ingested count, or a partial-failure message if some files failed.
+2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped, and the frontend shows a notification naming which files already exist (e.g. "notes already exists"). On completion, a summary shows the total ingested count, duplicate names, or a partial-failure message.
 
 3. **Import from Notion** - user clicks "Import from Notion" in the sidebar, enters their Notion integration token and a page/database URL, and clicks Import. The frontend `POST /ingest/notion` sends `{token, url}`. The backend parses the URL to determine page vs database, fetches content via the Notion API, converts blocks to markdown, and runs each page through the standard ingest pipeline. Success shows the number of pages imported.
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, reserves left-click for node interactions such as focus and document expansion, and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width now scales by relationship weight (`Math.log((weight || 1) + 1) * 3.5`) to make co-occurrence strength differences easier to see. Unfocused edges use a translucent bluish-white base color so graph structure remains visible before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target, resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation, and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, and clicking a document title sends that document into `MarkdownDocumentViewer`, which renders `full_text` in-place via `react-markdown` without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+<<The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, reserves left-click for node interactions (single click = smooth camera fly to node and latent discovery tether request, double click = fly closer and open document expansion overlay), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width now scales by relationship weight (`Math.log((weight || 1) + 1) * 3.5`) to make co-occurrence strength differences easier to see. Unfocused edges use a translucent bluish-white base color so graph structure remains visible before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target, resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation, and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, and clicking a document title sends that document into `MarkdownDocumentViewer`, which renders `full_text` in-place via `react-markdown` without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. Discovery Mode adds temporary latent tethers from the selected concept to semantically similar documents returned by `/api/discovery/latent/{concept_name}`; these ghost links are dashed and use a distinct violet tint, and the user can toggle them on or off from the graph UI. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. That panel can be dismissed either with its close button or by pressing `Escape`.
 
@@ -303,27 +317,33 @@ The Notion service (`backend/services/notion.py`) handles URL parsing, rich text
 Input: question
   |
   v
+api.py -> get_kuzu_engine() -- reuse the shared Kuzu Database handle
+  |
+  v
 embeddings.embed_query() -- embed question to 384-dim vector
   |
   v
-LanceDB.search() -- top 5 nearest chunks (vector similarity)
+local_search.build_chunk_seed_set() -- top 5 nearest chunks + ordered source concepts
   |
   v
-LanceDB chunk metadata -- read per-chunk `concepts[]` as source concepts
+local_search.expand_related_concepts() -- configurable BFS over RELATED_TO edges
   v
-Kuzu: 1-hop expansion -- for each source Concept, find RELATED_TO
-  |                       neighbors = "discovery concepts"
+local_search.select_discovery_chunks() -- ranked extra chunks for discovery concepts
   v
-LanceDB chunk metadata -- get extra chunk texts for discovery concepts
+context.assemble_context_chunks() -- seed chunks first, then discovery chunks,
+  |                                 dedupe by chunk id/text, apply word budget
   |
   v
-llm.generate_answer() -- Gemini or Ollama generates grounded answer from all context
+context.build_context_text() -- join selected chunk texts with separators
+  |
+  v
+llm.generate_answer() -- Gemini or Ollama generates grounded answer from ordered context
   |
   v
 Output: { answer, source_concepts, discovery_concepts }
 ```
 
-The 1-hop graph expansion is what surfaces "hidden" connections - concepts not in the original search results but semantically linked through the knowledge graph.
+The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. The retrieval path is still local-search-only in this phase, but it is now split into explicit steps with an internal `RetrievalConfig` for seed limits, graph-hop depth, discovery-chunk limits, and context budget. Default behavior stays equivalent to the old path: top-5 chunk seeds, 1-hop graph expansion, and the same external `/query` response shape.
 
 ## API Endpoints
 
@@ -333,7 +353,7 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 
 ### `POST /query`
 - Body: `{"question": "..."}`
-- Returns: `{"answer": "...", "discovery_concepts": [...]}`
+- Returns: `{"answer": "...", "source_concepts": [...], "discovery_concepts": [...]}`
 
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
@@ -402,6 +422,9 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -10,7 +10,6 @@ import {
   DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
-  centerCameraOnTarget,
   conceptColorFromScore,
   createFocusSet,
   findMatchingNodeIds,
@@ -96,8 +95,8 @@ interface Graph3DProps {
   data: GraphData;
   source: GraphSource;
   query: string;
-  hoveredNode: GraphNode | null;
-  onHoverNode: (node: GraphNode | null) => void;
+  hoveredNode?: GraphNode | null;
+  onHoverNode?: (node: GraphNode | null) => void;
 }
 
 interface SelectedRelationshipEdge {
@@ -159,9 +158,12 @@ export function Graph3D({
   data,
   source: graphSource,
   query,
-  hoveredNode,
-  onHoverNode,
+  hoveredNode: hoveredNodeProp,
+  onHoverNode: onHoverNodeProp,
 }: Graph3DProps) {
+  const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
+  const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
+  const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
@@ -177,6 +179,8 @@ export function Graph3D({
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const expandedConceptIdRef = useRef<string | null>(null);
+  const cameraAnimationRef = useRef<number | null>(null);
+  const lastSearchTargetIdRef = useRef<string | null>(null);
 
   const [expandedConcept, setExpandedConcept] = useState<GraphNode | null>(null);
   const [expandedDocs, setExpandedDocs] = useState<RelationshipDocument[] | null>(null);
@@ -275,7 +279,7 @@ export function Graph3D({
     setIsRelationshipLoading(false);
   }
 
-  function getNodeThreeObject(node: GraphNode): THREE.Object3D | null {
+  const getNodeThreeObject = useCallback((node: GraphNode): THREE.Object3D | null => {
     const group = new THREE.Group();
 
     const hash = String(node.id).split('').reduce((acc, char) => {
@@ -309,7 +313,11 @@ export function Graph3D({
     const haloGroup = new THREE.Group();
     haloGroup.name = 'halo';
 
-    const haloMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const haloMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: false,
+      opacity: 1,
+    });
     const haloGeom = new THREE.SphereGeometry(0.4, 8, 8);
 
     if (!haloDataMapRef.current[node.id]) {
@@ -355,7 +363,9 @@ export function Graph3D({
     };
 
     return group;
-  }
+  // Only recreate node objects when the actual graph data changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayData]);
 
   function clampNodesWithinBrain(refresh = false) {
     const containment = brainContainmentRef.current;
@@ -466,11 +476,14 @@ export function Graph3D({
   function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
     sceneFocusPointRef.current = point;
     applySceneFocusPoint();
-    centerCameraOnTarget(
-      graphRef,
-      lookAtTargetRef.current,
-      distance,
-      CAMERA_MOVE_DURATION_MS,
+    const target = lookAtTargetRef.current;
+    animateCamera(
+      {
+        x: target.x,
+        y: target.y + distance * 0.08,
+        z: target.z + distance,
+      },
+      target,
     );
   }
 
@@ -517,11 +530,14 @@ export function Graph3D({
       resetSceneTransform();
       sceneFocusPointRef.current = brainHomeView.focusPoint;
       applySceneFocusPoint();
-      centerCameraOnTarget(
-        graphRef,
-        lookAtTargetRef.current,
-        brainHomeView.distance,
-        CAMERA_MOVE_DURATION_MS,
+      const target = lookAtTargetRef.current;
+      animateCamera(
+        {
+          x: target.x,
+          y: target.y + brainHomeView.distance * 0.08,
+          z: target.z + brainHomeView.distance,
+        },
+        target,
       );
       return;
     }
@@ -598,7 +614,7 @@ export function Graph3D({
 
     const lookAt = lookAtTargetRef.current;
 
-    graphRef.current?.cameraPosition(
+    animateCamera(
       {
         x: lookAt.x + (currentPosition.x - lookAt.x) * scale,
         y: lookAt.y + (currentPosition.y - lookAt.y) * scale,
@@ -642,7 +658,12 @@ export function Graph3D({
 
     let docs: RelationshipDocument[] = [];
     try {
-      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       if (response.ok) {
         docs = await response.json();
       }
@@ -694,6 +715,73 @@ export function Graph3D({
     }
   }
 
+  function animateCamera(
+    targetPos: { x: number; y: number; z: number },
+    targetLookAt: { x: number; y: number; z: number },
+    durationMs: number = CAMERA_MOVE_DURATION_MS,
+  ) {
+    // Cancel any in-flight camera animation so consecutive moves don't conflict.
+    if (cameraAnimationRef.current !== null) {
+      cancelAnimationFrame(cameraAnimationRef.current);
+      cameraAnimationRef.current = null;
+    }
+
+    const cam = graphRef.current?.cameraPosition();
+    if (!cam) return;
+
+    const startCam = { x: cam.x, y: cam.y, z: cam.z };
+    const startLookAt = { ...lookAtTargetRef.current };
+    const startTime = performance.now();
+
+    function animate() {
+      const elapsed = performance.now() - startTime;
+      const t = Math.min(elapsed / durationMs, 1);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+
+      const pos = {
+        x: startCam.x + (targetPos.x - startCam.x) * eased,
+        y: startCam.y + (targetPos.y - startCam.y) * eased,
+        z: startCam.z + (targetPos.z - startCam.z) * eased,
+      };
+      const look = {
+        x: startLookAt.x + (targetLookAt.x - startLookAt.x) * eased,
+        y: startLookAt.y + (targetLookAt.y - startLookAt.y) * eased,
+        z: startLookAt.z + (targetLookAt.z - startLookAt.z) * eased,
+      };
+
+      graphRef.current?.cameraPosition(pos, look);
+      lookAtTargetRef.current = look;
+
+      if (t < 1) {
+        cameraAnimationRef.current = requestAnimationFrame(animate);
+      } else {
+        cameraAnimationRef.current = null;
+      }
+    }
+
+    cameraAnimationRef.current = requestAnimationFrame(animate);
+  }
+
+  function smoothFlyToNode(nodePoint: { x: number; y: number; z: number }, distance: number) {
+    const worldPos = toWorldPoint(nodePoint);
+    const cam = graphRef.current?.cameraPosition();
+    if (!cam) return;
+
+    const dx = cam.x - worldPos.x;
+    const dy = cam.y - worldPos.y;
+    const dz = cam.z - worldPos.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+
+    animateCamera(
+      {
+        x: worldPos.x + (dx / len) * distance,
+        y: worldPos.y + (dy / len) * distance,
+        z: worldPos.z + (dz / len) * distance,
+      },
+      { x: worldPos.x, y: worldPos.y, z: worldPos.z },
+    );
+  }  }
+
   function handleNodeClick(node: GraphNode) {
     if (node.type === 'Document') {
       return;
@@ -719,14 +807,16 @@ export function Graph3D({
       lastNodeClickRef.current.nodeId === node.id &&
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
-      focusPoint(nodePoint, 100);
+      // Double click: zoom closer and open documents
+      smoothFlyToNode(nodePoint, 100);
+      void handleConceptExpansion(node);
       lastNodeClickRef.current = null;
       return;
     }
 
+    // Single click: fly to node only
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
-    focusPoint(nodePoint, 160);
-    void handleConceptExpansion(node);
+    smoothFlyToNode(nodePoint, 160);
     void loadLatentDiscovery(node);
   }
 
@@ -832,6 +922,13 @@ export function Graph3D({
 
       stopIdleRotation();
     };
+  }, []);
+
+  // Increase charge repulsion so nodes spread out within the brain volume
+  useEffect(() => {
+    const fg = graphRef.current as any;
+    if (!fg?.d3Force) return;
+    fg.d3Force('charge')?.strength(-120);
   }, []);
 
   useEffect(() => {
@@ -974,6 +1071,7 @@ export function Graph3D({
 
   useEffect(() => {
     if (!query.trim()) {
+      lastSearchTargetIdRef.current = null;
       return;
     }
 
@@ -981,10 +1079,17 @@ export function Graph3D({
     const firstMatch = displayData.nodes.find((node) => node.id === firstMatchId);
 
     if (!firstMatch) {
+      lastSearchTargetIdRef.current = null;
       return;
     }
 
-    focusPoint(
+    // Skip if already flying to this same node (e.g. "c" → "ca" → "cal" all match "Calculus")
+    if (firstMatch.id === lastSearchTargetIdRef.current) {
+      return;
+    }
+
+    lastSearchTargetIdRef.current = firstMatch.id;
+    smoothFlyToNode(
       {
         x: firstMatch.x ?? 0,
         y: firstMatch.y ?? 0,
@@ -996,20 +1101,42 @@ export function Graph3D({
 
   useEffect(() => {
     let frameId: number;
+    const hasQuery = query.trim().length > 0;
     const animate = () => {
       const time = performance.now();
 
       displayData.nodes.forEach((node) => {
         const obj = (node as any).__threeObj as THREE.Object3D | undefined;
-        if (obj && typeof obj.userData.update === 'function') {
+        if (!obj) return;
+
+        if (typeof obj.userData.update === 'function') {
           obj.userData.update(time);
         }
+
+        // Dim non-matching nodes during search
+        const isDimmed = hasQuery && !matchedNodeIds.has(node.id);
+        obj.traverse((child) => {
+          if (child instanceof THREE.Mesh && child.material) {
+            const mat = child.material as THREE.MeshBasicMaterial | THREE.MeshPhysicalMaterial;
+            if (child.parent?.name === 'halo') {
+              mat.color.set(isDimmed ? 0x334155 : 0xffffff);
+              mat.opacity = isDimmed ? 0.15 : 1;
+              mat.transparent = true;
+            } else if ('transmission' in mat) {
+              // Main sphere
+              (mat as any).opacity = isDimmed ? 0.06 : 0.4;
+            }
+          }
+          if (child instanceof THREE.Sprite && child.material) {
+            child.material.opacity = isDimmed ? 0.1 : 1;
+          }
+        });
       });
       frameId = requestAnimationFrame(animate);
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [displayData.nodes]);
+  }, [displayData.nodes, query, matchedNodeIds]);
 
   useEffect(() => {
     if (expandedConcept) stopIdleRotation();
@@ -1131,6 +1258,27 @@ export function Graph3D({
     return Math.log(weight + 1) * ESTABLISHED_LINK_WIDTH_MULTIPLIER;
   }
 
+  // Stable callback refs so ForceGraph3D doesn't see new function identity on every render
+  const handleNodeClickRef = useRef(handleNodeClick);
+  handleNodeClickRef.current = handleNodeClick;
+  const handleLinkClickRef = useRef(handleLinkClick);
+  handleLinkClickRef.current = handleLinkClick;
+  const onHoverNodeRef = useRef(onHoverNode);
+  onHoverNodeRef.current = onHoverNode;
+  const clampNodesWithinBrainRef = useRef(clampNodesWithinBrain);
+  clampNodesWithinBrainRef.current = clampNodesWithinBrain;
+
+  const onNodeClick = useCallback((node: object) => handleNodeClickRef.current(node as GraphNode), []);
+  const onLinkClick = useCallback((link: object) => void handleLinkClickRef.current(link as GraphLink), []);
+  const onNodeHover = useCallback((node: object | null) => onHoverNodeRef.current((node as GraphNode | null) ?? null), []);
+  const onEngineTick = useCallback(() => {
+    clampNodesWithinBrainRef.current();
+    if (activeRotationNodeIdRef.current) {
+      applySceneFocusPoint();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div
       ref={containerRef}
@@ -1189,7 +1337,7 @@ export function Graph3D({
           const candidate = node as GraphNode;
           return candidate.fx !== undefined ? 0.5 : 1;
         }}
-        nodeThreeObject={(node) => getNodeThreeObject(node as GraphNode) as THREE.Object3D}
+        nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
@@ -1201,15 +1349,10 @@ export function Graph3D({
         cooldownTicks={120}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}
-        onEngineTick={() => {
-          clampNodesWithinBrain();
-          if (activeRotationNodeIdRef.current) {
-            applySceneFocusPoint();
-          }
-        }}
-        onLinkClick={(link) => void handleLinkClick(link as GraphLink)}
-        onNodeClick={(node) => handleNodeClick(node as GraphNode)}
-        onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
+        onEngineTick={onEngineTick}
+        onLinkClick={onLinkClick}
+        onNodeClick={onNodeClick}
+        onNodeHover={onNodeHover}
         enableNodeDrag={false}
         enableNavigationControls={false}
         controlType="orbit"
@@ -1269,6 +1412,8 @@ export function Graph3D({
     </div>
   );
 }
+
+
 
 
 

@@ -50,7 +50,7 @@ vi.mock('./components/ChatPanel', () => ({
 import App from './App';
 
 describe('App', () => {
-  it('renders the shell, graph summary, node legend, and keeps chat state when users toggle the panel', async () => {
+  it('renders the shell and graph summary without node legend or hover details', async () => {
     const user = userEvent.setup();
 
     render(<App />);
@@ -72,8 +72,13 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
     expect(screen.getByText('BrainBank')).toBeInTheDocument();
     expect(screen.getByText('Mock data')).toBeInTheDocument();
-    expect(screen.getByText('Concept')).toBeInTheDocument();
-    expect(screen.getByText('Document')).toBeInTheDocument();
+
+    // Node legend and hover details should NOT be present
+    expect(screen.queryByText('Node legend')).not.toBeInTheDocument();
+    expect(screen.queryByText('Hover details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Hover a node to inspect its local neighborhood.')).not.toBeInTheDocument();
+
+    // Chat toggle still works and preserves state
     await user.type(screen.getByLabelText('Draft'), 'Persist me');
     expect(screen.getByDisplayValue('Persist me')).toBeInTheDocument();
 

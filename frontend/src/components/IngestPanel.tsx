@@ -31,6 +31,7 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
     const total = fileList.length;
     let succeeded = 0;
     let failed = 0;
+    const duplicates: string[] = [];
 
     setResult(null);
 
@@ -50,6 +51,12 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
 
         const data = await response.json();
         succeeded += data.imported ?? 1;
+
+        for (const r of data.results ?? []) {
+          if (r.skipped && r.reason === 'duplicate') {
+            duplicates.push(r.title);
+          }
+        }
       } catch {
         failed++;
       }
@@ -57,11 +64,18 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
 
     setUploadProgress(null);
 
-    if (failed === 0) {
+    if (duplicates.length > 0 && succeeded === 0 && failed === 0) {
+      const names = duplicates.join(', ');
       setResult({
-        type: 'success',
-        message: `${succeeded} file${succeeded === 1 ? '' : 's'} ingested`,
+        type: 'error',
+        message: `${names} already exists`,
       });
+    } else if (failed === 0) {
+      let message = `${succeeded} file${succeeded === 1 ? '' : 's'} ingested`;
+      if (duplicates.length > 0) {
+        message += ` (${duplicates.join(', ')} already exists)`;
+      }
+      setResult({ type: 'success', message });
     } else if (succeeded === 0) {
       setResult({
         type: 'error',

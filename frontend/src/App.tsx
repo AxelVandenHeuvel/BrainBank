@@ -20,16 +20,7 @@ class EditorErrorBoundary extends Component<{ children: ReactNode; onError: () =
   }
 }
 import { useGraphData } from './hooks/useGraphData';
-import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
-import type { GraphNode, GraphNodeType } from './types/graph';
-
-const NODE_TYPES: GraphNodeType[] = [
-  'Concept',
-  'Document',
-  'Project',
-  'Task',
-  'Reflection',
-];
+import { findMatchingNodeIds } from './lib/graphView';
 
 function formatSourceLabel(source: 'api' | 'mock'): string {
   return source === 'api' ? 'Live API' : 'Mock data';
@@ -40,10 +31,9 @@ function getChatToggleLabel(isChatOpen: boolean): string {
 }
 
 export default function App() {
-  const { data, source, isLoading, error, refetch } = useGraphData();
+  const { data, source, error, refetch } = useGraphData();
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
-  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [view, setView] = useState<'graph' | 'editor'>('graph');
   const [isChatOpen, setIsChatOpen] = useState(true);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
@@ -104,36 +94,6 @@ export default function App() {
             ) : null}
           </section>
 
-          <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-slate-200">Node legend</h2>
-              {isLoading ? (
-                <span className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">
-                  Loading
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-4 space-y-3">
-              {NODE_TYPES.map((type) => (
-                <div key={type} className="flex items-center gap-3 text-sm text-slate-300">
-                  <span
-                    className="h-3 w-3 rounded-full shadow-[0_0_18px_currentColor]"
-                    style={{ backgroundColor: NODE_TYPE_COLORS[type], color: NODE_TYPE_COLORS[type] }}
-                  />
-                  <span>{type}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-300">
-            <h2 className="font-medium text-slate-200">Hover details</h2>
-            <p className="mt-3 leading-6">
-              {hoveredNode
-                ? `${hoveredNode.name} is active in the graph.`
-                : 'Hover a node to inspect its local neighborhood.'}
-            </p>
-          </section>
         </aside>
 
         <section className="min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
@@ -151,8 +111,6 @@ export default function App() {
               data={data}
               source={source}
               query={deferredQuery}
-              hoveredNode={hoveredNode}
-              onHoverNode={setHoveredNode}
             />
           )}
         </section>

@@ -150,6 +150,61 @@ describe('IngestPanel', () => {
     expect(onIngestComplete).toHaveBeenCalled();
   });
 
+  it('shows duplicate notification when file already exists', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          imported: 0,
+          results: [{ title: 'notes', skipped: true, reason: 'duplicate' }],
+        }),
+    } as Response);
+
+    render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
+
+    const file = new File(['# Notes'], 'notes.md', { type: 'text/markdown' });
+    const fileInput = screen.getByTestId('file-input');
+    await user.upload(fileInput, file);
+
+    await waitFor(() => {
+      expect(screen.getByText(/already exists/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows duplicate names when some files are duplicates in a batch', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            imported: 1,
+            results: [{ title: 'file1', doc_id: '1' }],
+          }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            imported: 0,
+            results: [{ title: 'file2', skipped: true, reason: 'duplicate' }],
+          }),
+      } as Response);
+
+    render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
+
+    const file1 = new File(['content 1'], 'file1.md', { type: 'text/markdown' });
+    const file2 = new File(['content 2'], 'file2.md', { type: 'text/markdown' });
+    const fileInput = screen.getByTestId('file-input');
+    await user.upload(fileInput, [file1, file2]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 file ingested/i)).toBeInTheDocument();
+      expect(screen.getByText(/file2 already exists/i)).toBeInTheDocument();
+    });
+  });
+
   it('renders Import from Notion button', () => {
     render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
     expect(screen.getByRole('button', { name: /import from notion/i })).toBeInTheDocument();

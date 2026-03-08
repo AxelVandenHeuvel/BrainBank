@@ -49,10 +49,9 @@ def isolate_api_data(monkeypatch, lance_path, kuzu_path):
         "backend.retrieval.query.init_lancedb",
         lambda path="./data/lancedb": real_init_lancedb(lance_path),
     )
-    # Reuse the already-open DB to avoid a second file-lock attempt.
     monkeypatch.setattr(
-        "backend.retrieval.query.init_kuzu",
-        lambda path="./data/kuzu": (real_kuzu_db, kuzu.Connection(real_kuzu_db)),
+        "backend.api.get_kuzu_engine",
+        lambda path="./data/kuzu": real_kuzu_db,
     )
 
 

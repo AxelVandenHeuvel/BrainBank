@@ -61,7 +61,10 @@ async def ingest(req: IngestRequest):
 @app.post("/query")
 async def query(req: QueryRequest):
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, partial(query_brainbank, req.question))
+    result = await loop.run_in_executor(
+        None,
+        partial(query_brainbank, req.question, shared_kuzu_db=get_kuzu_engine()),
+    )
     return {
         "answer": result["answer"],
         "source_concepts": result["source_concepts"],
