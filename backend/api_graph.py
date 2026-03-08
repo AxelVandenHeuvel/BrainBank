@@ -9,23 +9,29 @@ graph_router = APIRouter(prefix="/api")
 
 @graph_router.get("/graph")
 def get_graph():
-    """Return Concept nodes and RELATED_TO edges for frontend visualization."""
-    try:
-        nodes = []
-        edges = []
+    """Return all nodes and edges for frontend visualization."""
+    _, conn = init_kuzu()
 
-        result = conn.execute("MATCH (c:Concept) RETURN c.name")
-        while result.has_next():
-            name = result.get_next()[0]
-            nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
+    nodes = []
+    edges = []
 
-        result = conn.execute(
-            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
+    # Concept nodes from Kuzu
+    result = conn.execute("MATCH (c:Concept) RETURN c.name")
+    while result.has_next():
+        name = result.get_next()[0]
+        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
+
+    # RELATED_TO edges from Kuzu
+    result = conn.execute(
+        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
+    )
+    while result.has_next():
+        row = result.get_next()
+        edges.append(
+            {"source": f"concept:{row[0]}", "target": f"concept:{row[1]}", "type": row[2]}
         )
 
-        return {"nodes": nodes, "edges": edges}
-    finally:
-        print("Finished get_graph, leaving connection open to avoid write locks")
+    return {"nodes": nodes, "edges": edges}
 
 
 @graph_router.get("/concepts")
@@ -40,7 +46,6 @@ def get_concepts():
     while result.has_next():
         name = result.get_next()[0]
 
-        # Count distinct documents that have chunks tagged with this concept
         if df.empty:
             doc_count = 0
         else:
@@ -49,7 +54,6 @@ def get_concepts():
                 exploded[exploded["concepts"] == name]["doc_id"].nunique()
             )
 
-        # Related concepts from Kuzu
         rel_result = conn.execute(
             "MATCH (c:Concept {name: $name})-[:RELATED_TO]-(other:Concept) "
             "RETURN other.name",
@@ -62,7 +66,7 @@ def get_concepts():
         concepts.append(
             {"name": name, "document_count": doc_count, "related_concepts": related}
         )
-    print("Finished get_concepts, leaving connection open to avoid write locks")
+
     return {"concepts": concepts}
 
 
@@ -114,20 +118,18 @@ def get_concept_documents(concept_name: str):
 @graph_router.get("/stats")
 def get_stats():
     """Return aggregate counts across the knowledge graph."""
-    try:
-        _, table = init_lancedb()
-        df = table.to_pandas()
+    _, conn = init_kuzu()
+    _, table = init_lancedb()
+    df = table.to_pandas()
 
-        concept_result = conn.execute("MATCH (c:Concept) RETURN count(c)")
-        rel_result = conn.execute("MATCH ()-[r:RELATED_TO]->() RETURN count(r)")
+    concept_result = conn.execute("MATCH (c:Concept) RETURN count(c)")
+    rel_result = conn.execute("MATCH ()-[r:RELATED_TO]->() RETURN count(r)")
 
-        total_documents = int(df["doc_id"].nunique()) if not df.empty else 0
+    total_documents = int(df["doc_id"].nunique()) if not df.empty else 0
 
-        return {
-            "total_documents": total_documents,
-            "total_chunks": len(df),
-            "total_concepts": concept_result.get_next()[0],
-            "total_relationships": rel_result.get_next()[0],
-        }
-    finally:
-        print("Finished stats, leaving connection open to avoid write locks")
+    return {
+        "total_documents": total_documents,
+        "total_chunks": len(df),
+        "total_concepts": concept_result.get_next()[0],
+        "total_relationships": rel_result.get_next()[0],
+    }
