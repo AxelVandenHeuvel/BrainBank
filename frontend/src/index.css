@@ -4,6 +4,7 @@
   color-scheme: dark;
   font-family: "Inter", "Avenir Next", "Trebuchet MS", sans-serif;
   background: #000;
+  --accent-hot-pink: #ec4899;
 }
 
 html,
@@ -62,4 +63,17 @@ body {
 
 .md-no-placeholder::before {
   display: none !important;
+}
+
+.sidebar-files-content {
+  direction: ltr;
+}
+
+.sidebar-files-scroll-container {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-files-scroll-container::-webkit-scrollbar {
+  display: none;
 }

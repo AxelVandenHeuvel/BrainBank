@@ -219,6 +219,25 @@ describe('App', () => {
     expect(screen.getByTestId('sidebar-content')).toBeInTheDocument();
   });
 
+  it('uses the files section shell while FileExplorer renders a custom left-side hot-pink scroll rail', () => {
+    render(<App />);
+
+    const sidebar = screen.getByTestId('sidebar');
+    const filesSection = screen.getByTestId('sidebar-files-section');
+    const fileTree = screen.getByTestId('file-explorer-tree');
+    const fileExplorerScrollShell = screen.getByTestId('file-explorer-scroll-shell');
+    const fileExplorerScrollRail = screen.getByTestId('file-explorer-scroll-rail');
+    const fileExplorerScrollThumb = screen.getByTestId('file-explorer-scroll-thumb');
+
+    expect(sidebar).not.toHaveClass('lg:overflow-y-auto');
+    expect(filesSection).toHaveClass('min-h-0', 'flex', 'flex-1', 'flex-col');
+    expect(filesSection).not.toHaveClass('overflow-y-auto');
+    expect(fileExplorerScrollShell).toHaveClass('min-h-0', 'flex-1');
+    expect(fileExplorerScrollRail).toHaveClass('absolute', 'bottom-0', 'left-0', 'top-0', 'w-[3px]');
+    expect(fileExplorerScrollThumb).toHaveClass('absolute', 'left-0', 'w-[3px]', 'rounded-none');
+    expect(fileTree).toHaveClass('sidebar-files-content');
+  });
+
   it('supports chat toggle and preserves state', async () => {
     const user = userEvent.setup();
     render(<App />);
