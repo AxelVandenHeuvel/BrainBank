@@ -66,56 +66,16 @@ def extract_concepts(text: str, doc_name: str) -> dict:
     client = _get_client()
     prompt = (
         "Analyze the following document and extract:\n"
-        '1. A list of "Core Concepts" (key topics, ideas, or entities)\n'
-        '2. A list of "Relationships" between concepts\n\n'
+        '1. A list of meaningful core concepts. These are the main ideas, topics, or entities that have clear conceptual meaning. Nothing like dates or times should be extracted. Instead, extract meaningful ideas such as "Machine Learning", "Meal Prep", "Ideas on Death", etc.\n'
         f"Document title: {doc_name}\n"
         f"Document text:\n{text}\n\n"
         "Respond ONLY with valid JSON in this format:\n"
-        '{"concepts": ["concept1", "concept2"], '
-        '"relationships": [{"from": "concept1", "to": "concept2", '
-        '"relationship": "related_to"}]}'
+        '{"concepts": ["concept1", "concept2", ...], '
     )
     response = client.models.generate_content(
         model=_get_model_name(), contents=prompt
     )
     return _parse_json_response(response.text)
-
-
-def extract_knowledge(text: str, doc_name: str) -> dict:
-    """Extract all knowledge types from text via Gemini."""
-    client = _get_client()
-    prompt = (
-        "Analyze the following journal entry and extract structured knowledge.\n"
-        "Return only valid JSON.\n\n"
-        "Extract these fields:\n"
-        "- concepts: key ideas, topics, or entities\n"
-        "- projects: things being built or actively worked on\n"
-        "- tasks: action items or next steps\n"
-        "- reflections: insights, lessons, or observations\n"
-        "- relationships: connections between any extracted items\n\n"
-        "Use concise names. Prefer lowercase snake_case values for relationship types.\n"
-        "Valid example relationship types include related_to, has_task, uses_concept, "
-        "part_of, inspired_by, depends_on, and learned_from.\n\n"
-        f"Document title: {doc_name}\n"
-        f"Document text:\n{text}\n\n"
-        "Respond ONLY with valid JSON in this format:\n"
-        "{"
-        '"concepts": ["Calculus", "Linear Algebra"], '
-        '"projects": [{"name": "BrainBank", "status": "in_progress"}], '
-        '"tasks": [{"name": "Implement graph database", "status": "pending"}], '
-        '"reflections": ["Graphs are more powerful than tables for knowledge modeling"], '
-        '"relationships": ['
-        '{"from": "Calculus", "to": "Linear Algebra", "type": "related_to"}, '
-        '{"from": "BrainBank", "to": "Implement graph database", "type": "has_task"}, '
-        '{"from": "BrainBank", "to": "Calculus", "type": "uses_concept"}'
-        "]"
-        "}"
-    )
-    response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
-    )
-    return _parse_json_response(response.text)
-
 
 def generate_answer(query: str, context: str, concepts: list[str]) -> str:
     prompt = (
