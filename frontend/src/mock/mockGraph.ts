@@ -127,6 +127,7 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
       name: 'Python for ML.md',
       full_text:
         'Python dominates ML tooling through libraries like NumPy, PyTorch, and Hugging Face.',
+        'Python dominates the ML ecosystem via NumPy, PyTorch, and the Hugging Face library. Its dynamic typing and REPL workflow suit rapid experimentation.',
     },
   ],
 };

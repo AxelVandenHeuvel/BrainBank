@@ -37,6 +37,7 @@ import type {
   RelationshipDetails,
 } from '../types/graph';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
+import { getMockDocumentsForConcept } from '../mock/mockGraph';
 import { NodeTooltip } from './NodeTooltip';
 
 interface OrbitControlsLike {
@@ -847,6 +848,7 @@ export function Graph3D({
     <div
       ref={containerRef}
       className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      onContextMenu={(event) => event.preventDefault()}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();

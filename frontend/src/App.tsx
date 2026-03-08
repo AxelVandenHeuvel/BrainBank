@@ -140,7 +140,7 @@ export default function App() {
         </section>
 
         <aside
-          className={`relative min-h-[70vh] ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
+          className={`relative min-h-[70vh] lg:min-h-0 lg:overflow-hidden ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
           aria-hidden={!isChatOpen}
         >
           <button
