@@ -10,6 +10,7 @@ export interface GraphNode {
   type: GraphNodeType;
   name: string;
   colorScore?: number;
+  community_id?: number | null;
   x?: number;
   y?: number;
   z?: number;

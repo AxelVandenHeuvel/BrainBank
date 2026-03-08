@@ -2,9 +2,10 @@ import kuzu as _kuzu
 import uuid
 from itertools import combinations
 
-from backend.db.kuzu import init_kuzu
+from backend.db.kuzu import init_kuzu, update_node_communities
 from backend.db.lance import init_lancedb
 from backend.ingestion.chunker import semantic_chunk_text as chunk_text
+from backend.services.clustering import run_leiden_clustering
 from backend.services.embeddings import (
     calculate_color_score,
     calculate_document_centroid,
@@ -107,6 +108,9 @@ def ingest_markdown(
                     "reason": SHARED_DOCUMENT_REASON,
                 },
             )
+
+        community_map = run_leiden_clustering(conn)
+        update_node_communities(conn, community_map)
 
         return {"doc_id": doc_id, "chunks": len(chunks), "concepts": concepts}
     finally:

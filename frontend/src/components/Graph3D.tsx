@@ -10,6 +10,7 @@ import {
   DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
+  communityColor,
   conceptColorFromScore,
   createFocusSet,
   findMatchingNodeIds,
@@ -129,7 +130,9 @@ const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
 const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.28)';
 const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.34)';
+const SEMANTIC_BRIDGE_COLOR = 'rgba(251, 191, 36, 0.6)';
 const GHOST_EDGE_WIDTH = 0.55;
+const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 325;
 const NEURON_MODEL_TARGET_DIAGONAL = 26;
@@ -436,6 +439,10 @@ export function Graph3D({
     return link.isGhost === true || link.type === 'LATENT_DISCOVERY';
   }
 
+  function isSemanticBridgeLink(link: GraphLink): boolean {
+    return link.type === 'SEMANTIC_BRIDGE';
+  }
+
   function clearSelectedEdge() {
     setSelectedEdge(null);
     setRelationshipDetails(null);
@@ -449,7 +456,11 @@ export function Graph3D({
     }
 
     const group = new THREE.Group();
-    const nodeColor = getVisualNodeColor(node);
+
+    const nodeColor =
+      node.type === 'Concept' && node.community_id != null
+        ? new THREE.Color(communityColor(node.community_id))
+        : getVisualNodeColor(node);
     const hexColor = `#${nodeColor.getHexString()}`;
 
     const modelGroup = neuronTemplate.clone(true);
@@ -1331,6 +1342,9 @@ export function Graph3D({
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
+      if (node.community_id != null) {
+        return communityColor(node.community_id);
+      }
       return conceptColorFromScore(node.colorScore);
     }
     return NODE_TYPE_COLORS[node.type];
@@ -1357,6 +1371,16 @@ export function Graph3D({
       return GHOST_EDGE_COLOR;
     }
 
+    if (isSemanticBridgeLink(link)) {
+      if (isSelectedLink(link) || isFocusedNodeLink(link) || isDirectHoverLink(link, hoveredNode)) {
+        return ACTIVE_LINK_COLOR;
+      }
+      if (focusedEdgeNodeId || hoveredNode) {
+        return DIMMED_LINK_COLOR;
+      }
+      return SEMANTIC_BRIDGE_COLOR;
+    }
+
     if (isSelectedLink(link)) {
       return ACTIVE_LINK_COLOR;
     }
@@ -1375,6 +1399,10 @@ export function Graph3D({
   function getLinkWidth(link: GraphLink): number {
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
+    }
+
+    if (isSemanticBridgeLink(link)) {
+      return SEMANTIC_BRIDGE_WIDTH;
     }
 
     const weight =

@@ -172,3 +172,29 @@ class TestInitKuzu:
         assert result.has_next()
         assert result.get_next()[0] == "Recursion clicked today"
 
+    def test_concept_stores_community_id(self, kuzu_path):
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'TestConcept'})")
+        conn.execute(
+            "MATCH (c:Concept {name: 'TestConcept'}) SET c.community_id = 3"
+        )
+        result = conn.execute(
+            "MATCH (c:Concept {name: 'TestConcept'}) RETURN c.community_id"
+        )
+        assert result.has_next()
+        assert result.get_next()[0] == 3
+
+    def test_update_node_communities_sets_community_ids(self, kuzu_path):
+        from backend.db.kuzu import update_node_communities
+
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Alpha'})")
+        conn.execute("CREATE (:Concept {name: 'Beta'})")
+
+        update_node_communities(conn, {"Alpha": 0, "Beta": 1})
+
+        r1 = conn.execute("MATCH (c:Concept {name: 'Alpha'}) RETURN c.community_id")
+        r2 = conn.execute("MATCH (c:Concept {name: 'Beta'}) RETURN c.community_id")
+        assert r1.get_next()[0] == 0
+        assert r2.get_next()[0] == 1
+

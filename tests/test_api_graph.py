@@ -115,6 +115,55 @@ class TestGetGraph:
         assert isinstance(node["colorScore"], float)
         assert 0.0 <= node["colorScore"] <= 1.0
 
+    def test_node_has_community_id(self):
+        _ingest_sample()
+        response = client.get("/api/graph")
+        node = response.json()["nodes"][0]
+        assert "community_id" in node
+        assert isinstance(node["community_id"], (int, type(None)))
+
+    def test_existing_concepts_receive_community_id_after_recluster(self):
+        """Pre-existing concepts (community_id = -1) get real IDs after recluster."""
+        _ingest_sample()
+
+        # Force community_id back to -1 to simulate a pre-migration database.
+        import kuzu as _kuzu
+        from backend.db.kuzu import get_kuzu_engine
+        db = get_kuzu_engine()
+        conn = _kuzu.Connection(db)
+        conn.execute("MATCH (c:Concept) SET c.community_id = -1")
+        conn.close()
+
+        # Trigger recluster endpoint.
+        response = client.post("/api/recluster")
+        assert response.status_code == 200
+
+        # All nodes should now have a real community_id.
+        graph = client.get("/api/graph").json()
+        concept_nodes = [n for n in graph["nodes"] if n["type"] == "Concept"]
+        assert all(n["community_id"] is not None for n in concept_nodes)
+
+    def test_semantic_bridge_edges_returned_with_correct_type(self):
+        """Edges inserted by heal_graph should surface as SEMANTIC_BRIDGE in the API."""
+        _ingest_sample()
+        # Directly insert a SEMANTIC_BRIDGE edge via the DB.
+        import kuzu as _kuzu
+        from backend.db.kuzu import get_kuzu_engine
+        db = get_kuzu_engine()
+        conn = _kuzu.Connection(db)
+        conn.execute(
+            "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Integrals'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'High semantic similarity discovered via embeddings', "
+            "weight: 0.95, edge_type: 'SEMANTIC_BRIDGE'}]->(b)"
+        )
+        conn.close()
+
+        response = client.get("/api/graph")
+        edges = response.json()["edges"]
+        bridge_edges = [e for e in edges if e["type"] == "SEMANTIC_BRIDGE"]
+        assert len(bridge_edges) >= 1
+        assert bridge_edges[0]["weight"] == pytest.approx(0.95, abs=1e-6)
+
     def test_edge_shape(self):
         _ingest_sample()
         response = client.get("/api/graph")

@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backend.api_graph import graph_router
-from backend.db.kuzu import get_kuzu_engine
+from backend.db.kuzu import get_kuzu_engine, update_node_communities
+from backend.services.clustering import run_leiden_clustering
 from backend.db.lance import find_existing_document
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
@@ -26,9 +27,23 @@ from backend.services.notion import (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Open the shared Kuzu database during startup to avoid first-request races."""
-    get_kuzu_engine()
+    """Open the shared Kuzu database and run clustering on existing concepts at startup."""
+    db = get_kuzu_engine()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _run_startup_clustering, db)
     yield
+
+
+def _run_startup_clustering(db) -> None:
+    if db is None:
+        return
+    import kuzu as _kuzu
+    conn = _kuzu.Connection(db)
+    try:
+        community_map = run_leiden_clustering(conn)
+        update_node_communities(conn, community_map)
+    finally:
+        conn.close()
 
 
 app = FastAPI(title="BrainBank", version="0.1.0", lifespan=lifespan)

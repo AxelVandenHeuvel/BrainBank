@@ -1,9 +1,10 @@
 import kuzu
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.db.kuzu import get_db_connection
+from backend.db.kuzu import get_db_connection, update_node_communities
 from backend.db.lance import init_lancedb
 from backend.retrieval.latent_discovery import concept_name_from_query_rows, find_latent_document_hits
+from backend.services.clustering import run_leiden_clustering
 from backend.schemas import (
     DiscoveryItemResponse,
     DiscoveryResponse,
@@ -44,17 +45,18 @@ def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse
 
 def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
     result = conn.execute(
-        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight"
+        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight, r.edge_type"
     )
     edges = []
     while result.has_next():
-        source, target, reason, weight = result.get_next()
+        source, target, reason, weight, edge_type = result.get_next()
         safe_weight = float(weight) if weight is not None else 1.0
+        safe_type = edge_type if edge_type else "RELATED_TO"
         edges.append(
             GraphEdgeResponse(
                 source=f"concept:{source}",
                 target=f"concept:{target}",
-                type="RELATED_TO",
+                type=safe_type,
                 reason=reason,
                 weight=safe_weight,
             )
@@ -67,10 +69,16 @@ def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
 def get_graph(conn: kuzu.Connection = Depends(get_db_connection)):
     """Return all concept nodes and edges for frontend visualization."""
     nodes = []
-    result = conn.execute("MATCH (c:Concept) RETURN c.name, c.colorScore")
+    result = conn.execute("MATCH (c:Concept) RETURN c.name, c.colorScore, c.community_id")
     while result.has_next():
-        name, color_score = result.get_next()
-        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name, "colorScore": color_score})
+        name, color_score, community_id = result.get_next()
+        nodes.append({
+            "id": f"concept:{name}",
+            "type": "Concept",
+            "name": name,
+            "colorScore": color_score,
+            "community_id": community_id if community_id is not None and community_id >= 0 else None,
+        })
 
     edges = [edge.model_dump() for edge in get_related_to_edges(conn)]
     return {"nodes": nodes, "edges": edges}
@@ -231,3 +239,11 @@ def get_stats(conn: kuzu.Connection = Depends(get_db_connection)):
         "total_concepts": concept_result.get_next()[0],
         "total_relationships": rel_result.get_next()[0],
     }
+
+
+@graph_router.post("/recluster")
+def recluster(conn: kuzu.Connection = Depends(get_db_connection)):
+    """Run Leiden clustering over all current Concept nodes and persist results."""
+    community_map = run_leiden_clustering(conn)
+    update_node_communities(conn, community_map)
+    return {"clustered": len(community_map)}
