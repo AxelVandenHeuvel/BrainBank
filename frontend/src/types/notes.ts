@@ -3,4 +3,5 @@ export interface OpenTab {
   title: string;
   content: string;
   isNew: boolean;
+  closable?: boolean; // defaults to true; set false for permanent tabs like Brain
 }

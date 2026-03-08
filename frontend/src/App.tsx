@@ -1,15 +1,18 @@
-import { startTransition, useCallback, useDeferredValue, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useMemo, useState } from 'react';
 
 import { ChatPanel } from './components/ChatPanel';
-import { EditorArea } from './components/EditorArea';
+import { DocumentEditor } from './components/DocumentEditor';
 import { FileExplorer } from './components/FileExplorer';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
 import { SearchBar } from './components/SearchBar';
+import { TabBar } from './components/TabBar';
 import { useGraphData } from './hooks/useGraphData';
 import { findMatchingNodeIds } from './lib/graphView';
 import { getMockDocumentsForConcept } from './mock/mockGraph';
 import type { OpenTab } from './types/notes';
+
+const BRAIN_TAB_ID = '__brain__';
 
 function getChatToggleLabel(isChatOpen: boolean): string {
   return isChatOpen ? 'Close chat panel' : 'Open chat panel';
@@ -30,7 +33,7 @@ export default function App() {
 
   // Tab system state
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [activeTabId, setActiveTabId] = useState<string>(BRAIN_TAB_ID);
   const [highlightedConcept, setHighlightedConcept] = useState<string | null>(null);
   const [fileTreeRefetchSignal, setFileTreeRefetchSignal] = useState(0);
 
@@ -45,13 +48,14 @@ export default function App() {
   }, []);
 
   function closeTab(tabId: string) {
+    if (tabId === BRAIN_TAB_ID) return;
     setOpenTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === tabId);
       if (idx === -1) return prev;
       const next = prev.filter((t) => t.id !== tabId);
       if (tabId === activeTabId) {
         if (next.length === 0) {
-          setActiveTabId(null);
+          setActiveTabId(BRAIN_TAB_ID);
         } else if (idx < next.length) {
           setActiveTabId(next[idx].id);
         } else {
@@ -124,6 +128,15 @@ export default function App() {
     }
   }
 
+  const allTabs = useMemo<OpenTab[]>(() => {
+    const brainTab: OpenTab = { id: BRAIN_TAB_ID, title: 'Brain', content: '', isNew: false, closable: false };
+    return [brainTab, ...openTabs];
+  }, [openTabs]);
+
+  const activeDocTab = activeTabId !== BRAIN_TAB_ID
+    ? openTabs.find((t) => t.id === activeTabId) ?? null
+    : null;
+
   function handleQueryChange(nextQuery: string) {
     startTransition(() => {
       setQuery(nextQuery);
@@ -194,7 +207,7 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Main content area: top bar + graph */}
+        {/* Main content area: top bar + tabs + content */}
         <div className="flex h-full min-w-0 flex-1 flex-col">
           {/* Top bar with search */}
           <div
@@ -204,10 +217,18 @@ export default function App() {
             <SearchBar query={query} matchCount={matchCount} onQueryChange={handleQueryChange} />
           </div>
 
-          {/* Graph area - always mounted, hidden via CSS when a tab is active */}
+          {/* Tab bar — always visible */}
+          <TabBar
+            tabs={allTabs}
+            activeTabId={activeTabId}
+            onSelectTab={selectTab}
+            onCloseTab={closeTab}
+          />
+
+          {/* Graph — always mounted, hidden via CSS when a doc tab is active */}
           <section
             className={
-              activeTabId !== null
+              activeTabId !== BRAIN_TAB_ID
                 ? 'invisible absolute -z-10 h-0 w-0 overflow-hidden'
                 : 'relative min-h-0 flex-1 overflow-hidden border-b border-white/[0.06]'
             }
@@ -221,15 +242,16 @@ export default function App() {
             />
           </section>
 
-          {/* Editor area - rendered when activeTabId is set */}
-          {activeTabId !== null && (
+          {/* Document editor — shown when a doc tab is active */}
+          {activeDocTab && (
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <EditorArea
-                tabs={openTabs}
-                activeTabId={activeTabId}
-                onSelectTab={selectTab}
-                onCloseTab={closeTab}
-                onTabTitleChange={handleTabTitleChange}
+              <DocumentEditor
+                key={activeTabId}
+                docId={activeDocTab.id}
+                initialTitle={activeDocTab.title}
+                initialContent={activeDocTab.content}
+                isNew={activeDocTab.isNew}
+                onTitleChange={handleTabTitleChange}
                 onSaved={handleDocSaved}
               />
             </section>

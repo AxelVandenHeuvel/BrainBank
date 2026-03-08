@@ -1089,6 +1089,12 @@ describe('Graph3D', () => {
         await Promise.resolve();
       });
 
+      // Advance past the dive zoom-in animation so onComplete fires
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
       const latestData = getLatestGraphProps().graphData;
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:abc123')).toBe(true);
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
@@ -1165,6 +1171,12 @@ describe('Graph3D', () => {
         await Promise.resolve();
       });
 
+      // Advance past the dive zoom-in animation so onComplete fires
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
       // API returned empty so mock fallback docs appear as sub-nodes
       const latestData = getLatestGraphProps().graphData;
       const docExpandNodes = latestData.nodes.filter((n: GraphNode) => n.id.startsWith('doc-expand:'));
@@ -1192,9 +1204,76 @@ describe('Graph3D', () => {
         await Promise.resolve();
       });
 
+      // Advance past the dive zoom-in animation
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
       // ConceptDocumentOverlay used to render a heading with concept name
       // and a "Back to graph (Esc)" button - neither should exist now
       expect(screen.queryByRole('button', { name: /back to graph/i })).toBeNull();
+    });
+
+    it('double-clicking a doc-expand node opens the document in a tab', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
+        { doc_id: 'def456', name: 'Other Notes', full_text: 'other content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+      const onOpenDocument = vi.fn();
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+          onOpenDocument={onOpenDocument}
+        />,
+      );
+
+      // First: double-click concept to expand it and inject doc sub-nodes
+      let onNodeClick = (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      }).onNodeClick;
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click — expands concept
+        await Promise.resolve();
+      });
+
+      // Advance past the dive zoom-in animation so onComplete fires
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
+      // Get the doc-expand node from the latest graph data
+      const latestData = getLatestGraphProps().graphData;
+      const docExpandNode = latestData.nodes.find(
+        (n: GraphNode) => n.id === 'doc-expand:abc123',
+      );
+      expect(docExpandNode).toBeDefined();
+
+      // Now double-click the doc-expand node to open it
+      onNodeClick = (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      }).onNodeClick;
+
+      await act(async () => {
+        onNodeClick(docExpandNode!); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(docExpandNode!); // double click — opens document
+      });
+
+      expect(onOpenDocument).toHaveBeenCalledWith('abc123', 'Math Notes', 'some content');
     });
   });
 
@@ -1237,6 +1316,9 @@ describe('Graph3D', () => {
       });
 
       onConceptFocused.mockClear();
+
+      // Advance past the double-click suppression window
+      vi.advanceTimersByTime(400);
 
       // Click background to clear
       const { onBackgroundClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {

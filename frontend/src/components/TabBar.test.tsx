@@ -68,6 +68,19 @@ describe('TabBar', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it('hides close button for non-closable tabs', () => {
+    const tabs: OpenTab[] = [
+      { id: 'pinned', title: 'Brain', content: '', isNew: false, closable: false },
+      { id: 'doc', title: 'Notes', content: '', isNew: false },
+    ];
+    render(
+      <TabBar tabs={tabs} activeTabId="pinned" onSelectTab={noop} onCloseTab={noop} />,
+    );
+    // Only the closable tab should have a close button
+    const closeButtons = screen.getAllByLabelText('Close tab');
+    expect(closeButtons).toHaveLength(1);
+  });
+
   it('new tabs show an unsaved indicator', () => {
     const tabs = makeTabs([{ id: 'new1', title: 'Draft', isNew: true }]);
     render(

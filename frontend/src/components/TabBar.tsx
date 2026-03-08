@@ -27,24 +27,26 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: TabBarPro
             }`}
           >
             <span className={`truncate ${tab.isNew ? 'italic' : ''}`}>{tab.title}</span>
-            <span
-              role="button"
-              aria-label="Close tab"
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                onCloseTab(tab.id);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
+            {tab.closable !== false && (
+              <span
+                role="button"
+                aria-label="Close tab"
+                tabIndex={0}
+                onClick={(e) => {
                   e.stopPropagation();
                   onCloseTab(tab.id);
-                }
-              }}
-              className="ml-auto shrink-0 rounded p-0.5 text-neutral-600 opacity-0 transition hover:text-pink-400 group-hover:opacity-100"
-            >
-              ×
-            </span>
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation();
+                    onCloseTab(tab.id);
+                  }
+                }}
+                className="ml-auto shrink-0 rounded p-0.5 text-neutral-600 opacity-0 transition hover:text-pink-400 group-hover:opacity-100"
+              >
+                ×
+              </span>
+            )}
           </button>
         );
       })}
