@@ -305,7 +305,7 @@ describe('Graph3D', () => {
     }).enableNavigationControls).toBe(false);
   });
 
-  it('renders the brain shell with a light pink wireframe color and opacity', async () => {
+  it('renders the brain shell with a white wireframe color and opacity', async () => {
     render(
       <Graph3D
         data={graph}
@@ -328,7 +328,7 @@ describe('Graph3D', () => {
     });
 
     expect(brainMaterials).not.toHaveLength(0);
-    const expectedBrainColor = new THREE.Color('#ec4899').lerp(new THREE.Color('#ffffff'), 0.4);
+    const expectedBrainColor = new THREE.Color('#FFFFFF');
     brainMaterials.forEach((material) => {
       expect(material.transparent).toBe(true);
       expect(material.opacity).toBeCloseTo(0.06, 6);
@@ -336,8 +336,8 @@ describe('Graph3D', () => {
     });
   });
 
-  it('renders a top-left checkbox control that fades the brain mesh in and out', async () => {
-    render(
+  it('renders a right-side brain mesh button with the zoom controls and toggles mesh visibility', async () => {
+    const { container } = render(
       <Graph3D
         data={graph}
         source="api"
@@ -351,9 +351,11 @@ describe('Graph3D', () => {
       await Promise.resolve();
     });
 
-    const toggleCheckbox = screen.getByRole('checkbox', { name: 'Brain mesh' });
-    expect(toggleCheckbox).toBeInTheDocument();
-    expect(toggleCheckbox).toBeChecked();
+    expect(screen.queryByLabelText('Discovery mode')).not.toBeInTheDocument();
+
+    const meshButton = screen.getByRole('button', { name: 'Hide brain mesh' });
+    expect(meshButton).toBeInTheDocument();
+    expect(container.querySelector('.absolute.right-4.top-4.flex.flex-col.gap-2.z-10')).not.toBeNull();
 
     const brainGroup = sceneObject.children[0] as THREE.Group | undefined;
     expect(brainGroup?.visible).toBe(true);
@@ -368,8 +370,8 @@ describe('Graph3D', () => {
       expect(material.opacity).toBeCloseTo(0.06, 6);
     });
 
-    fireEvent.click(toggleCheckbox);
-    expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).not.toBeChecked();
+    fireEvent.click(meshButton);
+    expect(screen.getByRole('button', { name: 'Show brain mesh' })).toBeInTheDocument();
     expect(brainGroup?.visible).toBe(true);
 
     await act(async () => {
@@ -392,8 +394,8 @@ describe('Graph3D', () => {
       expect(material.opacity).toBeCloseTo(0, 6);
     });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Brain mesh' }));
-    expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Show brain mesh' }));
+    expect(screen.getByRole('button', { name: 'Hide brain mesh' })).toBeInTheDocument();
     expect(brainGroup?.visible).toBe(true);
 
     await act(async () => {
@@ -1301,6 +1303,26 @@ describe('Graph3D', () => {
     );
   });
 
+  it('locks the graph shell and brain mesh to the chosen default colors without debug controls', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const graphShell = screen.getByTestId('graph-shell');
+    expect(graphShell).toHaveAttribute('data-background-hex', '#0E0F10');
+    expect(graphShell).toHaveAttribute('data-brain-mesh-hex', '#FFFFFF');
+    expect(screen.queryByTestId('graph-background-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('background-debug-picker')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Background color')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Brain mesh color')).not.toBeInTheDocument();
+  });
+
   it('zooms in and out with the scroll wheel', () => {
     const { container } = render(
       <Graph3D
@@ -1668,6 +1690,48 @@ describe('Graph3D', () => {
       const latestData = getLatestGraphProps().graphData;
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:abc123')).toBe(true);
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
+    });
+
+    it('frames the expanded visible set instead of zooming all the way into just the clicked node', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      cameraPosition.mockClear();
+      currentCameraPosition = { x: 0, y: 52, z: 650 };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(currentCameraPosition.y).toBeGreaterThan(3);
+      expect(currentCameraPosition.z).toBeGreaterThan(40);
+      expect(currentCameraPosition.z).toBeLessThan(160);
     });
 
     it('single-clicking a Concept node does not call onOpenDocument', async () => {
@@ -2333,9 +2397,6 @@ describe('Graph3D', () => {
       expect(withGhost.linkWidth(ghostLink)).toBeCloseTo(0.55, 6);
     }
 
-    fireEvent.click(screen.getByLabelText('Discovery mode'));
-
-    const withoutGhost = getLatestGraphProps();
-    expect(withoutGhost.graphData.links.some((link) => link.type === 'LATENT_DISCOVERY')).toBe(false);
+    expect(screen.queryByLabelText('Discovery mode')).not.toBeInTheDocument();
   });
 });

@@ -37,6 +37,11 @@ describe('FileExplorer', () => {
 
     render(<FileExplorer highlightedConcept={null} onOpenDocument={vi.fn()} />);
 
+    expect(screen.getByTestId('file-explorer-scroll-shell')).toBeInTheDocument();
+    expect(screen.getByTestId('file-explorer-scroll-container')).toBeInTheDocument();
+    expect(screen.getByTestId('file-explorer-scroll-rail')).toBeInTheDocument();
+    expect(screen.getByTestId('file-explorer-scroll-thumb')).toBeInTheDocument();
+    expect(screen.getByTestId('file-explorer-tree')).toHaveClass('sidebar-files-content');
     expect(screen.getByText('Algebra')).toBeInTheDocument();
     expect(screen.getByText('Calculus')).toBeInTheDocument();
     expect(screen.getByText('Physics')).toBeInTheDocument();

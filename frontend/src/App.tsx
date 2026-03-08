@@ -44,10 +44,32 @@ export default function App() {
 
   // --- Tab management ---
 
-  const openDocument = useCallback((docId: string, name: string, content: string) => {
+  const openDocument = useCallback((
+    docId: string,
+    name: string,
+    content: string,
+    options?: { isLoading?: boolean },
+  ) => {
     setOpenTabs((prev) => {
-      if (prev.find((t) => t.id === docId)) return prev;
-      return [...prev, { id: docId, title: name, content, isNew: false }];
+      const existingTab = prev.find((t) => t.id === docId);
+
+      if (existingTab) {
+        return prev.map((tab) => (
+          tab.id === docId
+            ? {
+                ...tab,
+                title: name,
+                content: content || tab.content,
+                isLoading: options?.isLoading ?? false,
+              }
+            : tab
+        ));
+      }
+
+      return [
+        ...prev,
+        { id: docId, title: name, content, isNew: false, isLoading: options?.isLoading ?? false },
+      ];
     });
     setActiveTabId(docId);
   }, []);
@@ -112,6 +134,7 @@ export default function App() {
             ...t,
             id: newDocId ?? docId,
             isNew: false,
+            isLoading: false,
             content: currentContent ?? t.content,
           };
         });
@@ -136,7 +159,7 @@ export default function App() {
     const mockDocs = getMockDocumentsForConcept(conceptName);
     const mockDoc = mockDocs.find((d) => d.doc_id === docId);
     const content = mockDoc?.full_text ?? '';
-    openDocument(docId, name, content);
+    openDocument(docId, name, content, { isLoading: source === 'api' && content.length === 0 });
 
     if (source === 'api') {
       fetch(`/api/documents/${encodeURIComponent(docId)}`)
@@ -146,15 +169,23 @@ export default function App() {
         })
         .then((doc: { doc_id: string; name: string; full_text: string }) => {
           setOpenTabs((prev) =>
-            prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
+            prev.map((t) => (
+              t.id === docId
+                ? { ...t, title: doc.name, content: doc.full_text, isLoading: false }
+                : t
+            )),
           );
         })
-        .catch(() => { /* already showing mock content */ });
+        .catch(() => {
+          setOpenTabs((prev) =>
+            prev.map((t) => (t.id === docId ? { ...t, isLoading: false } : t)),
+          );
+        });
     }
   }
 
   function handleChatOpenDocument(docId: string, name: string) {
-    openDocument(docId, name, '');
+    openDocument(docId, name, '', { isLoading: true });
 
     fetch(`/api/documents/${encodeURIComponent(docId)}`)
       .then((res) => {
@@ -163,10 +194,18 @@ export default function App() {
       })
       .then((doc: { doc_id: string; name: string; full_text: string }) => {
         setOpenTabs((prev) =>
-          prev.map((tab) => (tab.id === docId ? { ...tab, content: doc.full_text } : tab)),
+          prev.map((tab) => (
+            tab.id === docId
+              ? { ...tab, title: doc.name, content: doc.full_text, isLoading: false }
+              : tab
+          )),
         );
       })
-      .catch(() => {});
+      .catch(() => {
+        setOpenTabs((prev) =>
+          prev.map((tab) => (tab.id === docId ? { ...tab, isLoading: false } : tab)),
+        );
+      });
   }
 
   const allTabs = useMemo<OpenTab[]>(() => {
@@ -193,7 +232,7 @@ export default function App() {
         {/* Collapsible sidebar */}
         <aside
           data-testid="sidebar"
-          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 lg:overflow-y-auto ${
+          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${
             sidebarCollapsed ? 'w-[3rem]' : 'w-[22rem] p-4'
           }`}
         >
@@ -234,8 +273,11 @@ export default function App() {
           >
             <IngestPanel onIngestComplete={() => { refetch(); setFileTreeRefetchSignal((n) => n + 1); }} onNewNote={handleNewNote} />
 
-            <section className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] pt-3">
-              <p className="mb-2 px-1 text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+            <section
+              data-testid="sidebar-files-section"
+              className="min-h-0 flex flex-1 flex-col border-t border-white/[0.06] pt-3"
+            >
+              <p className="mb-2 px-1 text-left text-[10px] font-medium uppercase tracking-widest text-neutral-500">
                 Files
               </p>
               <FileExplorer
@@ -295,15 +337,24 @@ export default function App() {
           {/* Document editor — shown when a doc tab is active */}
           {activeDocTab && (
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <DocumentEditor
-                key={activeTabId}
-                docId={activeDocTab.id}
-                initialTitle={activeDocTab.title}
-                initialContent={activeDocTab.content}
-                isNew={activeDocTab.isNew}
-                onTitleChange={handleTabTitleChange}
-                onSaved={handleDocSaved}
-              />
+              {activeDocTab.isLoading ? (
+                <div
+                  data-testid="document-loading-state"
+                  className="flex h-full items-center justify-center px-6 text-sm text-neutral-500"
+                >
+                  Loading note...
+                </div>
+              ) : (
+                <DocumentEditor
+                  key={activeTabId}
+                  docId={activeDocTab.id}
+                  initialTitle={activeDocTab.title}
+                  initialContent={activeDocTab.content}
+                  isNew={activeDocTab.isNew}
+                  onTitleChange={handleTabTitleChange}
+                  onSaved={handleDocSaved}
+                />
+              )}
             </section>
           )}
         </div>
