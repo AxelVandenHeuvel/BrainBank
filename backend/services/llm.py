@@ -1,7 +1,10 @@
 import json
 import os
 
+from dotenv import load_dotenv
 from google import genai
+
+load_dotenv()
 
 _client = None
 
@@ -38,7 +41,7 @@ def extract_concepts(text: str, doc_name: str) -> dict:
         '"relationship": "related_to"}]}'
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return _parse_json_response(response.text)
 
@@ -74,7 +77,7 @@ def extract_knowledge(text: str, doc_name: str) -> dict:
         "}"
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return _parse_json_response(response.text)
 
@@ -89,6 +92,6 @@ def generate_answer(query: str, context: str, concepts: list[str]) -> str:
         "Provide a grounded answer based only on the context provided."
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return response.text
