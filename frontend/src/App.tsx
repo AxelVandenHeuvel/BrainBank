@@ -10,7 +10,9 @@ import { TabBar } from './components/TabBar';
 import { useGraphData } from './hooks/useGraphData';
 import { findMatchingNodeIds } from './lib/graphView';
 import { getMockDocumentsForConcept } from './mock/mockGraph';
+import type { AssistantMessageSelection } from './types/chat';
 import type { OpenTab } from './types/notes';
+import type { ActiveTraversal } from './types/traversal';
 
 const BRAIN_TAB_ID = '__brain__';
 
@@ -27,7 +29,7 @@ export default function App() {
   const { data, source, refetch } = useGraphData();
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
-  const [isChatOpen, setIsChatOpen] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
 
@@ -36,13 +38,38 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string>(BRAIN_TAB_ID);
   const [highlightedConcept, setHighlightedConcept] = useState<string | null>(null);
   const [fileTreeRefetchSignal, setFileTreeRefetchSignal] = useState(0);
+  const [selectedAssistantMessage, setSelectedAssistantMessage] =
+    useState<AssistantMessageSelection | null>(null);
+  const [activeTraversal, setActiveTraversal] = useState<ActiveTraversal | null>(null);
 
   // --- Tab management ---
 
-  const openDocument = useCallback((docId: string, name: string, content: string) => {
+  const openDocument = useCallback((
+    docId: string,
+    name: string,
+    content: string,
+    options?: { isLoading?: boolean },
+  ) => {
     setOpenTabs((prev) => {
-      if (prev.find((t) => t.id === docId)) return prev;
-      return [...prev, { id: docId, title: name, content, isNew: false }];
+      const existingTab = prev.find((t) => t.id === docId);
+
+      if (existingTab) {
+        return prev.map((tab) => (
+          tab.id === docId
+            ? {
+                ...tab,
+                title: name,
+                content: content || tab.content,
+                isLoading: options?.isLoading ?? false,
+              }
+            : tab
+        ));
+      }
+
+      return [
+        ...prev,
+        { id: docId, title: name, content, isNew: false, isLoading: options?.isLoading ?? false },
+      ];
     });
     setActiveTabId(docId);
   }, []);
@@ -77,19 +104,43 @@ export default function App() {
   }
 
   function handleDocSaved(docId: string, newDocId?: string, currentContent?: string) {
+    const wasNewTab = openTabs.find((t) => t.id === docId)?.isNew ?? false;
+
     setOpenTabs((prev) =>
-      prev.map((t) => {
-        if (t.id !== docId) return t;
-        // Update the tab id, preserve content so remount doesn't lose it, mark as not new
-        return {
-          ...t,
-          id: newDocId ?? docId,
-          isNew: false,
-          content: currentContent ?? t.content,
-        };
-      }),
+      {
+        const idx = prev.findIndex((t) => t.id === docId);
+        if (idx === -1) return prev;
+
+        const savedTab = prev[idx];
+
+        if (savedTab.isNew) {
+          const next = prev.filter((t) => t.id !== docId);
+          if (activeTabId === docId) {
+            if (next.length === 0) {
+              setActiveTabId(BRAIN_TAB_ID);
+            } else if (idx < next.length) {
+              setActiveTabId(next[idx].id);
+            } else {
+              setActiveTabId(next[next.length - 1].id);
+            }
+          }
+          return next;
+        }
+
+        return prev.map((t) => {
+          if (t.id !== docId) return t;
+          // Update the tab id, preserve content so remount doesn't lose it, mark as not new
+          return {
+            ...t,
+            id: newDocId ?? docId,
+            isNew: false,
+            isLoading: false,
+            content: currentContent ?? t.content,
+          };
+        });
+      }
     );
-    if (newDocId && activeTabId === docId) {
+    if (!wasNewTab && newDocId && activeTabId === docId) {
       setActiveTabId(newDocId);
     }
     refetch();
@@ -108,24 +159,53 @@ export default function App() {
     const mockDocs = getMockDocumentsForConcept(conceptName);
     const mockDoc = mockDocs.find((d) => d.doc_id === docId);
     const content = mockDoc?.full_text ?? '';
-    openDocument(docId, name, content);
+    openDocument(docId, name, content, { isLoading: source === 'api' && content.length === 0 });
 
     if (source === 'api') {
-      fetch(`/api/concepts/${encodeURIComponent(conceptName)}/documents`)
+      fetch(`/api/documents/${encodeURIComponent(docId)}`)
         .then((res) => {
           if (!res.ok) throw new Error('fetch failed');
           return res.json();
         })
-        .then((docs: { doc_id: string; name: string; full_text: string }[]) => {
-          const doc = docs.find((d) => d.doc_id === docId);
-          if (doc) {
-            setOpenTabs((prev) =>
-              prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
-            );
-          }
+        .then((doc: { doc_id: string; name: string; full_text: string }) => {
+          setOpenTabs((prev) =>
+            prev.map((t) => (
+              t.id === docId
+                ? { ...t, title: doc.name, content: doc.full_text, isLoading: false }
+                : t
+            )),
+          );
         })
-        .catch(() => { /* already showing mock content */ });
+        .catch(() => {
+          setOpenTabs((prev) =>
+            prev.map((t) => (t.id === docId ? { ...t, isLoading: false } : t)),
+          );
+        });
     }
+  }
+
+  function handleChatOpenDocument(docId: string, name: string) {
+    openDocument(docId, name, '', { isLoading: true });
+
+    fetch(`/api/documents/${encodeURIComponent(docId)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('fetch failed');
+        return res.json();
+      })
+      .then((doc: { doc_id: string; name: string; full_text: string }) => {
+        setOpenTabs((prev) =>
+          prev.map((tab) => (
+            tab.id === docId
+              ? { ...tab, title: doc.name, content: doc.full_text, isLoading: false }
+              : tab
+          )),
+        );
+      })
+      .catch(() => {
+        setOpenTabs((prev) =>
+          prev.map((tab) => (tab.id === docId ? { ...tab, isLoading: false } : tab)),
+        );
+      });
   }
 
   const allTabs = useMemo<OpenTab[]>(() => {
@@ -152,7 +232,7 @@ export default function App() {
         {/* Collapsible sidebar */}
         <aside
           data-testid="sidebar"
-          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 lg:overflow-y-auto ${
+          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${
             sidebarCollapsed ? 'w-[3rem]' : 'w-[22rem] p-4'
           }`}
         >
@@ -193,8 +273,11 @@ export default function App() {
           >
             <IngestPanel onIngestComplete={() => { refetch(); setFileTreeRefetchSignal((n) => n + 1); }} onNewNote={handleNewNote} />
 
-            <section className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] pt-3">
-              <p className="mb-2 px-1 text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+            <section
+              data-testid="sidebar-files-section"
+              className="min-h-0 flex flex-1 flex-col border-t border-white/[0.06] pt-3"
+            >
+              <p className="mb-2 px-1 text-left text-[10px] font-medium uppercase tracking-widest text-neutral-500">
                 Files
               </p>
               <FileExplorer
@@ -237,6 +320,15 @@ export default function App() {
               data={data}
               source={source}
               query={deferredQuery}
+              activeTraversal={activeTraversal}
+              chatFocus={
+                selectedAssistantMessage
+                  ? {
+                      sourceConcepts: selectedAssistantMessage.sourceConcepts,
+                      discoveryConcepts: selectedAssistantMessage.discoveryConcepts,
+                    }
+                  : null
+              }
               onOpenDocument={openDocument}
               onConceptFocused={setHighlightedConcept}
             />
@@ -245,15 +337,24 @@ export default function App() {
           {/* Document editor — shown when a doc tab is active */}
           {activeDocTab && (
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <DocumentEditor
-                key={activeTabId}
-                docId={activeDocTab.id}
-                initialTitle={activeDocTab.title}
-                initialContent={activeDocTab.content}
-                isNew={activeDocTab.isNew}
-                onTitleChange={handleTabTitleChange}
-                onSaved={handleDocSaved}
-              />
+              {activeDocTab.isLoading ? (
+                <div
+                  data-testid="document-loading-state"
+                  className="flex h-full items-center justify-center px-6 text-sm text-neutral-500"
+                >
+                  Loading note...
+                </div>
+              ) : (
+                <DocumentEditor
+                  key={activeTabId}
+                  docId={activeDocTab.id}
+                  initialTitle={activeDocTab.title}
+                  initialContent={activeDocTab.content}
+                  isNew={activeDocTab.isNew}
+                  onTitleChange={handleTabTitleChange}
+                  onSaved={handleDocSaved}
+                />
+              )}
             </section>
           )}
         </div>
@@ -261,7 +362,7 @@ export default function App() {
         {/* Chat overlay */}
         <aside
           data-testid="chat-overlay"
-          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[24rem] lg:min-h-0 ${
+          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[30rem] lg:min-h-0 ${
             isChatOpen ? 'flex lg:pointer-events-auto' : 'hidden lg:flex lg:pointer-events-none'
           }`}
           aria-hidden={!isChatOpen}
@@ -284,7 +385,12 @@ export default function App() {
                 : 'invisible translate-x-8 opacity-0'
             }`}
           >
-            <ChatPanel graphSource={source} />
+            <ChatPanel
+              graphSource={source}
+              onOpenDocument={handleChatOpenDocument}
+              onAssistantMessageSelect={setSelectedAssistantMessage}
+              onTraversalChange={setActiveTraversal}
+            />
           </div>
         </aside>
 

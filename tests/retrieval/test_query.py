@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from backend.db.kuzu import init_kuzu
+from backend.db.lance import init_lancedb as real_init_lancedb
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.types import RetrievalConfig
 from backend.retrieval.query import query_brainbank
@@ -55,11 +56,32 @@ class TestQueryBrainbank:
 
     @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    def test_returns_answer_provenance(self, _mock_emb, _mock_llm, lance_path, kuzu_path):
+        self._ingest_sample(lance_path, kuzu_path)
+        result = query_brainbank("What is calculus?", lance_path, kuzu_path)
+
+        assert result["source_documents"]
+        assert result["source_documents"][0]["name"] == "Math Notes"
+        assert result["source_chunks"]
+        assert result["source_chunks"][0]["doc_name"] == "Math Notes"
+        assert result["supporting_relationships"]
+        assert any(
+            relationship["source"] == "Calculus" and relationship["target"] == "Derivatives"
+            for relationship in result["supporting_relationships"]
+        )
+
+    @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
     def test_empty_db_returns_no_results(self, _mock_emb, _mock_llm, lance_path, kuzu_path):
         result = query_brainbank("What is calculus?", lance_path, kuzu_path)
         assert result["answer"] == "No ingested documents found. Upload or import notes before querying BrainBank."
         assert result["source_concepts"] == []
         assert result["discovery_concepts"] == []
+        assert result["source_documents"] == []
+        assert result["discovery_documents"] == []
+        assert result["source_chunks"] == []
+        assert result["discovery_chunks"] == []
+        assert result["supporting_relationships"] == []
 
     @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
@@ -93,3 +115,45 @@ class TestQueryBrainbank:
         )
 
         assert "answer" in result
+
+    @patch("backend.retrieval.query.generate_partial_answer", return_value="Partial answer")
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    def test_global_route_returns_source_documents(
+        self,
+        _mock_emb,
+        _mock_partial,
+        lance_path,
+        kuzu_path,
+    ):
+        self._ingest_sample(lance_path, kuzu_path)
+
+        db, _table = real_init_lancedb(lance_path)
+        summaries = db.open_table("community_summaries")
+        summaries.add(
+            [
+                {
+                    "community_id": "community:0001",
+                    "member_concepts": ["Calculus", "Derivatives"],
+                    "summary": "Calculus and derivatives appear together.",
+                    "summary_vector": mock_embed_query("Calculus and derivatives"),
+                }
+            ]
+        )
+
+        result = query_brainbank(
+            "Give me a high level summary of calculus",
+            lance_path,
+            kuzu_path,
+        )
+
+        assert result["answer"] == "Partial answer"
+        assert result["source_documents"] == [
+            {
+                "doc_id": result["source_documents"][0]["doc_id"],
+                "name": "Math Notes",
+            }
+        ]
+        assert result["discovery_documents"] == []
+        assert result["source_chunks"] == []
+        assert result["discovery_chunks"] == []
+        assert result["supporting_relationships"] == []

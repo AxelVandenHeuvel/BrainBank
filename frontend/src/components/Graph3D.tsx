@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
+// @ts-expect-error - no types available
 import { forceCollide } from 'd3-force-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -41,6 +42,7 @@ import type {
   RelationshipDocument,
   RelationshipDetails,
 } from '../types/graph';
+import type { ActiveTraversal } from '../types/traversal';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { NodeTooltip } from './NodeTooltip';
 
@@ -96,6 +98,11 @@ interface Graph3DProps {
   data: GraphData;
   source: GraphSource;
   query: string;
+  chatFocus?: {
+    sourceConcepts: string[];
+    discoveryConcepts: string[];
+  } | null;
+  activeTraversal?: ActiveTraversal | null;
   hoveredNode?: GraphNode | null;
   onHoverNode?: (node: GraphNode | null) => void;
   onOpenDocument?: (docId: string, name: string, content: string) => void;
@@ -107,6 +114,18 @@ interface SelectedRelationshipEdge {
   targetId: string;
   reason: string;
 }
+
+interface TraversalPulseWindow {
+  startMs: number;
+  endMs: number;
+  brightness: number;
+}
+
+const TRAVERSAL_INACTIVE_COLOR = new THREE.Color('#64748b');
+const TRAVERSAL_AMBIENT_BLINK_PERIOD_MS = 900;
+const TRAVERSAL_AMBIENT_BLINK_BASE = 0.18;
+const TRAVERSAL_AMBIENT_BLINK_RANGE = 0.55;
+const TRAVERSAL_OUTLINE_COLOR = new THREE.Color('#f8fafc');
 
 const BRAIN_MODEL_URL = '/assets/human-brain.glb';
 const CAMERA_MOVE_DURATION_MS = 1200;
@@ -130,13 +149,16 @@ const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 500;
+const DEFAULT_BRAIN_MESH_HEX = '#FFFFFF';
+const BRAIN_MESH_BASE_OPACITY = 0.06;
+const BRAIN_MESH_TOGGLE_FADE_DURATION_MS = 200;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
 const EXPANDED_DOC_RADIUS = 30;
-const EXPANDED_DIVE_DISTANCE = 120;
+const EXPANDED_VIEW_DISTANCE = 78;
 const NODE_LABEL_Y_OFFSET = 16;
-const DIVE_ZOOM_CLOSE_DISTANCE = 20;
+const DISCOVERY_OUTLINE_COLOR = '#fbbf24';
 const DIVE_ZOOM_IN_DURATION_MS = 700;
-const DIVE_ZOOM_OUT_DURATION_MS = 900;
+const DEFAULT_BACKGROUND_HEX = '#0E0F10';
 /** Seed initial position from a deterministic hash so the force simulation starts
  *  with nodes spread out instead of all at the origin. */
 function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
@@ -172,6 +194,15 @@ function getVisualNodeColor(node: GraphNode): THREE.Color {
     new THREE.Color(0x4444ff),
     getDeterministicNodeColorScore(node),
   );
+}
+
+function getTraversalBlinkPhase(nodeId: string): number {
+  let hash = 0;
+  for (let i = 0; i < nodeId.length; i++) {
+    hash = (hash * 33 + nodeId.charCodeAt(i)) | 0;
+  }
+
+  return (((hash >>> 0) % 360) / 360) * Math.PI * 2;
 }
 
 
@@ -241,17 +272,66 @@ function createNodeMaterial(nodeColor: THREE.Color): THREE.MeshStandardMaterial 
   });
 }
 
+function applyNodeMaterialState(
+  obj: THREE.Object3D,
+  color: THREE.Color,
+  emissive: THREE.Color,
+  opacity: number,
+) {
+  obj.userData.currentColor = color.clone();
+  obj.userData.currentEmissive = emissive.clone();
+  obj.userData.currentOpacity = opacity;
+  obj.userData.currentOutlineOpacity = Number(obj.userData.currentOutlineOpacity ?? 0);
+  obj.userData.currentSpriteOpacity = Number(obj.userData.currentSpriteOpacity ?? 1);
+
+  obj.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.material) {
+      return;
+    }
+
+    if (child.name !== 'node-shape') {
+      return;
+    }
+
+    const material = child.material as THREE.MeshStandardMaterial;
+    material.color.copy(color);
+    material.emissive.copy(emissive);
+    material.opacity = opacity;
+    material.transparent = true;
+  });
+}
+
+function getBrainMeshMaterials(brain: THREE.Object3D): THREE.MeshBasicMaterial[] {
+  const materials: THREE.MeshBasicMaterial[] = [];
+
+  brain.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) {
+      return;
+    }
+
+    const childMaterials = Array.isArray(node.material) ? node.material : [node.material];
+    childMaterials.forEach((material) => {
+      if (material instanceof THREE.MeshBasicMaterial) {
+        materials.push(material);
+      }
+    });
+  });
+
+  return materials;
+}
+
 export function Graph3D({
   data,
   source: graphSource,
   query,
+  chatFocus = null,
+  activeTraversal = null,
   hoveredNode: hoveredNodeProp,
   onHoverNode: onHoverNodeProp,
   onOpenDocument,
   onConceptFocused,
 }: Graph3DProps) {
   const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
   const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -270,8 +350,14 @@ export function Graph3D({
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const cameraAnimationRef = useRef<number | null>(null);
+  const brainMeshAnimationRef = useRef<number | null>(null);
   const simulationSettledRef = useRef(false);
   const pinnedPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  const traversalPulseWindowsRef = useRef<Map<string, TraversalPulseWindow[]>>(new Map());
+  const traversalRevealTimesRef = useRef<Map<string, number>>(new Map());
+  const traversalRevealBrightnessRef = useRef<Map<string, number>>(new Map());
+  const traversalRunStartedAtRef = useRef<number>(0);
+  const traversalIsActiveRef = useRef(false);
   const lastSearchTargetIdRef = useRef<string | null>(null);
   const preSearchCameraRef = useRef<{
     pos: { x: number; y: number; z: number };
@@ -286,7 +372,7 @@ export function Graph3D({
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
   const [hasFocusedRotationPivot, setHasFocusedRotationPivot] = useState(false);
   const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
-  const [discoveryModeEnabled, setDiscoveryModeEnabled] = useState(true);
+  const discoveryModeEnabled = true;
   const [latentLinks, setLatentLinks] = useState<GraphLink[]>([]);
   const [expandedConcept, setExpandedConcept] = useState<{
     node: GraphNode;
@@ -294,6 +380,12 @@ export function Graph3D({
   } | null>(null);
   const diveStartTimeRef = useRef<number | null>(null);
   const [isDiving, setIsDiving] = useState(false);
+  const [showBrainMesh, setShowBrainMesh] = useState(true);
+  const showBrainMeshRef = useRef(showBrainMesh);
+
+  useEffect(() => {
+    showBrainMeshRef.current = showBrainMesh;
+  }, [showBrainMesh]);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -398,7 +490,7 @@ export function Graph3D({
 
   const expandedNodeIds = useMemo<Set<string> | null>(() => {
     if (!expandedConcept) return null;
-    const ids = new Set<string>();
+    const ids = new Set<string>([expandedConcept.node.id]);
     expandedConcept.docs.forEach((doc) => ids.add(`doc-expand:${doc.doc_id}`));
     return ids;
   }, [expandedConcept]);
@@ -406,13 +498,113 @@ export function Graph3D({
   const displayDataRef = useRef(displayData);
   displayDataRef.current = displayData;
 
+  useEffect(() => {
+    traversalPulseWindowsRef.current = new Map();
+    traversalRevealTimesRef.current = new Map();
+    traversalRevealBrightnessRef.current = new Map();
+    traversalRunStartedAtRef.current = 0;
+    traversalIsActiveRef.current = activeTraversal !== null;
+
+    if (!activeTraversal) {
+      return;
+    }
+
+    const availableNodeIds = new Set(displayData.nodes.map((node) => node.id));
+    const windows = new Map<string, TraversalPulseWindow[]>();
+    const revealTimes = new Map<string, number>();
+    const revealBrightness = new Map<string, number>();
+    const startTime = performance.now();
+    traversalRunStartedAtRef.current = startTime;
+
+    activeTraversal.plan.steps.forEach((step) => {
+      if (!availableNodeIds.has(step.nodeId)) {
+        return;
+      }
+
+      if (!revealTimes.has(step.nodeId)) {
+        revealTimes.set(step.nodeId, startTime + step.delayMs);
+      }
+      revealBrightness.set(
+        step.nodeId,
+        Math.max(revealBrightness.get(step.nodeId) ?? 0, step.brightness),
+      );
+
+      const nodeWindows = windows.get(step.nodeId) ?? [];
+      nodeWindows.push({
+        startMs: startTime + step.delayMs,
+        endMs: startTime + step.delayMs + activeTraversal.plan.pulseDurationMs,
+        brightness: step.brightness,
+      });
+      windows.set(step.nodeId, nodeWindows);
+    });
+
+    traversalPulseWindowsRef.current = windows;
+    traversalRevealTimesRef.current = revealTimes;
+    traversalRevealBrightnessRef.current = revealBrightness;
+
+    const now = performance.now();
+    displayData.nodes.forEach((node) => {
+      const obj = (node as GraphNode & { __threeObj?: THREE.Object3D }).__threeObj;
+      if (!obj) {
+        return;
+      }
+
+      const revealTime = revealTimes.get(node.id);
+      const isRevealed = revealTime !== undefined && now >= revealTime;
+      obj.userData.traversalRevealed = isRevealed;
+
+      if (!isRevealed) {
+        applyNodeMaterialState(
+          obj,
+          TRAVERSAL_INACTIVE_COLOR,
+          TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05),
+          Number(obj.userData.currentOpacity ?? 0.9),
+        );
+      }
+    });
+  }, [activeTraversal, displayData.nodes]);
+
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
+  const chatFocusNodeIds = useMemo(() => {
+    if (!chatFocus) {
+      return {
+        sourceNodeIds: new Set<string>(),
+        discoveryNodeIds: new Set<string>(),
+        highlightedNodeIds: new Set<string>(),
+      };
+    }
+
+    const sourceNames = new Set(chatFocus.sourceConcepts);
+    const discoveryNames = new Set(chatFocus.discoveryConcepts);
+    const sourceNodeIds = new Set<string>();
+    const discoveryNodeIds = new Set<string>();
+
+    displayData.nodes.forEach((node) => {
+      if (node.type !== 'Concept') {
+        return;
+      }
+
+      if (sourceNames.has(node.name)) {
+        sourceNodeIds.add(node.id);
+      }
+      if (discoveryNames.has(node.name) && !sourceNames.has(node.name)) {
+        discoveryNodeIds.add(node.id);
+      }
+    });
+
+    return {
+      sourceNodeIds,
+      discoveryNodeIds,
+      highlightedNodeIds: new Set([...sourceNodeIds, ...discoveryNodeIds]),
+    };
+  }, [chatFocus, displayData.nodes]);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
-  const activeCardNode = selectedNode ?? hoveredNode;
+  const hoveredNodeId = hoveredNode?.id ?? null;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
+  const hasChatFocus = chatFocusNodeIds.highlightedNodeIds.size > 0;
 
   function getConceptName(nodeId: string): string | null {
     if (!nodeId.startsWith('concept:')) {
@@ -482,9 +674,77 @@ export function Graph3D({
     mesh.receiveShadow = false;
     group.add(mesh);
 
+    const outline = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(radius * 1.18, 0),
+      new THREE.MeshBasicMaterial({
+        color: DISCOVERY_OUTLINE_COLOR,
+        wireframe: true,
+        transparent: true,
+        opacity: 0,
+      }),
+    );
+    outline.name = 'node-outline';
+    outline.visible = false;
+    group.add(outline);
+
     const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
     labelSprite.position.set(0, NODE_LABEL_Y_OFFSET, 0);
     group.add(labelSprite);
+    group.userData.baseColor = nodeColor.clone();
+    group.userData.traversalPulse = 0;
+    const initialRevealTime = traversalRevealTimesRef.current.get(node.id);
+    const initialTraversalRevealed =
+      traversalIsActiveRef.current &&
+      initialRevealTime !== undefined &&
+      performance.now() >= initialRevealTime;
+    group.userData.traversalRevealed = initialTraversalRevealed;
+    applyNodeMaterialState(
+      group,
+      initialTraversalRevealed || !traversalIsActiveRef.current
+        ? nodeColor
+        : TRAVERSAL_INACTIVE_COLOR,
+      initialTraversalRevealed || !traversalIsActiveRef.current
+        ? nodeColor.clone().multiplyScalar(0.15)
+        : TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05),
+      0.9,
+    );
+    group.userData.update = (time: number) => {
+      const windows = traversalPulseWindowsRef.current.get(node.id) ?? [];
+      const revealTime = traversalRevealTimesRef.current.get(node.id);
+      const revealStrength = traversalRevealBrightnessRef.current.get(node.id) ?? 1;
+      let pulse = 0;
+
+      windows.forEach((window) => {
+        if (time < window.startMs || time > window.endMs) {
+          return;
+        }
+
+        const progress = (time - window.startMs) / Math.max(window.endMs - window.startMs, 1);
+        const triangle = progress <= 0.5 ? progress * 2 : (1 - progress) * 2;
+        pulse = Math.max(pulse, triangle * window.brightness);
+      });
+
+      const traversalRevealed =
+        traversalIsActiveRef.current &&
+        revealTime !== undefined &&
+        time >= revealTime;
+      if (traversalRevealed) {
+        const traversalElapsedMs = Math.max(0, time - traversalRunStartedAtRef.current);
+        const oscillation =
+          (Math.sin(
+            ((traversalElapsedMs / TRAVERSAL_AMBIENT_BLINK_PERIOD_MS) * Math.PI * 2) +
+              getTraversalBlinkPhase(node.id),
+          ) + 1) / 2;
+        const ambientPulse =
+          (TRAVERSAL_AMBIENT_BLINK_BASE + (oscillation * TRAVERSAL_AMBIENT_BLINK_RANGE)) *
+          revealStrength;
+        pulse = Math.max(pulse, ambientPulse);
+      }
+
+      group.userData.traversalPulse = pulse;
+      group.userData.traversalRevealed = traversalRevealed;
+    };
+    (node as GraphNode & { __threeObj?: THREE.Object3D }).__threeObj = group;
 
     return group;
   }, []);
@@ -533,26 +793,6 @@ export function Graph3D({
     rotationRoot.updateMatrixWorld(true);
   }
 
-  function getActiveRotationPivot() {
-    const activeNodeId = activeRotationNodeIdRef.current;
-
-    if (!activeNodeId) {
-      return null;
-    }
-
-    const activeNode = displayData.nodes.find((node) => node.id === activeNodeId);
-
-    if (!activeNode) {
-      return null;
-    }
-
-    return new THREE.Vector3(
-      activeNode.x ?? 0,
-      activeNode.y ?? 0,
-      activeNode.z ?? 0,
-    );
-  }
-
   function setRotationPivotNode(nodeId: string | null) {
     activeRotationNodeIdRef.current = nodeId;
     setHasFocusedRotationPivot(nodeId !== null);
@@ -586,8 +826,7 @@ export function Graph3D({
       return;
     }
 
-    const activePivot = getActiveRotationPivot();
-    const focusPoint = activePivot ?? new THREE.Vector3(
+    const focusPoint = new THREE.Vector3(
       sceneFocusPointRef.current.x,
       sceneFocusPointRef.current.y,
       sceneFocusPointRef.current.z,
@@ -604,16 +843,16 @@ export function Graph3D({
   }
 
   function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
-    sceneFocusPointRef.current = point;
-    applySceneFocusPoint();
-    const target = lookAtTargetRef.current;
     animateCamera(
       {
-        x: target.x,
-        y: target.y + distance * 0.08,
-        z: target.z + distance,
+        x: 0,
+        y: distance * 0.08,
+        z: distance,
       },
-      target,
+      { x: 0, y: 0, z: 0 },
+      CAMERA_MOVE_DURATION_MS,
+      undefined,
+      point,
     );
   }
 
@@ -659,7 +898,6 @@ export function Graph3D({
 
   function handleReset() {
     setRotationPivotNode(null);
-    setSelectedNode(null);
     setLatentLinks([]);
     setExpandedConcept(null);
     setIsDiving(false);
@@ -804,7 +1042,7 @@ export function Graph3D({
   function handleConceptExpansion(node: GraphNode) {
     const nodePoint = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
 
-    // Start dive animation: zoom close + fade out brain/nodes
+    // Start dive animation: push the camera inward while the rest of the brain fades away.
     setIsDiving(true);
     diveStartTimeRef.current = performance.now();
 
@@ -818,30 +1056,19 @@ export function Graph3D({
     animateCamera(
       {
         x: target.x,
-        y: target.y + DIVE_ZOOM_CLOSE_DISTANCE * 0.08,
-        z: target.z + DIVE_ZOOM_CLOSE_DISTANCE,
+        y: target.y + EXPANDED_VIEW_DISTANCE * 0.08,
+        z: target.z + EXPANDED_VIEW_DISTANCE,
       },
       target,
       DIVE_ZOOM_IN_DURATION_MS,
       () => {
-        // Phase 2: reveal doc sub-nodes and zoom back out to frame them
+        // Once the inward dive finishes, reveal the doc sub-graph in place.
         docsPromise.then((docs) => {
           if (docs.length > 0) {
             setExpandedConcept({ node, docs });
           }
           setIsDiving(false);
           diveStartTimeRef.current = null;
-
-          // Zoom out to frame the doc ring
-          animateCamera(
-            {
-              x: target.x,
-              y: target.y + EXPANDED_DIVE_DISTANCE * 0.08,
-              z: target.z + EXPANDED_DIVE_DISTANCE,
-            },
-            target,
-            DIVE_ZOOM_OUT_DURATION_MS,
-          );
         });
       },
     );
@@ -880,6 +1107,7 @@ export function Graph3D({
     targetLookAt: { x: number; y: number; z: number },
     durationMs: number = CAMERA_MOVE_DURATION_MS,
     onComplete?: () => void,
+    targetFocusPoint?: { x: number; y: number; z: number },
   ) {
     // Cancel any in-flight camera animation so consecutive moves don't conflict.
     if (cameraAnimationRef.current !== null) {
@@ -892,12 +1120,22 @@ export function Graph3D({
 
     const startCam = { x: cam.x, y: cam.y, z: cam.z };
     const startLookAt = { ...lookAtTargetRef.current };
+    const startFocusPoint = { ...sceneFocusPointRef.current };
     const startTime = performance.now();
 
     function animate() {
       const elapsed = performance.now() - startTime;
       const t = Math.min(elapsed / durationMs, 1);
       const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+
+      if (targetFocusPoint) {
+        sceneFocusPointRef.current = {
+          x: startFocusPoint.x + (targetFocusPoint.x - startFocusPoint.x) * eased,
+          y: startFocusPoint.y + (targetFocusPoint.y - startFocusPoint.y) * eased,
+          z: startFocusPoint.z + (targetFocusPoint.z - startFocusPoint.z) * eased,
+        };
+        applySceneFocusPoint();
+      }
 
       const pos = {
         x: startCam.x + (targetPos.x - startCam.x) * eased,
@@ -976,10 +1214,9 @@ export function Graph3D({
         return;
       }
 
-      // Single-click doc node: select it (no zoom to keep second click reliable)
+      // Single-click doc node: record the click without zoom so the second click stays reliable.
       lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
       clearSelectedEdge();
-      setSelectedNode(node);
       return;
     }
 
@@ -989,7 +1226,6 @@ export function Graph3D({
     }
 
     clearSelectedEdge();
-    setSelectedNode(node);
     setRotationPivotNode(node.id);
     suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
 
@@ -1023,7 +1259,6 @@ export function Graph3D({
     if (isGhostLink(link)) {
       return;
     }
-    setSelectedNode(null);
     setRotationPivotNode(null);
     setLatentLinks([]);
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
@@ -1157,13 +1392,15 @@ export function Graph3D({
 
       brainGroup.traverse((node) => {
         if (node instanceof THREE.Mesh) {
-          node.material = new THREE.MeshBasicMaterial({
-            color: '#7dd3fc',
+          const material = new THREE.MeshBasicMaterial({
+            color: DEFAULT_BRAIN_MESH_HEX,
             wireframe: true,
             transparent: true,
-            opacity: 0.06,
+            opacity: BRAIN_MESH_BASE_OPACITY,
             side: THREE.DoubleSide,
           });
+          material.userData.baseOpacity = BRAIN_MESH_BASE_OPACITY;
+          node.material = material;
         }
       });
 
@@ -1191,8 +1428,14 @@ export function Graph3D({
       });
 
       brainGroupRef.current = brainGroup;
+      const meshVisible = showBrainMeshRef.current;
+      brainGroup.visible = meshVisible;
+      getBrainMeshMaterials(brainGroup).forEach((material) => {
+        material.opacity = meshVisible ? (material.userData.baseOpacity ?? BRAIN_MESH_BASE_OPACITY) : 0;
+      });
       scene.add(brainGroup);
-      // Reheat the simulation so it re-runs with brain containment clamping active
+      // Reset settled flag so the reheated simulation runs clamping in onEngineTick
+      simulationSettledRef.current = false;
       (graphRef.current as any)?.d3ReheatSimulation?.();
       handleReset();
     });
@@ -1209,65 +1452,131 @@ export function Graph3D({
     };
   }, []);
 
-
   useEffect(() => {
     clampNodesWithinBrain(true);
+    // Sync pin map with clamped positions
+    if (brainContainmentRef.current) {
+      const pins = pinnedPositionsRef.current;
+      displayData.nodes.forEach((n) => {
+        pins.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0 });
+        n.fx = n.x;
+        n.fy = n.y;
+        n.fz = n.z;
+      });
+    }
   }, [displayData.nodes]);
 
   // Fade + hide brain wireframe during dive and when in expanded concept view
   useEffect(() => {
     const brain = brainGroupRef.current;
-    if (!brain) return;
-
-    if (!isDiving && expandedConcept === null) {
-      brain.visible = true;
-      // Restore each material to its original opacity (captured at dive start)
-      brain.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          const mat = child.material;
-          if (mat.userData.originalOpacity != null) {
-            mat.opacity = mat.userData.originalOpacity;
-          }
-        }
-      });
+    if (!brain) {
       return;
     }
 
-    if (expandedConcept !== null && !isDiving) {
-      brain.visible = false;
+    const brainMaterials = getBrainMeshMaterials(brain);
+    if (brainMaterials.length === 0) {
       return;
     }
 
-    // Capture original opacities before fading
-    brain.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.material) {
-        const mat = child.material;
-        if (mat.userData.originalOpacity == null) {
-          mat.userData.originalOpacity = mat.opacity;
-        }
-      }
-    });
-
-    // During dive: fade out over the zoom-in duration
-    let frameId: number;
-    const animateBrainFade = () => {
-      const now = performance.now();
-      const start = diveStartTimeRef.current ?? now;
-      const progress = Math.min((now - start) / DIVE_ZOOM_IN_DURATION_MS, 1);
-      brain.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          const mat = child.material;
-          const base = mat.userData.originalOpacity ?? mat.opacity;
-          mat.opacity = base * (1 - progress);
-        }
-      });
-      if (progress < 1) {
-        frameId = requestAnimationFrame(animateBrainFade);
+    const stopBrainMeshAnimation = () => {
+      if (brainMeshAnimationRef.current !== null) {
+        cancelAnimationFrame(brainMeshAnimationRef.current);
+        brainMeshAnimationRef.current = null;
       }
     };
-    frameId = requestAnimationFrame(animateBrainFade);
-    return () => cancelAnimationFrame(frameId);
-  }, [expandedConcept, isDiving]);
+
+    const setBrainOpacity = (opacity: number) => {
+      brainMaterials.forEach((material) => {
+        material.opacity = opacity;
+      });
+    };
+
+    if (expandedConcept !== null && !isDiving) {
+      stopBrainMeshAnimation();
+      setBrainOpacity(0);
+      brain.visible = false;
+      return stopBrainMeshAnimation;
+    }
+
+    if (isDiving) {
+      stopBrainMeshAnimation();
+      const start = diveStartTimeRef.current ?? performance.now();
+      const materialStates = brainMaterials.map((material) => ({
+        material,
+        baseOpacity: showBrainMesh
+          ? Number(material.userData.baseOpacity ?? BRAIN_MESH_BASE_OPACITY)
+          : 0,
+      }));
+
+      brain.visible = showBrainMesh;
+
+      const animateBrainFade = () => {
+        const now = performance.now();
+        const progress = Math.min((now - start) / DIVE_ZOOM_IN_DURATION_MS, 1);
+
+        materialStates.forEach(({ material, baseOpacity }) => {
+          material.opacity = baseOpacity * (1 - progress);
+        });
+        brain.visible = materialStates.some(({ material }) => material.opacity > 0.001);
+
+        if (progress < 1) {
+          brainMeshAnimationRef.current = requestAnimationFrame(animateBrainFade);
+        } else {
+          brainMeshAnimationRef.current = null;
+        }
+      };
+
+      brainMeshAnimationRef.current = requestAnimationFrame(animateBrainFade);
+      return stopBrainMeshAnimation;
+    }
+
+    const materialStates = brainMaterials.map((material) => ({
+      material,
+      startOpacity: material.opacity,
+      targetOpacity: showBrainMesh
+        ? Number(material.userData.baseOpacity ?? BRAIN_MESH_BASE_OPACITY)
+        : 0,
+    }));
+    const hasOpacityChange = materialStates.some(
+      ({ startOpacity, targetOpacity }) => Math.abs(startOpacity - targetOpacity) > 0.001,
+    );
+
+    stopBrainMeshAnimation();
+
+    if (showBrainMesh) {
+      brain.visible = true;
+    }
+
+    if (!hasOpacityChange) {
+      materialStates.forEach(({ material, targetOpacity }) => {
+        material.opacity = targetOpacity;
+      });
+      brain.visible = showBrainMesh;
+      return stopBrainMeshAnimation;
+    }
+
+    const startTime = performance.now();
+
+    const animateBrainToggle = () => {
+      const now = performance.now();
+      const progress = Math.min((now - startTime) / BRAIN_MESH_TOGGLE_FADE_DURATION_MS, 1);
+
+      materialStates.forEach(({ material, startOpacity, targetOpacity }) => {
+        material.opacity = startOpacity + (targetOpacity - startOpacity) * progress;
+      });
+      brain.visible = showBrainMesh || materialStates.some(({ material }) => material.opacity > 0.001);
+
+      if (progress < 1) {
+        brainMeshAnimationRef.current = requestAnimationFrame(animateBrainToggle);
+      } else {
+        brain.visible = showBrainMesh;
+        brainMeshAnimationRef.current = null;
+      }
+    };
+
+    brainMeshAnimationRef.current = requestAnimationFrame(animateBrainToggle);
+    return stopBrainMeshAnimation;
+  }, [expandedConcept, isDiving, showBrainMesh]);
 
   useEffect(() => {
     if (!data.nodes.length) {
@@ -1393,9 +1702,14 @@ export function Graph3D({
 
   useEffect(() => {
     let frameId: number;
+    let lastTime = performance.now();
     const hasQuery = query.trim().length > 0;
     const animate = () => {
       const time = performance.now();
+      const dt = time - lastTime;
+      lastTime = time;
+
+      const lerpFactor = 1 - Math.exp(-dt * 0.008);
 
       // Compute dive fade progress (0 = normal, 1 = fully faded out)
       let diveFade = 0;
@@ -1412,35 +1726,98 @@ export function Graph3D({
           obj.userData.update(time);
         }
 
-        // Dim non-matching nodes during search; hide everything except doc sub-nodes in expanded view
+        // Dim non-matching nodes during search or assistant-response focus.
         const isSearchDimmed = hasQuery && !matchedNodeIds.has(node.id);
+        const isChatSource = chatFocusNodeIds.sourceNodeIds.has(node.id);
+        const isChatDiscovery = chatFocusNodeIds.discoveryNodeIds.has(node.id);
+        const isChatDimmed = hasChatFocus && !isChatSource && !isChatDiscovery;
         const isExpandHidden = expandedNodeIds !== null && !expandedNodeIds.has(node.id);
+        const isHoveredTooltipNode = expandedConcept === null && hoveredNodeId === node.id;
         const isDocExpand = node.id.startsWith('doc-expand:');
         const dimOpacity = isExpandHidden ? 0 : 0.08;
-        const isDimmed = isSearchDimmed || isExpandHidden;
+        const isDimmed = isSearchDimmed || isChatDimmed || isExpandHidden;
 
-        let meshOpacity: number;
-        let spriteOpacity: number;
-        if (isDimmed) {
-          meshOpacity = dimOpacity;
-          spriteOpacity = dimOpacity;
-        } else if (diveFade > 0 && !isDocExpand) {
-          // During dive-in, fade out all non-doc nodes
-          meshOpacity = 0.9 * (1 - diveFade);
-          spriteOpacity = 1 * (1 - diveFade);
-        } else {
-          meshOpacity = 0.9;
-          spriteOpacity = 1;
+        const baseColor =
+          ((obj.userData.baseColor as THREE.Color | undefined) ?? new THREE.Color(getBaseNodeColor(node)))
+            .clone();
+        const traversalPulse = Number(obj.userData.traversalPulse ?? 0);
+        const traversalRevealed = obj.userData.traversalRevealed === true;
+        const traversalIsActive = traversalIsActiveRef.current;
+
+        const normalTargetColor =
+          isChatDiscovery || isChatDimmed ? new THREE.Color(DIMMED_SEARCH_COLOR) : baseColor;
+        const targetColor =
+          traversalIsActive && !traversalRevealed
+            ? TRAVERSAL_INACTIVE_COLOR.clone()
+            : traversalIsActive && traversalRevealed
+              ? TRAVERSAL_INACTIVE_COLOR.clone().lerp(
+                  normalTargetColor,
+                  Math.max(0, Math.min(1, traversalPulse)),
+                )
+              : normalTargetColor;
+        const targetEmissive =
+          traversalIsActive && !traversalRevealed
+            ? TRAVERSAL_INACTIVE_COLOR.clone().multiplyScalar(0.05)
+            : isChatSource
+              ? baseColor.clone().multiplyScalar(0.2)
+              : targetColor.clone().multiplyScalar(0.08);
+        targetEmissive.add(baseColor.clone().multiplyScalar(0.95 * traversalPulse));
+        targetEmissive.add(TRAVERSAL_OUTLINE_COLOR.clone().multiplyScalar(0.25 * traversalPulse));
+        const targetOpacity = Math.min(1, (isDimmed ? dimOpacity : 0.9) + traversalPulse * 0.28);
+        const traversalOutlineOpacity =
+          traversalIsActive && traversalRevealed && !isExpandHidden
+            ? 0.08 + (0.84 * traversalPulse)
+            : 0;
+        const targetOutlineOpacity = isChatDiscovery && !isExpandHidden
+          ? Math.max(0.95, traversalOutlineOpacity)
+          : traversalOutlineOpacity;
+        const targetSpriteOpacity =
+          isExpandHidden || isSearchDimmed || isChatDimmed || isHoveredTooltipNode ? 0 : 1;
+
+        if (obj.userData.currentOpacity === undefined) {
+          obj.userData.currentColor = baseColor.clone();
+          obj.userData.currentEmissive = baseColor.clone().multiplyScalar(0.15);
+          obj.userData.currentOpacity = 0.9;
+          obj.userData.currentOutlineOpacity = 0;
+          obj.userData.currentSpriteOpacity = 1;
         }
+
+        obj.userData.currentColor.lerp(targetColor, lerpFactor);
+        obj.userData.currentEmissive.lerp(targetEmissive, lerpFactor);
+        obj.userData.currentOpacity += (targetOpacity - obj.userData.currentOpacity) * lerpFactor;
+        obj.userData.currentOutlineOpacity += (targetOutlineOpacity - obj.userData.currentOutlineOpacity) * lerpFactor;
+        obj.userData.currentSpriteOpacity += (targetSpriteOpacity - obj.userData.currentSpriteOpacity) * lerpFactor;
 
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh && child.material) {
-            const mat = child.material as THREE.MeshStandardMaterial;
-            mat.opacity = meshOpacity;
-            mat.transparent = true;
+            if (child.name === 'node-shape') {
+              const mat = child.material as THREE.MeshStandardMaterial;
+              const interpolatedOpacity = obj.userData.currentOpacity;
+              const finalMeshOpacity =
+                diveFade > 0 && !isDocExpand ? interpolatedOpacity * (1 - diveFade) : interpolatedOpacity;
+
+              mat.color.copy(obj.userData.currentColor);
+              mat.emissive.copy(obj.userData.currentEmissive);
+              mat.opacity = finalMeshOpacity;
+              mat.transparent = true;
+            }
+
+            if (child.name === 'node-outline') {
+              const outlineMat = child.material as THREE.MeshBasicMaterial;
+              child.visible = obj.userData.currentOutlineOpacity > 0.01 || targetOutlineOpacity > 0;
+              outlineMat.color.copy(
+                traversalIsActive && traversalRevealed
+                  ? TRAVERSAL_OUTLINE_COLOR.clone().lerp(baseColor, Math.min(traversalPulse, 0.65))
+                  : new THREE.Color(DISCOVERY_OUTLINE_COLOR),
+              );
+              outlineMat.opacity = obj.userData.currentOutlineOpacity;
+            }
           }
           if (child instanceof THREE.Sprite && child.material) {
-            child.material.opacity = spriteOpacity;
+            const interpolatedSpriteOpacity = obj.userData.currentSpriteOpacity;
+            const finalSpriteOpacity =
+              diveFade > 0 && !isDocExpand ? interpolatedSpriteOpacity * (1 - diveFade) : interpolatedSpriteOpacity;
+            child.material.opacity = finalSpriteOpacity;
           }
         });
       });
@@ -1448,7 +1825,7 @@ export function Graph3D({
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [displayData.nodes, query, matchedNodeIds, expandedNodeIds]);
+  }, [chatFocusNodeIds, displayData.nodes, expandedConcept, expandedNodeIds, hasChatFocus, hoveredNodeId, matchedNodeIds, query]);
 
 
   useEffect(() => {
@@ -1473,7 +1850,7 @@ export function Graph3D({
   }, [hasFocusedRotationPivot, selectedEdge, expandedConcept]);
 
   useEffect(() => {
-    if (!activeCardNode) {
+    if (!hoveredNode) {
       setTooltipPosition(null);
       return;
     }
@@ -1482,9 +1859,9 @@ export function Graph3D({
 
     const updatePosition = () => {
       const worldPoint = toWorldPoint({
-        x: activeCardNode.x ?? 0,
-        y: activeCardNode.y ?? 0,
-        z: activeCardNode.z ?? 0,
+        x: hoveredNode.x ?? 0,
+        y: hoveredNode.y ?? 0,
+        z: hoveredNode.z ?? 0,
       });
       const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
@@ -1500,7 +1877,7 @@ export function Graph3D({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [activeCardNode]);
+  }, [hoveredNode]);
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
@@ -1517,6 +1894,10 @@ export function Graph3D({
       return selectedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
+    if (hasChatFocus) {
+      return chatFocusNodeIds.sourceNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_SEARCH_COLOR;
+    }
+
     if (hoveredNode) {
       return focusedNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_NODE_COLOR;
     }
@@ -1529,6 +1910,16 @@ export function Graph3D({
   }
 
   function getLinkColor(link: GraphLink): string {
+    // When a concept is expanded, only show doc↔doc links; hide everything else
+    if (expandedNodeIds) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      if (expandedNodeIds.has(sourceId) && expandedNodeIds.has(targetId)) {
+        return ACTIVE_LINK_COLOR;
+      }
+      return 'rgba(0,0,0,0)';
+    }
+
     if (isGhostLink(link)) {
       return GHOST_EDGE_COLOR;
     }
@@ -1543,18 +1934,18 @@ export function Graph3D({
       return SEMANTIC_BRIDGE_COLOR;
     }
 
-    // When a concept is expanded, only show doc↔doc links; hide everything else
-    if (expandedNodeIds) {
-      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      if (expandedNodeIds.has(sourceId) && expandedNodeIds.has(targetId)) {
-        return ACTIVE_LINK_COLOR;
-      }
-      return 'rgba(0,0,0,0)';
-    }
-
     if (isSelectedLink(link)) {
       return ACTIVE_LINK_COLOR;
+    }
+
+    if (hasChatFocus) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+
+      return chatFocusNodeIds.highlightedNodeIds.has(sourceId) &&
+        chatFocusNodeIds.highlightedNodeIds.has(targetId)
+        ? ACTIVE_LINK_COLOR
+        : DIMMED_LINK_COLOR;
     }
 
     if (focusedEdgeNodeId) {
@@ -1569,6 +1960,14 @@ export function Graph3D({
   }
 
   function getLinkWidth(link: GraphLink): number {
+    if (expandedNodeIds) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      if (!expandedNodeIds.has(sourceId) || !expandedNodeIds.has(targetId)) {
+        return 0;
+      }
+    }
+
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
     }
@@ -1624,7 +2023,7 @@ export function Graph3D({
       return;
     }
     clampNodesWithinBrainRef.current();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onEngineStop = useCallback(() => {
     // Pin all nodes so the simulation never moves them again
@@ -1636,7 +2035,7 @@ export function Graph3D({
       pins.set(node.id, { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 });
     });
     simulationSettledRef.current = true;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const dashedLinkProps = {
     linkLineDash: getLinkLineDash,
@@ -1645,7 +2044,11 @@ export function Graph3D({
   return (
     <div
       ref={containerRef}
-      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      data-testid="graph-shell"
+      data-background-hex={DEFAULT_BACKGROUND_HEX}
+      data-brain-mesh-hex={DEFAULT_BRAIN_MESH_HEX}
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      style={{ backgroundColor: DEFAULT_BACKGROUND_HEX }}
       onContextMenu={(event) => event.preventDefault()}
       onDoubleClick={(event) => {
         if (
@@ -1666,7 +2069,6 @@ export function Graph3D({
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
-          setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
           setExpandedConcept(null);
@@ -1679,20 +2081,6 @@ export function Graph3D({
       onWheel={handleWheel}
       onTouchStart={handleInteraction}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
-      <div className="absolute left-4 top-4 z-10 rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
-        <label className="flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            checked={discoveryModeEnabled}
-            onChange={(event) => {
-              setDiscoveryModeEnabled(event.target.checked);
-            }}
-            aria-label="Discovery mode"
-          />
-          <span>Discovery Mode</span>
-        </label>
-      </div>
       <ForceGraph3D
         ref={graphRef as never}
         {...dashedLinkProps}
@@ -1701,6 +2089,7 @@ export function Graph3D({
         height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
+        nodeLabel={() => null}
         nodeVal={() => 4}
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
@@ -1723,7 +2112,6 @@ export function Graph3D({
         onBackgroundClick={() => {
           if (Date.now() <= suppressBackgroundDoubleClickUntilRef.current) return;
           clearSelectedEdge();
-          setSelectedNode(null);
           setRotationPivotNode(null);
           setLatentLinks([]);
           setExpandedConcept(null);
@@ -1754,11 +2142,23 @@ export function Graph3D({
         >
           ⟳
         </button>
+        <button
+          type="button"
+          aria-label={showBrainMesh ? 'Hide brain mesh' : 'Show brain mesh'}
+          onClick={() => setShowBrainMesh((current) => !current)}
+          className={`flex h-11 w-11 items-center justify-center rounded-full text-[0.65rem] font-semibold uppercase tracking-[0.18em] shadow-lg shadow-slate-950/30 transition ${
+            showBrainMesh
+              ? 'bg-slate-800/80 text-slate-100 hover:bg-slate-700/90'
+              : 'bg-slate-900/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+          }`}
+        >
+          BM
+        </button>
       </div>
-      {activeCardNode && tooltipPosition && !expandedConcept ? (
+      {hoveredNode && tooltipPosition && !expandedConcept ? (
         <NodeTooltip
-          node={activeCardNode}
-          connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
+          node={hoveredNode}
+          connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
         />

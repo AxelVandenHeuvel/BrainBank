@@ -5,7 +5,12 @@ import kuzu
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db.kuzu import get_db_connection, get_kuzu_engine, update_node_communities
-from backend.db.lance import init_lancedb, delete_document_chunks, update_document_text
+from backend.db.lance import (
+    init_lancedb,
+    create_document_text,
+    delete_document_chunks,
+    update_document_text,
+)
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.latent_discovery import concept_name_from_query_rows, find_latent_document_hits
 from backend.services.clustering import run_leiden_clustering
@@ -46,6 +51,25 @@ def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse
         )
 
     return documents
+
+
+def get_document_from_table(doc_id: str) -> DocumentResponse | None:
+    """Return one full document by doc_id."""
+    _, table = init_lancedb()
+    df = table.to_pandas()
+
+    if df.empty:
+        return None
+
+    matching = df[df["doc_id"] == doc_id]
+    if matching.empty:
+        return None
+
+    return DocumentResponse(
+        doc_id=doc_id,
+        name=matching["doc_name"].iloc[0],
+        full_text="\n\n".join(matching["text"].tolist()),
+    )
 
 
 def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
@@ -219,6 +243,22 @@ def get_documents():
         )
 
     return {"documents": documents}
+
+
+@graph_router.post("/documents")
+def create_document(body: UpdateDocumentRequest):
+    """Fast draft save: create a lightweight document without full ingest."""
+    doc_id = create_document_text("./data/lancedb", body.title, body.text)
+    return {"doc_id": doc_id, "status": "saved"}
+
+
+@graph_router.get("/documents/{doc_id}", response_model=DocumentResponse)
+def get_document(doc_id: str):
+    """Return the full text for one document id."""
+    document = get_document_from_table(doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
 
 
 @graph_router.put("/documents/{doc_id}")

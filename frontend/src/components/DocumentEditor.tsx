@@ -28,25 +28,26 @@ export function DocumentEditor({
   const crepeRef = useRef<Crepe | null>(null);
   const contentRef = useRef(initialContent);
   const titleRef = useRef(initialTitle);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMounted = useRef(true);
   const isSaving = useRef(false);
 
   const save = useCallback(async () => {
     const text = contentRef.current.trim();
-    const currentTitle = titleRef.current.trim() || 'Untitled';
-    if (!text) return;
+    const rawTitle = titleRef.current.trim();
+    if (!text && !rawTitle) return;
+
+    const currentTitle = rawTitle || 'Untitled';
 
     // Prevent overlapping saves — especially important for new notes where
-    // POST /ingest is slow (LLM + embedding). The first save creates the doc;
-    // subsequent saves should wait until the component remounts with the real id.
+    // the first POST creates the doc and subsequent saves should wait until
+    // the component remounts with the real id.
     if (isSaving.current) return;
     isSaving.current = true;
 
     setStatus('saving');
 
     try {
-      const url = isNew ? '/ingest' : `/api/documents/${docId}`;
+      const url = isNew ? '/api/documents' : `/api/documents/${docId}`;
       const method = isNew ? 'POST' : 'PUT';
       const body = JSON.stringify({ title: currentTitle, text });
 
@@ -75,13 +76,6 @@ export function DocumentEditor({
     }
   }, [docId, isNew, onSaved]);
 
-  const scheduleSave = useCallback(() => {
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
-      save();
-    }, 1500);
-  }, [save]);
-
   // Milkdown Crepe setup
   useEffect(() => {
     if (!editorRoot.current || crepeRef.current) return;
@@ -109,7 +103,7 @@ export function DocumentEditor({
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         contentRef.current = markdown;
-        scheduleSave();
+        setStatus((current) => (current === 'saving' ? current : 'idle'));
       });
     });
 
@@ -128,26 +122,20 @@ export function DocumentEditor({
       crepe.destroy().catch(() => {});
       crepeRef.current = null;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Flush pending save on unmount
   useEffect(() => {
     isMounted.current = true;
     return () => {
       isMounted.current = false;
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-        // Fire save immediately on unmount
-        save();
-      }
     };
-  }, [save]);
+  }, []);
 
   function handleTitleChange(newTitle: string) {
     setTitle(newTitle);
     titleRef.current = newTitle;
     onTitleChange?.(docId, newTitle);
-    scheduleSave();
+    setStatus((current) => (current === 'saving' ? current : 'idle'));
   }
 
   const statusLabel: Record<SaveStatus, string> = {
@@ -168,6 +156,16 @@ export function DocumentEditor({
           placeholder="Untitled"
           className="min-w-0 flex-1 border-none bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-neutral-700"
         />
+        <button
+          type="button"
+          onClick={() => {
+            void save();
+          }}
+          disabled={status === 'saving'}
+          className="shrink-0 border border-white/[0.08] bg-neutral-950 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-neutral-300 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Save note
+        </button>
         <span
           data-testid="save-status"
           className={`text-xs ${
@@ -179,7 +177,13 @@ export function DocumentEditor({
       </div>
 
       {/* Editor */}
-      <div className="flex-1 overflow-auto px-6 py-4">
+      <div
+        data-testid="document-editor-scroll-region"
+        className="flex-1 overflow-auto overscroll-contain px-6 py-4"
+        onWheel={(event) => {
+          event.stopPropagation();
+        }}
+      >
         <div ref={editorRoot} />
       </div>
     </div>

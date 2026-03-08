@@ -4,6 +4,7 @@
   color-scheme: dark;
   font-family: "Inter", "Avenir Next", "Trebuchet MS", sans-serif;
   background: #000;
+  --accent-hot-pink: #ec4899;
 }
 
 html,
@@ -16,6 +17,15 @@ body {
   margin: 0;
   min-height: 100vh;
   background: #000;
+}
+
+.chat-loading-text {
+  opacity: 0;
+  transition: opacity 520ms ease-in-out;
+}
+
+.chat-loading-text.is-visible {
+  opacity: 1;
 }
 
 /* Milkdown dark theme overrides */
@@ -53,4 +63,17 @@ body {
 
 .md-no-placeholder::before {
   display: none !important;
+}
+
+.sidebar-files-content {
+  direction: ltr;
+}
+
+.sidebar-files-scroll-container {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-files-scroll-container::-webkit-scrollbar {
+  display: none;
 }

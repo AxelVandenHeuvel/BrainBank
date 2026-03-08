@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+const graph3DSpy = vi.fn();
+
 vi.mock('./hooks/useGraphData', () => ({
   useGraphData: () => ({
     data: {
@@ -26,15 +28,77 @@ vi.mock('./hooks/useGraphData', () => ({
 }));
 
 vi.mock('./components/Graph3D', () => ({
-  Graph3D: () => <div data-testid="graph-scene" />,
+  Graph3D: (props: {
+    chatFocus?: { sourceConcepts: string[]; discoveryConcepts: string[] } | null;
+    activeTraversal?: { runId: number } | null;
+    onOpenDocument?: (docId: string, name: string, content: string) => void;
+  }) => {
+    graph3DSpy(props);
+
+    return (
+      <div>
+        <div
+          data-testid="graph-scene"
+          data-chat-focus={props.chatFocus ? JSON.stringify(props.chatFocus) : 'none'}
+          data-active-traversal={props.activeTraversal ? String(props.activeTraversal.runId) : 'none'}
+        />
+        <button
+          type="button"
+          onClick={() => props.onOpenDocument?.('doc-1', 'Architecture Notes', '# Graph content')}
+        >
+          Open graph doc
+        </button>
+      </div>
+    );
+  },
+}));
+
+vi.mock('./components/DocumentEditor', () => ({
+  DocumentEditor: ({
+    docId,
+    initialContent,
+    onSaved,
+  }: {
+    docId: string;
+    initialContent: string;
+    onSaved?: (docId: string, newDocId?: string, currentContent?: string) => void;
+  }) => (
+    <div data-testid="document-editor">
+      <div>{docId}</div>
+      <div>{initialContent || 'Empty content'}</div>
+      <button
+        type="button"
+        onClick={() => onSaved?.(docId, docId.startsWith('new-note-') ? 'saved-doc-1' : undefined, 'Saved content')}
+      >
+        Trigger save
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('./components/ChatPanel', () => ({
-  ChatPanel: ({ graphSource }: { graphSource: 'api' | 'mock' }) => {
+  ChatPanel: ({
+    graphSource,
+    onOpenDocument,
+    onAssistantMessageSelect,
+    onTraversalChange,
+  }: {
+    graphSource: 'api' | 'mock';
+    onOpenDocument?: (docId: string, name: string) => void;
+    onAssistantMessageSelect?: (selection: {
+      sourceConcepts: string[];
+      discoveryConcepts: string[];
+    } | null) => void;
+    onTraversalChange?: (traversal: { runId: number } | null) => void;
+  }) => {
     const [draft, setDraft] = useState('');
 
     return (
-      <div data-testid="chat-panel" data-graph-source={graphSource}>
+      <div
+        data-testid="chat-panel"
+        data-graph-source={graphSource}
+        data-has-bottom-composer="true"
+      >
         <label htmlFor="chat-draft">Draft</label>
         <input
           id="chat-draft"
@@ -42,6 +106,28 @@ vi.mock('./components/ChatPanel', () => ({
           onChange={(event) => setDraft(event.target.value)}
         />
         <div>{draft || 'Empty draft'}</div>
+        <button type="button" onClick={() => onOpenDocument?.('doc-1', 'Architecture Notes')}>
+          Open cited doc
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onAssistantMessageSelect?.({
+              sourceConcepts: ['Calculus'],
+              discoveryConcepts: ['Derivatives'],
+            })}
+        >
+          Select response
+        </button>
+        <button type="button" onClick={() => onAssistantMessageSelect?.(null)}>
+          Clear response
+        </button>
+        <button type="button" onClick={() => onTraversalChange?.({ runId: 7 })}>
+          Start traversal
+        </button>
+        <button type="button" onClick={() => onTraversalChange?.(null)}>
+          Clear traversal
+        </button>
       </div>
     );
   },
@@ -50,6 +136,36 @@ vi.mock('./components/ChatPanel', () => ({
 import App from './App';
 
 describe('App', () => {
+  it('passes selected assistant response concepts into the graph highlight state', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+    await user.click(screen.getByRole('button', { name: 'Select response' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute(
+      'data-chat-focus',
+      JSON.stringify({
+        sourceConcepts: ['Calculus'],
+        discoveryConcepts: ['Derivatives'],
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Clear response' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-chat-focus', 'none');
+  });
+
+  it('passes active traversal state from chat into the graph scene', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+    await user.click(screen.getByRole('button', { name: 'Start traversal' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-active-traversal', '7');
+
+    await user.click(screen.getByRole('button', { name: 'Clear traversal' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-active-traversal', 'none');
+  });
+
   it('renders the shell with search bar in the top bar area', () => {
     render(<App />);
 
@@ -125,6 +241,25 @@ describe('App', () => {
     expect(screen.getByTestId('sidebar-content')).toBeInTheDocument();
   });
 
+  it('uses the files section shell while FileExplorer renders a custom left-side hot-pink scroll rail', () => {
+    render(<App />);
+
+    const sidebar = screen.getByTestId('sidebar');
+    const filesSection = screen.getByTestId('sidebar-files-section');
+    const fileTree = screen.getByTestId('file-explorer-tree');
+    const fileExplorerScrollShell = screen.getByTestId('file-explorer-scroll-shell');
+    const fileExplorerScrollRail = screen.getByTestId('file-explorer-scroll-rail');
+    const fileExplorerScrollThumb = screen.getByTestId('file-explorer-scroll-thumb');
+
+    expect(sidebar).not.toHaveClass('lg:overflow-y-auto');
+    expect(filesSection).toHaveClass('min-h-0', 'flex', 'flex-1', 'flex-col');
+    expect(filesSection).not.toHaveClass('overflow-y-auto');
+    expect(fileExplorerScrollShell).toHaveClass('min-h-0', 'flex-1');
+    expect(fileExplorerScrollRail).toHaveClass('absolute', 'bottom-0', 'left-0', 'top-0', 'w-[3px]');
+    expect(fileExplorerScrollThumb).toHaveClass('absolute', 'left-0', 'w-[3px]', 'rounded-none');
+    expect(fileTree).toHaveClass('sidebar-files-content');
+  });
+
   it('supports chat toggle and preserves state', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -135,9 +270,15 @@ describe('App', () => {
       'lg:absolute',
       'lg:inset-y-3',
       'lg:right-3',
-      'lg:w-[24rem]',
+      'lg:w-[30rem]',
     );
+    expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-has-bottom-composer', 'true');
+    expect(screen.getByTestId('chat-panel')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open chat panel' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
+    expect(screen.getByTestId('chat-panel')).toBeVisible();
 
     // Type in chat
     await user.type(screen.getByLabelText('Draft'), 'Persist me');
@@ -159,5 +300,78 @@ describe('App', () => {
     // The old NoteEditor full-page overlay should not be rendered
     // There should be no "Back to graph" button from NoteEditor
     expect(screen.queryByText('Back to graph')).not.toBeInTheDocument();
+  });
+
+  it('closes the new note editor after saving a new note', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /new note/i }));
+
+    expect(screen.getByTestId('document-editor')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Trigger save' }));
+
+    expect(screen.queryByTestId('document-editor')).not.toBeInTheDocument();
+    expect(screen.getByTestId('graph-scene')).toBeVisible();
+  });
+
+  it('opens a cited chat document in the document editor', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        doc_id: 'doc-1',
+        name: 'Architecture Notes',
+        full_text: '# Architecture Notes',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+    await user.click(screen.getByRole('button', { name: 'Open cited doc' }));
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/doc-1');
+    expect(await screen.findByTestId('document-editor')).toBeInTheDocument();
+    expect(screen.getByText('doc-1')).toBeInTheDocument();
+  });
+
+  it('shows a loading state until async document content arrives on first open', async () => {
+    const user = userEvent.setup();
+    let resolveFetch: ((value: {
+      ok: boolean;
+      json: () => Promise<{ doc_id: string; name: string; full_text: string }>;
+    }) => void) | null = null;
+    const fetchPromise = new Promise<{
+      ok: boolean;
+      json: () => Promise<{ doc_id: string; name: string; full_text: string }>;
+    }>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockReturnValue(fetchPromise);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+    await user.click(screen.getByRole('button', { name: 'Open cited doc' }));
+
+    expect(screen.getByText('Loading note...')).toBeInTheDocument();
+    expect(screen.queryByTestId('document-editor')).not.toBeInTheDocument();
+
+    expect(resolveFetch).not.toBeNull();
+    resolveFetch!({
+      ok: true,
+      json: async () => ({
+        doc_id: 'doc-1',
+        name: 'Architecture Notes',
+        full_text: '# Loaded document',
+      }),
+    });
+
+    expect(await screen.findByTestId('document-editor')).toBeInTheDocument();
+    expect(screen.getByText('# Loaded document')).toBeInTheDocument();
   });
 });

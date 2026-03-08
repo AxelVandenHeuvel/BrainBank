@@ -17,6 +17,9 @@ from backend.db.lance import find_existing_document, init_lancedb
 from backend.ingestion.consolidator import ConceptConsolidator
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
+from backend.retrieval.query import prepare_brainbank_query, answer_prepared_local_query
+from backend.retrieval.routing import QueryRoute
+from backend.session.prepared_query_store import PreparedQueryStore
 from backend.sample_data.mock_demo import seed_mock_demo_data
 from backend.services.clustering import run_leiden_clustering
 from backend.services.llm import generate_test_answer
@@ -87,6 +90,7 @@ app = FastAPI(title="BrainBank", version="0.1.0", lifespan=lifespan)
 app.include_router(graph_router)
 
 session_memory = SessionMemory()
+prepared_query_store = PreparedQueryStore()
 
 
 class IngestRequest(BaseModel):
@@ -106,6 +110,12 @@ class HistoryTurn(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
+    session_id: str | None = None
+    history: list[HistoryTurn] | None = None
+
+
+class PreparedQueryAnswerRequest(BaseModel):
+    prepared_query_id: str
     session_id: str | None = None
     history: list[HistoryTurn] | None = None
 
@@ -152,7 +162,61 @@ async def query(req: QueryRequest):
         "answer": result["answer"],
         "source_concepts": result["source_concepts"],
         "discovery_concepts": result["discovery_concepts"],
+        "source_documents": result["source_documents"],
+        "discovery_documents": result["discovery_documents"],
+        "source_chunks": result["source_chunks"],
+        "discovery_chunks": result["discovery_chunks"],
+        "supporting_relationships": result["supporting_relationships"],
     }
+
+
+@app.post("/query/prepare")
+async def query_prepare(req: QueryRequest):
+    loop = asyncio.get_event_loop()
+    preparation = await loop.run_in_executor(
+        None,
+        partial(prepare_brainbank_query, req.question, shared_kuzu_db=get_kuzu_engine()),
+    )
+
+    if preparation.requires_direct_query:
+        return preparation.to_prepare_response()
+
+    prepared_local_query = preparation.prepared_local_query
+    if prepared_local_query is None:
+        return preparation.to_prepare_response()
+
+    prepared_query_id = prepared_query_store.create(
+        route=QueryRoute.LOCAL,
+        preparation=prepared_local_query,
+    )
+    return preparation.to_prepare_response(prepared_query_id=prepared_query_id)
+
+
+@app.post("/query/answer")
+async def query_answer(req: PreparedQueryAnswerRequest):
+    record = prepared_query_store.consume(req.prepared_query_id)
+    if record is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Prepared query not found or expired")
+
+    history_dicts = None
+    if req.history:
+        history_dicts = [{"role": t.role, "content": t.content} for t in req.history]
+
+    if req.session_id:
+        session_memory.add_turn(req.session_id, "user", record.preparation.user_query)
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        partial(answer_prepared_local_query, record.preparation, history=history_dicts),
+    )
+
+    if req.session_id:
+        session_memory.add_turn(req.session_id, "assistant", result["answer"])
+
+    return result
 
 
 @app.post("/query/test-llm")
@@ -161,7 +225,13 @@ async def query_test_llm(req: QueryRequest):
     answer = await loop.run_in_executor(None, partial(generate_test_answer, req.question))
     return {
         "answer": answer,
+        "source_concepts": [],
         "discovery_concepts": [],
+        "source_documents": [],
+        "discovery_documents": [],
+        "source_chunks": [],
+        "discovery_chunks": [],
+        "supporting_relationships": [],
         "mode": "llm_test",
     }
 
