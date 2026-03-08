@@ -15,7 +15,7 @@ export function NodeTooltip({
 }: NodeTooltipProps) {
   return (
     <div
-      className="pointer-events-none absolute z-20 rounded-full border border-white/10 bg-slate-950/90 px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-slate-950/40 backdrop-blur"
+      className="pointer-events-none absolute z-20 rounded-full border border-white/10 bg-slate-950/90 px-3 py-1.5 text-xs font-medium text-white backdrop-blur"
       style={{
         left: x,
         top: y,
