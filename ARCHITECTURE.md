@@ -85,7 +85,7 @@ frontend/
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
-      mockGraph.ts           - Development graph payload
+      mockGraph.ts           - Realistic college-student mock data (calculus, physics, philosophy, personal journal)
     test/
       setup.ts               - Vitest setup
     types/
@@ -147,6 +147,17 @@ Each file has a single responsibility. Tests mirror the source structure.
 ## Sample Data Seeding
 
 `sample_data/college_math_notes` contains a small college-student math corpus for frontend document-opening tests. `scripts/seed_college_math_notes.py` loads the catalog, splits each markdown file into paragraph chunks, writes deterministic vectors plus chunk text into LanceDB, and upserts the matching Concept and RELATED_TO graph data into Kuzu. The seeder skips any sample `doc_id` values that are already present, so rerunning it does not duplicate the sample documents.
+
+## Mock Data
+
+`frontend/src/mock/mockGraph.ts` provides a realistic development dataset modeled as a college student's knowledge base across four domains:
+
+- **Calculus** (6 concepts): Limits, Derivatives, Integrals, Chain Rule, Fundamental Theorem of Calculus
+- **Physics** (7 concepts): Classical Mechanics, Newton's Laws, Conservation of Energy, Electromagnetism, Maxwell's Equations, Thermodynamics, Entropy
+- **Philosophy** (7 concepts): Epistemology, Rationalism, Empiricism, Ethics, Utilitarianism, Existentialism, Free Will
+- **Personal** (4 concepts): Study Habits, Time Management, Motivation, Career Goals
+
+Two bridge concepts (Differential Equations, Determinism) connect clusters across disciplines. 12 Document nodes link to concepts via MENTIONS edges. Cross-domain RELATED_TO edges model real interdisciplinary connections (e.g., Derivatives↔Newton's Laws, Entropy↔Determinism, Existentialism↔Motivation, Ethics↔Career Goals). Six `mockRelationshipDetailsByEdge` entries provide evidence documents for the most interesting cross-domain connections.
 
 ## Frontend Graph Flow
 

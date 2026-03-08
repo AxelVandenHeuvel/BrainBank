@@ -619,7 +619,12 @@ export function Graph3D({
 
     let docs: RelationshipDocument[] = [];
     try {
-      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       if (response.ok) {
         docs = await response.json();
       }
@@ -841,6 +846,13 @@ export function Graph3D({
 
       stopIdleRotation();
     };
+  }, []);
+
+  // Increase charge repulsion so nodes spread out within the brain volume
+  useEffect(() => {
+    const fg = graphRef.current as any;
+    if (!fg?.d3Force) return;
+    fg.d3Force('charge')?.strength(-120);
   }, []);
 
   useEffect(() => {

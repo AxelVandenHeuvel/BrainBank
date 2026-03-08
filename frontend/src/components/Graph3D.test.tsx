@@ -952,6 +952,7 @@ describe('Graph3D', () => {
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         '/api/concepts/Calculus/documents',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
 
@@ -1381,8 +1382,8 @@ describe('Graph3D', () => {
       await props.onLinkClick(graph.links[0]);
     });
 
-    expect(screen.getByText('Derivatives are a core tool within calculus')).toBeInTheDocument();
-    expect(screen.getByText('Math Notes')).toBeInTheDocument();
+    expect(screen.getByText('Derivatives are the central tool of differential calculus, measuring instantaneous rates of change')).toBeInTheDocument();
+    expect(screen.getByText('Limits and Continuity Review')).toBeInTheDocument();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
