@@ -253,6 +253,18 @@ describe('Graph3D', () => {
           });
         }
 
+        if (url === '/api/stats') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              total_documents: 4,
+              total_chunks: 12,
+              total_concepts: 2,
+              total_relationships: 2,
+            }),
+          });
+        }
+
         return Promise.resolve({
           ok: true,
           json: async () => [],
@@ -436,16 +448,9 @@ describe('Graph3D', () => {
     expect(shape).toBeDefined();
     expect(shape.geometry.type).toBe('DodecahedronGeometry');
 
-    const expectedColorScore = String(graph.nodes[0].id)
-      .split('')
-      .reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 10000, 0) / 10000;
-    const expectedColor = new THREE.Color(0xff4444).lerp(
-      new THREE.Color(0x4444ff),
-      expectedColorScore,
-    );
-
     const material = shape.material as THREE.MeshStandardMaterial;
-    expect(material.color.getHex()).toBe(expectedColor.getHex());
+    expect(nodeObject?.userData.baseColor).toBeInstanceOf(THREE.Color);
+    expect(material.color.getHex()).toBe((nodeObject?.userData.baseColor as THREE.Color).getHex());
     expect(material.flatShading).toBe(true);
 
     expect(nodeObject?.children.some((child) => child instanceof THREE.Sprite)).toBe(true);
@@ -1303,7 +1308,7 @@ describe('Graph3D', () => {
     );
   });
 
-  it('renders bottom graph stats instead of control helper copy', () => {
+  it('renders nodes, edges, and backend document totals instead of control helper copy', async () => {
     render(
       <Graph3D
         data={graph}
@@ -1314,11 +1319,15 @@ describe('Graph3D', () => {
       />,
     );
 
+    await act(async () => {
+      await Promise.resolve();
+    });
+
     const statsFooter = screen.getByTestId('graph-stats-footer');
     expect(statsFooter).toHaveTextContent('3 nodes');
     expect(statsFooter).toHaveTextContent('2 edges');
-    expect(statsFooter).toHaveTextContent('2 concepts');
-    expect(statsFooter).toHaveTextContent('1 document');
+    expect(statsFooter).toHaveTextContent('4 documents');
+    expect(statsFooter).not.toHaveTextContent('concept');
     expect(screen.queryByText(/left-click:\s*rotate/i)).not.toBeInTheDocument();
   });
 
@@ -1634,6 +1643,7 @@ describe('Graph3D', () => {
       const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
         onNodeClick: (n: GraphNode) => void;
       };
+      vi.mocked(globalThis.fetch).mockClear();
 
       await act(async () => {
         onNodeClick(graph.nodes[2]); // Document node
@@ -1711,14 +1721,35 @@ describe('Graph3D', () => {
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
     });
 
-    it('updates the footer stats from the graph that is actually visible after concept expansion', async () => {
+    it('keeps visible node and edge totals live while using backend document totals', async () => {
       const mockDocs = [
         { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
         { doc_id: 'def456', name: 'Other Notes', full_text: 'other content' },
       ];
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockDocs),
+      globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+
+        if (url === '/api/stats') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              total_documents: 7,
+              total_chunks: 21,
+              total_concepts: 2,
+              total_relationships: 2,
+            }),
+          });
+        }
+
+        return Promise.resolve({
+          ok: true,
+          json: async () => mockDocs,
+        });
       });
 
       render(
@@ -1749,8 +1780,8 @@ describe('Graph3D', () => {
       const statsFooter = screen.getByTestId('graph-stats-footer');
       expect(statsFooter).toHaveTextContent('5 nodes');
       expect(statsFooter).toHaveTextContent('3 edges');
-      expect(statsFooter).toHaveTextContent('2 concepts');
-      expect(statsFooter).toHaveTextContent('3 documents');
+      expect(statsFooter).toHaveTextContent('7 documents');
+      expect(statsFooter).not.toHaveTextContent('concept');
     });
 
     it('frames the expanded visible set instead of zooming all the way into just the clicked node', async () => {
@@ -2013,7 +2044,7 @@ describe('Graph3D', () => {
 
       expect(screen.getByText('Document View')).toBeInTheDocument();
       expect(
-        screen.getByText('Nodes represent documents in this focused view.'),
+        screen.getByText('Double click a document node to open it.'),
       ).toBeInTheDocument();
 
       act(() => {
@@ -2243,6 +2274,7 @@ describe('Graph3D', () => {
     const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
       onLinkClick: (link: GraphLink) => Promise<void> | void;
     };
+    vi.mocked(globalThis.fetch).mockClear();
 
     await act(async () => {
       await props.onLinkClick(graph.links[1]);
