@@ -62,6 +62,20 @@ class TestIngestMarkdown:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_document_concept_links_are_stored_in_lancedb_metadata(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
+        text = "Calculus is about Derivatives and Integrals."
+        result = ingest_markdown(text, "Math Notes", lance_path, kuzu_path)
+        _, table = init_lancedb(lance_path)
+        df = table.to_pandas()
+
+        matching_rows = df[df["doc_id"] == result["doc_id"]]
+
+        assert not matching_rows.empty
+        assert any("Calculus" in list(concepts) for concepts in matching_rows["concepts"])
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     def test_related_to_edges_created(self, mock_llm, mock_emb, mock_score, lance_path, kuzu_path):
         text = "Calculus is about Derivatives and Integrals."
         ingest_markdown(text, "Math Notes", lance_path, kuzu_path)

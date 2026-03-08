@@ -5,8 +5,8 @@ import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
 import { NoteEditor } from './components/NoteEditor';
 import { SearchBar } from './components/SearchBar';
-import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
 import { useGraphData } from './hooks/useGraphData';
+import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
 import type { GraphNode, GraphNodeType } from './types/graph';
 
 const NODE_TYPES: GraphNodeType[] = [
@@ -46,37 +46,28 @@ export default function App() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-slate-950 text-slate-100 lg:h-screen lg:overflow-hidden">
       <div
-        className={`mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:px-6 ${
+        className={`mx-auto grid min-h-screen w-full max-w-[1800px] gap-6 px-4 py-4 lg:h-screen lg:overflow-hidden lg:px-6 ${
           isChatOpen
             ? 'lg:grid-cols-[22rem_minmax(0,1fr)_24rem]'
             : 'lg:grid-cols-[22rem_minmax(0,1fr)]'
         }`}
       >
-        <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur">
+        <aside className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate-950/75 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:min-h-0 lg:overflow-y-auto">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-200/70">
               Cognitive Map
             </p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white">
-              BrainBank
-            </h1>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white">BrainBank</h1>
             <p className="mt-3 text-sm leading-6 text-slate-300">
               Explore your knowledge graph as a living neural landscape.
             </p>
           </div>
 
-          <SearchBar
-            query={query}
-            matchCount={matchCount}
-            onQueryChange={handleQueryChange}
-          />
+          <SearchBar query={query} matchCount={matchCount} onQueryChange={handleQueryChange} />
 
-          <IngestPanel
-            onIngestComplete={refetch}
-            onNewNote={() => setView('editor')}
-          />
+          <IngestPanel onIngestComplete={refetch} onNewNote={() => setView('editor')} />
 
           <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
             <div className="flex items-center justify-between">
@@ -88,15 +79,11 @@ export default function App() {
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-300">
               <div className="rounded-2xl bg-slate-950/70 p-3">
                 <p className="text-slate-500">Nodes</p>
-                <p className="mt-1 text-2xl font-semibold text-white">
-                  {data.nodes.length}
-                </p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.nodes.length}</p>
               </div>
               <div className="rounded-2xl bg-slate-950/70 p-3">
                 <p className="text-slate-500">Edges</p>
-                <p className="mt-1 text-2xl font-semibold text-white">
-                  {data.links.length}
-                </p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.links.length}</p>
               </div>
             </div>
             {error ? (
@@ -138,15 +125,13 @@ export default function App() {
           </section>
         </aside>
 
-        <section className="min-h-[70vh]">
+        <section className="min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
           {view === 'editor' ? (
-            <NoteEditor
-              onSave={handleNoteSaved}
-              onCancel={() => setView('graph')}
-            />
+            <NoteEditor onSave={handleNoteSaved} onCancel={() => setView('graph')} />
           ) : (
             <Graph3D
               data={data}
+              source={source}
               query={deferredQuery}
               hoveredNode={hoveredNode}
               onHoverNode={setHoveredNode}
@@ -154,19 +139,31 @@ export default function App() {
           )}
         </section>
 
-        {isChatOpen ? (
-          <aside className="relative flex min-h-[70vh]">
-            <button
-              type="button"
-              aria-label={getChatToggleLabel(true)}
-              onClick={() => setIsChatOpen(false)}
-              className="absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl]"
-            >
-              Chat
-            </button>
+        <aside
+          className={`relative min-h-[70vh] lg:min-h-0 lg:overflow-hidden ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
+          aria-hidden={!isChatOpen}
+        >
+          <button
+            type="button"
+            aria-label={getChatToggleLabel(true)}
+            onClick={() => setIsChatOpen(false)}
+            className={`absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl] ${
+              isChatOpen ? '' : 'pointer-events-none opacity-0'
+            }`}
+          >
+            Chat
+          </button>
+          <div
+            hidden={!isChatOpen}
+            className={`flex w-full transition ${
+              isChatOpen ? 'visible translate-x-0 opacity-100' : 'invisible translate-x-8 opacity-0'
+            }`}
+          >
             <ChatPanel />
-          </aside>
-        ) : (
+          </div>
+        </aside>
+
+        {!isChatOpen ? (
           <button
             type="button"
             aria-label={getChatToggleLabel(false)}
@@ -175,7 +172,7 @@ export default function App() {
           >
             Chat
           </button>
-        )}
+        ) : null}
       </div>
     </main>
   );

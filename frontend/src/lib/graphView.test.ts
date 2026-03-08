@@ -8,6 +8,7 @@ import {
   conceptColorFromScore,
   findMatchingNodeIds,
   getConnectionCount,
+  setOrbitTarget,
   zoomToNode,
 } from './graphView';
 import type { GraphData } from '../types/graph';
@@ -72,8 +73,8 @@ describe('graphView helpers', () => {
     expect(matches).toEqual(new Set(['concept:Calculus']));
   });
 
-  it('rotates the camera around the y axis', () => {
-    let currentPosition = { x: 100, y: 25, z: 0 };
+  it('rotates the camera around a fixed y-axis target', () => {
+    let currentPosition = { x: 120, y: 25, z: 10 };
     const cameraPosition = vi.fn((position?: typeof currentPosition) => {
       if (!position) {
         return currentPosition;
@@ -88,13 +89,13 @@ describe('graphView helpers', () => {
       },
     };
 
-    autoRotateCamera(fgRef, 0.01);
+    autoRotateCamera(fgRef, { x: 20, y: 5, z: 10 }, 0.01);
 
     expect(cameraPosition).toHaveBeenLastCalledWith({
-      x: expect.closeTo(99.995, 3),
+      x: expect.closeTo(119.995, 3),
       y: 25,
-      z: expect.closeTo(0.9999, 3),
-    });
+      z: expect.closeTo(10.9999, 3),
+    }, { x: 20, y: 5, z: 10 });
   });
 
   it('zooms the camera to a node', () => {
@@ -145,5 +146,24 @@ describe('graphView helpers', () => {
       { x: 0, y: 8, z: 0 },
       900,
     );
+  });
+
+  it('sets the orbit controls target to a fixed point', () => {
+    const set = vi.fn();
+    const update = vi.fn();
+    const fgRef = {
+      current: {
+        cameraPosition: vi.fn(),
+        controls: () => ({
+          target: { set },
+          update,
+        }),
+      },
+    };
+
+    setOrbitTarget(fgRef, { x: 1, y: 2, z: 3 });
+
+    expect(set).toHaveBeenCalledWith(1, 2, 3);
+    expect(update).toHaveBeenCalled();
   });
 });

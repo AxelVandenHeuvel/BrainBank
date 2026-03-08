@@ -4,6 +4,13 @@ from backend.services.embeddings import embed_query
 from backend.services.llm import generate_answer
 
 
+def normalize_concepts(value) -> list[str]:
+    if value is None:
+        return []
+
+    return list(value)
+
+
 def query_brainbank(
     user_query: str,
     lance_db_path: str = "./data/lancedb",
@@ -27,17 +34,12 @@ def query_brainbank(
     initial_chunk_ids = results["chunk_id"].tolist()
     initial_texts = results["text"].tolist()
 
-    # Step 2: Find connected Concept nodes for those chunks
-    source_concepts = set()
-    for chunk_id in initial_chunk_ids:
-        result = conn.execute(
-            "MATCH (d:Document)-[m:MENTIONS]->(c:Concept) "
-            "WHERE list_contains(m.chunk_ids, $cid) "
-            "RETURN c.name",
-            parameters={"cid": chunk_id},
-        )
-        while result.has_next():
-            source_concepts.add(result.get_next()[0])
+    # Step 2: Read source concepts directly from LanceDB chunk metadata.
+    source_concepts = {
+        concept
+        for concepts in results["concepts"].tolist()
+        for concept in normalize_concepts(concepts)
+    }
 
     # Step 3: Graph expansion - find 1-hop RELATED_TO neighbors
     discovery_concepts = set()
@@ -52,29 +54,27 @@ def query_brainbank(
             if neighbor not in source_concepts:
                 discovery_concepts.add(neighbor)
 
-    # Step 4: Retrieve chunk texts for discovery concepts
+    # Step 4: Retrieve chunk texts for discovery concepts from LanceDB metadata.
     all_texts = list(initial_texts)
     for concept in discovery_concepts:
-        result = conn.execute(
-            "MATCH (d:Document)-[m:MENTIONS]->(c:Concept {name: $name}) "
-            "RETURN m.chunk_ids",
-            parameters={"name": concept},
-        )
-        while result.has_next():
-            extra_chunk_ids = result.get_next()[0]
-            for cid in extra_chunk_ids:
-                if cid not in initial_chunk_ids:
-                    row = df[df["chunk_id"] == cid]
-                    if not row.empty:
-                        all_texts.append(row.iloc[0]["text"])
+        matching_rows = df[
+            df["concepts"].apply(
+                lambda concepts: concept in normalize_concepts(concepts)
+            )
+        ]
+        for _, row in matching_rows.iterrows():
+            if row["chunk_id"] not in initial_chunk_ids:
+                all_texts.append(row["text"])
 
     # Step 5: Generate grounded answer
-    all_concepts = list(source_concepts | discovery_concepts)
+    source_concept_list = sorted(source_concepts)
+    discovery_concept_list = sorted(discovery_concepts)
+    all_concepts = source_concept_list + discovery_concept_list
     context = "\n\n---\n\n".join(all_texts)
     answer = generate_answer(user_query, context, all_concepts)
 
     return {
         "answer": answer,
-        "source_concepts": list(source_concepts),
-        "discovery_concepts": list(discovery_concepts),
+        "source_concepts": source_concept_list,
+        "discovery_concepts": discovery_concept_list,
     }

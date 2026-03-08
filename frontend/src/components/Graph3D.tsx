@@ -5,27 +5,40 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import {
   ACTIVE_LINK_COLOR,
-  autoRotateCamera,
+  DIMMED_LINK_COLOR,
+  DIMMED_NODE_COLOR,
+  DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
   centerCameraOnTarget,
   conceptColorFromScore,
   createFocusSet,
-  DIMMED_LINK_COLOR,
-  DIMMED_NODE_COLOR,
-  DIMMED_SEARCH_COLOR,
   findMatchingNodeIds,
   getConnectionCount,
   isDirectHoverLink,
-  zoomToNode,
 } from '../lib/graphView';
 import {
   clampNodesToContainment,
   createBrainContainment,
   type BrainContainment,
 } from '../lib/brainModel';
-import { getMockDocumentsForConcept } from '../mock/mockGraph';
-import type { GraphData, GraphLink, GraphNode } from '../types/graph';
+import {
+  centerObject3DAtOrigin,
+  keepLocalPointAtWorldOrigin,
+  rotateObjectFromPointerDelta,
+} from '../lib/brainScene';
+import {
+  getMockDocumentsForConcept,
+  mockRelationshipDetailsByEdge,
+} from '../mock/mockGraph';
+import type {
+  GraphData,
+  GraphLink,
+  GraphNode,
+  GraphSource,
+  RelationshipDetails,
+} from '../types/graph';
+import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { NodeTooltip } from './NodeTooltip';
 
 interface OrbitControlsLike {
@@ -33,6 +46,10 @@ interface OrbitControlsLike {
   autoRotateSpeed: number;
   addEventListener: (event: string, callback: () => void) => void;
   removeEventListener: (event: string, callback: () => void) => void;
+  target: {
+    set: (x: number, y: number, z: number) => void;
+  };
+  update: () => void;
 }
 
 interface ForceGraphHandle {
@@ -65,7 +82,7 @@ interface TooltipPosition {
 
 interface BrainHomeView {
   distance: number;
-  target: {
+  focusPoint: {
     x: number;
     y: number;
     z: number;
@@ -74,9 +91,16 @@ interface BrainHomeView {
 
 interface Graph3DProps {
   data: GraphData;
+  source: GraphSource;
   query: string;
   hoveredNode: GraphNode | null;
   onHoverNode: (node: GraphNode | null) => void;
+}
+
+interface SelectedRelationshipEdge {
+  sourceId: string;
+  targetId: string;
+  reason: string;
 }
 
 const BRAIN_MODEL_URL = '/assets/human-brain.glb';
@@ -86,11 +110,12 @@ const IDLE_ROTATE_DELAY_MS = 5000;
 const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
-
-// Brain home view camera positioning
-const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
-const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
-const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
+const DOUBLE_CLICK_THRESHOLD_MS = 300;
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
+const POINTER_ROTATION_SPEED = 0.005;
+const IDLE_ROTATION_SPEED = 0.002;
+const MAX_SCENE_TILT = Math.PI / 3;
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
   const canvas = document.createElement('canvas');
@@ -100,7 +125,7 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
   if (ctx) {
     ctx.fillStyle = 'rgba(0,0,0,0)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
+
     ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
     ctx.beginPath();
     ctx.roundRect(0, 0, canvas.width, canvas.height, 64);
@@ -124,57 +149,96 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
 
 export function Graph3D({
   data,
+  source: graphSource,
   query,
   hoveredNode,
   onHoverNode,
 }: Graph3DProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
   const brainHomeViewRef = useRef<BrainHomeView | null>(null);
   const idleTimeoutRef = useRef<number | null>(null);
   const idleRotationIntervalRef = useRef<number | null>(null);
+  const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
-
+  const sceneFocusPointRef = useRef({ x: 0, y: 0, z: 0 });
+  const isRightDragRotatingRef = useRef(false);
+  const lastDragPositionRef = useRef({ x: 0, y: 0 });
+  const containerSizeRef = useRef({ width: 0, height: 0 });
   const expandedConceptIdRef = useRef<string | null>(null);
-  
+
   const [expandedConcept, setExpandedConcept] = useState<GraphNode | null>(null);
   const [expandedDocs, setExpandedDocs] = useState<Array<{ doc_id: string; name: string; full_text: string }> | null>(null);
-
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(null);
+  const [relationshipDetails, setRelationshipDetails] = useState<RelationshipDetails | null>(null);
+  const [relationshipError, setRelationshipError] = useState<string | null>(null);
+  const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
 
+  // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = data;
   const haloDataMapRef = useRef<Record<string, any[]>>({});
 
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
+  const selectedNodeIds = selectedEdge
+    ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
+    : new Set<string>();
+
+  function getConceptName(nodeId: string): string | null {
+    if (!nodeId.startsWith('concept:')) {
+      return null;
+    }
+
+    return nodeId.slice('concept:'.length);
+  }
+
+  function isSelectedLink(link: GraphLink): boolean {
+    if (!selectedEdge) {
+      return false;
+    }
+
+    const source = typeof link.source === 'string' ? link.source : link.source.id;
+    const target = typeof link.target === 'string' ? link.target : link.target.id;
+
+    return source === selectedEdge.sourceId && target === selectedEdge.targetId;
+  }
+
+  function clearSelectedEdge() {
+    setSelectedEdge(null);
+    setRelationshipDetails(null);
+    setRelationshipError(null);
+    setIsRelationshipLoading(false);
+  }
 
   function getNodeThreeObject(node: GraphNode): THREE.Object3D | null {
-    // 1. Let the engine recreate the group normally
     const group = new THREE.Group();
 
     const hash = String(node.id).split('').reduce((acc, char) => {
         return (acc * 31 + char.charCodeAt(0)) % 10000;
     }, 0) / 10000;
-    
+
     const colorScore = node.colorScore !== undefined ? node.colorScore : hash;
-    
+
     const deepRed = new THREE.Color(0xFF4444);
     const electricBlue = new THREE.Color(0x4444FF);
     const nodeColor = deepRed.clone().lerp(electricBlue, colorScore);
     const hexColor = `#${nodeColor.getHexString()}`;
 
-    const sphereMaterial = new THREE.MeshPhysicalMaterial({ 
+    const sphereMaterial = new THREE.MeshPhysicalMaterial({
         color: nodeColor,
         roughness: 0.1,
         metalness: 0.1,
-        transmission: 0.8, 
+        transmission: 0.8,
         transparent: true,
         opacity: 0.4,
-        depthWrite: false, 
+        depthWrite: false,
         side: THREE.DoubleSide,
     });
-    
+
     const sphereMesh = new THREE.Mesh(
       new THREE.SphereGeometry(6.5, 32, 32),
       sphereMaterial
@@ -183,10 +247,10 @@ export function Graph3D({
 
     const haloGroup = new THREE.Group();
     haloGroup.name = 'halo';
-    
+
     const haloMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const haloGeom = new THREE.SphereGeometry(0.4, 8, 8);
-    
+
     if (!haloDataMapRef.current[node.id]) {
       haloDataMapRef.current[node.id] = Array.from({ length: 15 }).map(() => ({
           radius: 1.5 + Math.random() * 4.0,
@@ -198,7 +262,6 @@ export function Graph3D({
     }
     const hData = haloDataMapRef.current[node.id];
 
-    // 🚀 THE FIX: Calculate the exact time right now during creation
     const spawnTime = performance.now();
     haloGroup.rotation.y = spawnTime * 0.0003;
     haloGroup.rotation.x = spawnTime * 0.0001;
@@ -206,18 +269,17 @@ export function Graph3D({
     for (let i = 0; i < 15; i++) {
         const mesh = new THREE.Mesh(haloGeom, haloMaterial);
         const d = hData[i];
-        
-        // 🚀 THE FIX: Apply the time immediately so it doesn't render at 0,0,0
+
         const r = d.radius + Math.sin(spawnTime * d.speed + d.offset) * 0.4;
         mesh.position.setFromSphericalCoords(r, d.phi, d.theta);
-        
+
         mesh.userData = d;
         haloGroup.add(mesh);
     }
     group.add(haloGroup);
 
     const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
-    labelSprite.position.set(0, 10.5, 0); 
+    labelSprite.position.set(0, 10.5, 0);
     group.add(labelSprite);
 
     group.userData.update = (time: number) => {
@@ -262,6 +324,57 @@ export function Graph3D({
     };
   }
 
+  function getRotationRoot() {
+    return graphRef.current?.scene() ?? null;
+  }
+
+  function resetSceneTransform() {
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    rotationRoot.rotation.set(0, 0, 0);
+    rotationRoot.position.set(0, 0, 0);
+    rotationRoot.updateMatrixWorld(true);
+  }
+
+  function toWorldPoint(point: { x: number; y: number; z: number }) {
+    const worldPoint = new THREE.Vector3(point.x, point.y, point.z);
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return worldPoint;
+    }
+
+    rotationRoot.updateMatrixWorld(true);
+    return rotationRoot.localToWorld(worldPoint);
+  }
+
+  function applySceneFocusPoint() {
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    keepLocalPointAtWorldOrigin(rotationRoot, sceneFocusPointRef.current);
+    rotationRoot.updateMatrixWorld(true);
+    lookAtTargetRef.current = { x: 0, y: 0, z: 0 };
+  }
+
+  function focusPoint(point: { x: number; y: number; z: number }, distance: number) {
+    sceneFocusPointRef.current = point;
+    applySceneFocusPoint();
+    centerCameraOnTarget(
+      graphRef,
+      lookAtTargetRef.current,
+      distance,
+      CAMERA_MOVE_DURATION_MS,
+    );
+  }
+
   function stopIdleRotation() {
     if (idleRotationIntervalRef.current !== null) {
       window.clearInterval(idleRotationIntervalRef.current);
@@ -277,7 +390,15 @@ export function Graph3D({
     idleTimeoutRef.current = window.setTimeout(() => {
       stopIdleRotation();
       idleRotationIntervalRef.current = window.setInterval(() => {
-        autoRotateCamera(graphRef);
+        const rotationRoot = getRotationRoot();
+
+        if (!rotationRoot) {
+          return;
+        }
+
+        rotationRoot.rotation.order = 'YXZ';
+        rotationRoot.rotation.y += IDLE_ROTATION_SPEED;
+        applySceneFocusPoint();
       }, IDLE_ROTATE_INTERVAL_MS);
     }, IDLE_ROTATE_DELAY_MS);
   }
@@ -291,18 +412,79 @@ export function Graph3D({
     const brainHomeView = brainHomeViewRef.current;
 
     if (brainHomeView) {
-      lookAtTargetRef.current = brainHomeView.target;
+      resetSceneTransform();
+      sceneFocusPointRef.current = brainHomeView.focusPoint;
+      applySceneFocusPoint();
       centerCameraOnTarget(
         graphRef,
-        brainHomeView.target,
+        lookAtTargetRef.current,
         brainHomeView.distance,
         CAMERA_MOVE_DURATION_MS,
       );
       return;
     }
 
+    resetSceneTransform();
+    sceneFocusPointRef.current = { x: 0, y: 0, z: 0 };
     lookAtTargetRef.current = getGraphCenter();
     graphRef.current?.zoomToFit(CAMERA_MOVE_DURATION_MS, AUTO_CENTER_PADDING);
+  }
+
+  function handleMouseDown(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 2) {
+      return;
+    }
+
+    if (event.target instanceof HTMLElement && event.target.closest('button')) {
+      return;
+    }
+
+    isRightDragRotatingRef.current = true;
+    lastDragPositionRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    handleInteraction();
+    event.preventDefault();
+  }
+
+  function handleMouseMove(event: React.MouseEvent<HTMLDivElement>) {
+    handleInteraction();
+
+    if (!isRightDragRotatingRef.current) {
+      return;
+    }
+
+    if ((event.buttons & 2) !== 2) {
+      isRightDragRotatingRef.current = false;
+      return;
+    }
+
+    const deltaX = event.clientX - lastDragPositionRef.current.x;
+    const deltaY = event.clientY - lastDragPositionRef.current.y;
+    lastDragPositionRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    rotateObjectFromPointerDelta(
+      rotationRoot,
+      deltaX,
+      deltaY,
+      POINTER_ROTATION_SPEED,
+      MAX_SCENE_TILT,
+    );
+    applySceneFocusPoint();
+  }
+
+  function handleMouseEnd() {
+    isRightDragRotatingRef.current = false;
   }
 
   function handleZoom(scale: number) {
@@ -340,7 +522,6 @@ export function Graph3D({
     setExpandedConcept(node);
     setExpandedDocs(null);
 
-    // Freeze the background 3D graph interactions
     const controls = graphRef.current?.controls();
     if (controls) {
        (controls as any).enableRotate = false;
@@ -362,26 +543,127 @@ export function Graph3D({
   }
 
   function handleCollapse() {
-        expandedConceptIdRef.current = null;
-        setExpandedConcept(null);
-        setExpandedDocs(null);
+    expandedConceptIdRef.current = null;
+    setExpandedConcept(null);
+    setExpandedDocs(null);
 
-        // Unfreeze the background 3D graph
-        const controls = graphRef.current?.controls();
-        if (controls) {
-            (controls as any).enableRotate = true;
-            (controls as any).enablePan = true;
-        }
+    const controls = graphRef.current?.controls();
+    if (controls) {
+      (controls as any).enableRotate = true;
+      (controls as any).enablePan = true;
+    }
+  }
+
+  function handleNodeClick(node: GraphNode) {
+    if (node.type === 'Document') {
+      return;
+    }
+
+    const now = Date.now();
+
+    if (
+      lastNodeClickRef.current &&
+      lastNodeClickRef.current.nodeId === node.id &&
+      now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
+    ) {
+      focusPoint(
+        { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
+        100,
+      );
+      lastNodeClickRef.current = null;
+      return;
+    }
+
+    lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
+    focusPoint(
+      { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
+      160,
+    );
+    void handleConceptExpansion(node);
+  }
+
+  async function handleLinkClick(link: GraphLink) {
+    if (link.type !== 'RELATED_TO') {
+      return;
+    }
+
+    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+    const sourceConcept = getConceptName(sourceId);
+    const targetConcept = getConceptName(targetId);
+
+    if (!sourceConcept || !targetConcept) {
+      return;
+    }
+
+    const mockDetailsKey = `${sourceId}->${targetId}`;
+    const mockDetails = mockRelationshipDetailsByEdge[mockDetailsKey];
+
+    setSelectedEdge({
+      sourceId,
+      targetId,
+      reason: link.reason ?? '',
+    });
+    setRelationshipDetails({
+      source: sourceConcept,
+      target: targetConcept,
+      type: 'RELATED_TO',
+      reason: link.reason ?? 'Related concepts',
+      source_documents: [],
+      target_documents: [],
+      shared_document_ids: [],
+    });
+    setRelationshipError(null);
+    setIsRelationshipLoading(true);
+
+    if (graphSource === 'mock') {
+      setRelationshipDetails(
+        mockDetails ?? {
+          source: sourceConcept,
+          target: targetConcept,
+          type: 'RELATED_TO',
+          reason: link.reason ?? 'Related concepts',
+          source_documents: [],
+          target_documents: [],
+          shared_document_ids: [],
+        },
+      );
+      setIsRelationshipLoading(false);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        source: sourceConcept,
+        target: targetConcept,
+      });
+      const response = await fetch(`/api/relationships/details?${params.toString()}`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as RelationshipDetails;
+      setRelationshipDetails(payload);
+    } catch (error) {
+      setRelationshipError(
+        error instanceof Error ? error.message : 'Failed to load relationship details',
+      );
+    } finally {
+      setIsRelationshipLoading(false);
+    }
   }
 
   useEffect(() => {
-     const handleKeyDown = (e: KeyboardEvent) => {
-         if (e.key === 'Escape' && expandedConceptIdRef.current) {
-             handleCollapse();
-         }
-     };
-     window.addEventListener('keydown', handleKeyDown);
-     return () => window.removeEventListener('keydown', handleKeyDown);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && expandedConceptIdRef.current) {
+        handleCollapse();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   useEffect(() => {
@@ -406,61 +688,43 @@ export function Graph3D({
 
     const loader = new GLTFLoader();
     let cancelled = false;
-    let brainGroup: THREE.Object3D | null = null;
+    let brainGroup: THREE.Group | null = null;
 
     loader.load(BRAIN_MODEL_URL, (gltf) => {
       if (cancelled) {
         return;
       }
 
-      const loadedScene = gltf.scene;
+      const centeredBrain = centerObject3DAtOrigin(gltf.scene, 260);
+      brainGroup = centeredBrain.pivot;
 
-      if (loadedScene instanceof THREE.Object3D) {
-        brainGroup = loadedScene;
+      brainGroup.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.material = new THREE.MeshBasicMaterial({
+            color: '#7dd3fc',
+            wireframe: true,
+            transparent: true,
+            opacity: 0.12,
+            side: THREE.DoubleSide,
+          });
+        }
+      });
 
-        const bounds = new THREE.Box3().setFromObject(brainGroup);
-        const center = bounds.getCenter(new THREE.Vector3());
-        const size = bounds.getSize(new THREE.Vector3()).length() || 1;
-        const scale = 260 / size;
-
-        brainGroup.position.sub(center);
-        brainGroup.scale.setScalar(scale);
-
-        brainGroup.traverse((node) => {
-          if (node instanceof THREE.Mesh) {
-            node.material = new THREE.MeshBasicMaterial({
-              color: '#7dd3fc',
-              wireframe: true,
-              transparent: true,
-              opacity: 0.12,
-              side: THREE.DoubleSide,
-            });
-          }
-        });
-
-        brainGroup.updateMatrixWorld(true);
-        const framedBounds = new THREE.Box3().setFromObject(brainGroup);
-        const framedSize = framedBounds.getSize(new THREE.Vector3());
-        const framedSphere = framedBounds.getBoundingSphere(new THREE.Sphere());
-        brainContainmentRef.current = createBrainContainment(brainGroup);
-        brainHomeViewRef.current = {
-          distance: Math.max(
-            framedSphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
-            MIN_BRAIN_HOME_VIEW_DISTANCE,
-          ),
-          target: {
-            x: framedSphere.center.x,
-            y: framedSphere.center.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
-            z: framedSphere.center.z,
-          },
-        };
-        clampNodesWithinBrain(true);
-        scene.add(brainGroup);
-        handleReset();
-        return;
-      }
-
-      scene.add(loadedScene as unknown as THREE.Object3D);
+      brainContainmentRef.current = createBrainContainment(brainGroup);
+      brainHomeViewRef.current = {
+        distance: Math.max(
+          centeredBrain.sphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
+          MIN_BRAIN_HOME_VIEW_DISTANCE,
+        ),
+        focusPoint: {
+          x: centeredBrain.orbitTarget.x,
+          y: centeredBrain.orbitTarget.y,
+          z: centeredBrain.orbitTarget.z,
+        },
+      };
+      clampNodesWithinBrain(true);
+      scene.add(brainGroup);
+      handleReset();
     });
 
     return () => {
@@ -493,6 +757,61 @@ export function Graph3D({
   }, [data.nodes.length]);
 
   useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      const nextSize = {
+        width: container.clientWidth,
+        height: container.clientHeight,
+      };
+      const previousSize = containerSizeRef.current;
+
+      if (
+        nextSize.width > 0 &&
+        nextSize.height > 0 &&
+        (nextSize.width !== previousSize.width || nextSize.height !== previousSize.height)
+      ) {
+        containerSizeRef.current = nextSize;
+        setViewportSize(nextSize);
+        handleReset();
+      }
+
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextSize = {
+        width: entry?.contentRect.width ?? container.clientWidth,
+        height: entry?.contentRect.height ?? container.clientHeight,
+      };
+      const previousSize = containerSizeRef.current;
+
+      if (
+        nextSize.width <= 0 ||
+        nextSize.height <= 0 ||
+        (nextSize.width === previousSize.width && nextSize.height === previousSize.height)
+      ) {
+        return;
+      }
+
+      containerSizeRef.current = nextSize;
+      setViewportSize(nextSize);
+      handleReset();
+    });
+
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!query.trim()) {
       return;
     }
@@ -504,21 +823,21 @@ export function Graph3D({
       return;
     }
 
-    lookAtTargetRef.current = {
-      x: firstMatch.x ?? 0,
-      y: firstMatch.y ?? 0,
-      z: firstMatch.z ?? 0,
-    };
-    zoomToNode(graphRef, firstMatch, 140);
+    focusPoint(
+      {
+        x: firstMatch.x ?? 0,
+        y: firstMatch.y ?? 0,
+        z: firstMatch.z ?? 0,
+      },
+      140,
+    );
   }, [displayData.nodes, query]);
 
-  // Setup continuous animation loop for node visual effects (halos, bobbing)
   useEffect(() => {
     let frameId: number;
     const animate = () => {
-      // THE FIX: High-precision timer starting at 0, preventing Math.sin breakdown
       const time = performance.now();
-      
+
       displayData.nodes.forEach((node) => {
         const obj = (node as any).__threeObj as THREE.Object3D | undefined;
         if (obj && typeof obj.userData.update === 'function') {
@@ -545,11 +864,12 @@ export function Graph3D({
     let frameId = 0;
 
     const updatePosition = () => {
-      const coords = graphRef.current?.graph2ScreenCoords(
-        hoveredNode.x ?? 0,
-        hoveredNode.y ?? 0,
-        hoveredNode.z ?? 0,
-      );
+      const worldPoint = toWorldPoint({
+        x: hoveredNode.x ?? 0,
+        y: hoveredNode.y ?? 0,
+        z: hoveredNode.z ?? 0,
+      });
+      const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
       if (coords) {
         setTooltipPosition(coords);
@@ -573,6 +893,10 @@ export function Graph3D({
   }
 
   function getNodeColor(node: GraphNode): string {
+    if (selectedEdge) {
+      return selectedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
+    }
+
     if (hoveredNode) {
       return focusedNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_NODE_COLOR;
     }
@@ -585,24 +909,39 @@ export function Graph3D({
   }
 
   function getLinkColor(link: GraphLink): string {
+    if (isSelectedLink(link)) {
+      return ACTIVE_LINK_COLOR;
+    }
+
     if (hoveredNode) {
-      return isDirectHoverLink(link, hoveredNode)
-        ? ACTIVE_LINK_COLOR
-        : DIMMED_LINK_COLOR;
+      return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
     }
 
     return 'rgba(56, 189, 248, 0.24)';
   }
 
   function getLinkWidth(link: GraphLink): number {
+    if (isSelectedLink(link)) {
+      return 3.2;
+    }
+
     return isDirectHoverLink(link, hoveredNode) ? 2.8 : 0.7;
   }
 
   return (
     <div
-      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)]"
-      onMouseMove={handleInteraction}
-      onMouseDown={handleInteraction}
+      ref={containerRef}
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      onContextMenu={(event) => event.preventDefault()}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          clearSelectedEdge();
+        }
+      }}
+      onMouseMove={handleMouseMove}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseEnd}
+      onMouseLeave={handleMouseEnd}
       onWheel={handleInteraction}
       onTouchStart={handleInteraction}
     >
@@ -610,18 +949,19 @@ export function Graph3D({
       <ForceGraph3D
         ref={graphRef as never}
         graphData={displayData}
+        width={viewportSize.width || undefined}
+        height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
         nodeVal={(node) => {
-          const n = node as GraphNode;
-          return n.fx !== undefined ? 0.5 : 1;
+          const candidate = node as GraphNode;
+          return candidate.fx !== undefined ? 0.5 : 1;
         }}
-        nodeThreeObject={(node) =>
-          getNodeThreeObject(node as GraphNode) as THREE.Object3D
-        }
+        nodeThreeObject={(node) => getNodeThreeObject(node as GraphNode) as THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
+        linkHoverPrecision={10}
         linkOpacity={0.7}
         nodeRelSize={5}
         linkDirectionalParticles={hoveredNode ? 2 : 0}
@@ -630,9 +970,11 @@ export function Graph3D({
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}
         onEngineTick={() => clampNodesWithinBrain()}
-        onNodeClick={(node) => handleConceptExpansion(node as GraphNode)}
+        onLinkClick={(link) => void handleLinkClick(link as GraphLink)}
+        onNodeClick={(node) => handleNodeClick(node as GraphNode)}
         onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
         enableNodeDrag={false}
+        enableNavigationControls={false}
         controlType="orbit"
       />
       <div className="absolute right-4 top-4 flex flex-col gap-2 z-10">
@@ -674,41 +1016,49 @@ export function Graph3D({
       {/* 2D Overlay with Frosted Glass Effect */}
       {expandedConcept && (
         <div className="absolute inset-0 z-30 bg-slate-950/80 backdrop-blur-md flex flex-col items-center overflow-y-auto animate-in fade-in duration-300">
-           <div className="sticky top-0 z-40 w-full bg-slate-950/40 backdrop-blur-lg border-b border-white/10 px-8 py-6 flex justify-between items-center mb-8">
-               <h2 className="text-3xl font-bold text-slate-100">{expandedConcept.name}</h2>
-               <button onClick={handleCollapse} className="px-6 py-2.5 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-sm font-semibold text-slate-100 shadow-lg shadow-indigo-950/30 transition float-right">
-                  ← Back to Web (Esc)
-               </button>
-           </div>
-           
-           <div className="w-full max-w-7xl px-8 pb-20">
-               {!expandedDocs ? (
-                   <div className="text-slate-400 mt-20 text-xl animate-pulse text-center">Loading documents...</div>
-               ) : (
-                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {expandedDocs.map((doc, idx) => (
-                          <div 
-                             key={doc.doc_id} 
-                             className="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl shadow-xl transition hover:-translate-y-1 hover:shadow-2xl hover:bg-slate-800/80 cursor-pointer flex flex-col"
-                             style={{ animation: `float ${4 + (idx % 3)}s ease-in-out infinite alternate` }}
-                          >
-                             <h3 className="text-xl font-semibold text-yellow-300 mb-3 leading-tight">{doc.name}</h3>
-                             <p className="text-slate-400 leading-relaxed overflow-hidden text-ellipsis line-clamp-[8]">{doc.full_text}</p>
-                          </div>
-                      ))}
-                   </div>
-               )}
-           </div>
+          <div className="sticky top-0 z-40 w-full bg-slate-950/40 backdrop-blur-lg border-b border-white/10 px-8 py-6 flex justify-between items-center mb-8">
+            <h2 className="text-3xl font-bold text-slate-100">{expandedConcept.name}</h2>
+            <button onClick={handleCollapse} className="px-6 py-2.5 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-sm font-semibold text-slate-100 shadow-lg shadow-indigo-950/30 transition float-right">
+              ← Back to Web (Esc)
+            </button>
+          </div>
+          <div className="w-full max-w-7xl px-8 pb-20">
+            {!expandedDocs ? (
+              <div className="text-slate-400 mt-20 text-xl animate-pulse text-center">Loading documents...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {expandedDocs.map((doc, idx) => (
+                  <div
+                    key={doc.doc_id}
+                    className="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl shadow-xl transition hover:-translate-y-1 hover:shadow-2xl hover:bg-slate-800/80 cursor-pointer flex flex-col"
+                    style={{ animation: `float ${4 + (idx % 3)}s ease-in-out infinite alternate` }}
+                  >
+                    <h3 className="text-xl font-semibold text-yellow-300 mb-3 leading-tight">{doc.name}</h3>
+                    <p className="text-slate-400 leading-relaxed overflow-hidden text-ellipsis line-clamp-[8]">{doc.full_text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       <style>{`
         @keyframes float {
-           0% { transform: translateY(0px) rotate(0deg); }
-           50% { transform: translateY(-6px) rotate(0.5deg); }
-           100% { transform: translateY(0px) rotate(0deg); }
+          0% { transform: translateY(0px) rotate(0deg); }
+          50% { transform: translateY(-6px) rotate(0.5deg); }
+          100% { transform: translateY(0px) rotate(0deg); }
         }
       `}</style>
+
+      {selectedEdge ? (
+        <EdgeDetailPanel
+          relationship={relationshipDetails}
+          isLoading={isRelationshipLoading}
+          error={relationshipError}
+          onClose={clearSelectedEdge}
+        />
+      ) : null}
     </div>
   );
 }

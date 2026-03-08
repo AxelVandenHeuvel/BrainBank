@@ -1,4 +1,4 @@
-import type { GraphApiResponse } from '../types/graph';
+import type { GraphApiResponse, RelationshipDetails } from '../types/graph';
 
 export const mockGraphApiResponse: GraphApiResponse = {
   nodes: [
@@ -36,11 +36,6 @@ export const mockGraphApiResponse: GraphApiResponse = {
   ],
 };
 
-// ---------------------------------------------------------------------------
-// Mock document responses — used as a fallback when the backend is not running.
-// Shape matches GET /api/concepts/{name}/documents.
-// ---------------------------------------------------------------------------
-
 export interface MockDocument {
   doc_id: string;
   name: string;
@@ -53,19 +48,13 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
       doc_id: 'rag-1',
       name: 'RAG Architecture Overview.md',
       full_text:
-        'Retrieval-Augmented Generation combines a vector retrieval step with a generative LLM. The retriever finds relevant chunks; the generator synthesises an answer grounded in those chunks.',
+        'Retrieval-Augmented Generation combines retrieval with a grounded generator.',
     },
     {
       doc_id: 'rag-2',
       name: 'Building a RAG Pipeline.md',
       full_text:
-        'Step 1: chunk documents. Step 2: embed chunks with a sentence-transformer. Step 3: store vectors in LanceDB. Step 4: at query time, embed the question, search LanceDB, pass top-k chunks to the LLM.',
-    },
-    {
-      doc_id: 'rag-3',
-      name: 'RAG vs Fine-Tuning.md',
-      full_text:
-        'RAG is preferable when the knowledge base changes frequently. Fine-tuning is better when the task style matters more than factual grounding.',
+        'Embed the query, retrieve relevant chunks, then answer against retrieved context.',
     },
   ],
   'Machine Learning': [
@@ -73,13 +62,7 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
       doc_id: 'ml-1',
       name: 'ML Fundamentals.md',
       full_text:
-        'Machine learning is the practice of training models on data so they can make predictions or decisions without being explicitly programmed for each case.',
-    },
-    {
-      doc_id: 'ml-2',
-      name: 'Supervised vs Unsupervised.md',
-      full_text:
-        'Supervised learning uses labelled examples. Unsupervised learning finds structure in unlabelled data. Reinforcement learning trains an agent via reward signals.',
+        'Machine learning trains models on data so they can make predictions or decisions.',
     },
   ],
   'Neural Networks': [
@@ -87,35 +70,33 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
       doc_id: 'nn-1',
       name: 'Neural Network Basics.md',
       full_text:
-        'A neural network is a stack of linear layers separated by non-linear activations. Backpropagation computes gradients; gradient descent updates weights.',
+        'A neural network is a stack of layers trained with gradient-based optimization.',
     },
     {
       doc_id: 'nn-2',
       name: 'Activation Functions.md',
-      full_text:
-        'ReLU, GELU, and Sigmoid are common activation functions. ReLU is fast; GELU is smoother and preferred in transformers.',
+      full_text: 'ReLU, GELU, and sigmoid are common activation functions.',
     },
   ],
   Transformers: [
     {
       doc_id: 'tf-1',
-      name: 'Attention Is All You Need — Notes.md',
+      name: 'Attention Is All You Need - Notes.md',
       full_text:
-        'The transformer architecture replaces recurrence with self-attention. Each token attends to every other token in the sequence, enabling parallelism during training.',
+        'Transformers replace recurrence with self-attention and train in parallel.',
     },
     {
       doc_id: 'tf-2',
       name: 'BERT and GPT Differences.md',
       full_text:
-        'BERT uses bidirectional masked language modelling for representation. GPT uses causal (left-to-right) language modelling for generation.',
+        'BERT is bidirectional for representation, while GPT is causal for generation.',
     },
   ],
   'Vector Database': [
     {
       doc_id: 'vdb-1',
       name: 'LanceDB Setup.md',
-      full_text:
-        'LanceDB is an embedded vector database built on the Lance columnar format. It supports approximate nearest-neighbour search and integrates directly with Python.',
+      full_text: 'LanceDB is an embedded vector database that supports semantic search.',
     },
   ],
   'Knowledge Graph': [
@@ -123,13 +104,13 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
       doc_id: 'kg-1',
       name: 'Why Knowledge Graphs.md',
       full_text:
-        'Knowledge graphs model entities and their relationships as nodes and edges. They enable reasoning and traversal that flat vector search cannot provide.',
+        'Knowledge graphs model entities and relationships as traversable structures.',
     },
     {
       doc_id: 'kg-2',
       name: 'Kuzu Graph Database.md',
       full_text:
-        'Kuzu is an embedded property graph database. It supports Cypher queries and runs in-process alongside Python, making it ideal for a local-first knowledge tool.',
+        'Kuzu is an embedded graph database that supports Cypher queries in-process.',
     },
   ],
   Embeddings: [
@@ -137,7 +118,7 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
       doc_id: 'emb-1',
       name: 'Sentence Transformers.md',
       full_text:
-        'Sentence transformers encode text into dense 384-dimensional vectors. Cosine similarity between these vectors approximates semantic relatedness.',
+        'Sentence transformers encode text into vectors that support similarity search.',
     },
   ],
   Python: [
@@ -150,7 +131,40 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
   ],
 };
 
-/** Returns mock documents for a concept name, with a generic fallback. */
+export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> = {
+  'concept:Calculus->concept:Derivatives': {
+    source: 'Calculus',
+    target: 'Derivatives',
+    type: 'RELATED_TO',
+    reason: 'Derivatives are a core tool within calculus',
+    source_documents: [
+      {
+        doc_id: 'doc-math-notes',
+        name: 'Math Notes',
+        full_text: 'Calculus introduces derivatives as a way to measure change.',
+      },
+      {
+        doc_id: 'doc-calculus-guide',
+        name: 'Calculus Guide',
+        full_text: 'Limits and derivatives are foundational topics in calculus.',
+      },
+    ],
+    target_documents: [
+      {
+        doc_id: 'doc-math-notes',
+        name: 'Math Notes',
+        full_text: 'Calculus introduces derivatives as a way to measure change.',
+      },
+      {
+        doc_id: 'doc-derivative-rules',
+        name: 'Derivative Rules',
+        full_text: 'Power, product, and chain rules are core derivative tools.',
+      },
+    ],
+    shared_document_ids: ['doc-math-notes'],
+  },
+};
+
 export function getMockDocumentsForConcept(conceptName: string): MockDocument[] {
   return (
     MOCK_CONCEPT_DOCUMENTS[conceptName] ?? [

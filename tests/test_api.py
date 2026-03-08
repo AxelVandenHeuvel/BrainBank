@@ -1,8 +1,12 @@
 from unittest.mock import patch
 
+import kuzu
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import app
+from backend.db.kuzu import init_kuzu as real_init_kuzu
+from backend.db.lance import init_lancedb as real_init_lancedb
 from tests.conftest import (
     mock_embed_query,
     mock_embed_texts,
@@ -11,6 +15,30 @@ from tests.conftest import (
 )
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_api_data(monkeypatch, lance_path, kuzu_path):
+    real_kuzu_db, _ = real_init_kuzu(kuzu_path)
+
+    # Route the global Kuzu engine to the isolated test DB so that both the
+    # ingest endpoint (which calls get_kuzu_engine()) and the query endpoint
+    # use the same temporary database.
+    monkeypatch.setattr("backend.db.kuzu._db_instance", real_kuzu_db)
+
+    monkeypatch.setattr(
+        "backend.ingestion.processor.init_lancedb",
+        lambda path="./data/lancedb": real_init_lancedb(lance_path),
+    )
+    monkeypatch.setattr(
+        "backend.retrieval.query.init_lancedb",
+        lambda path="./data/lancedb": real_init_lancedb(lance_path),
+    )
+    # Reuse the already-open DB to avoid a second file-lock attempt.
+    monkeypatch.setattr(
+        "backend.retrieval.query.init_kuzu",
+        lambda path="./data/kuzu": (real_kuzu_db, kuzu.Connection(real_kuzu_db)),
+    )
 
 
 class TestIngestEndpoint:
@@ -46,6 +74,7 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "answer" in data
+        assert "source_concepts" in data
         assert "discovery_concepts" in data
 
     def test_query_missing_fields(self):
