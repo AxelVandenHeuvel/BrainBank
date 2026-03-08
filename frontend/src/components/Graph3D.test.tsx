@@ -130,6 +130,21 @@ const hoveredNode: GraphNode = {
   z: 0,
 };
 
+function getLatestGraphProps() {
+  return graphPropsSpy.mock.calls.at(-1)?.[0] as {
+    onNodeClick: (node: GraphNode) => Promise<void> | void;
+    onLinkClick: (link: GraphLink) => Promise<void> | void;
+    onEngineTick: () => void;
+    nodeColor: (node: GraphNode) => string;
+    linkColor: (link: GraphLink) => string;
+    linkWidth: (link: GraphLink) => number;
+    width: number;
+    height: number;
+    enableNavigationControls: boolean;
+    linkHoverPrecision: number;
+  };
+}
+
 describe('Graph3D', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -137,6 +152,19 @@ describe('Graph3D', () => {
     sceneObject = new THREE.Scene();
     resizeObserverCallback = null;
     currentCameraPosition = { x: 200, y: 60, z: 200 };
+    graph.nodes[0].x = 10;
+    graph.nodes[0].y = 0;
+    graph.nodes[0].z = 0;
+    graph.nodes[1].x = -10;
+    graph.nodes[1].y = 0;
+    graph.nodes[1].z = 0;
+    graph.nodes[2].x = 0;
+    graph.nodes[2].y = 10;
+    graph.nodes[2].z = 0;
+    cameraPosition.mockClear();
+    graphPropsSpy.mockClear();
+    zoomToFit.mockClear();
+    refresh.mockClear();
     controls.target.set.mockClear();
     controls.update.mockClear();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
@@ -293,6 +321,75 @@ describe('Graph3D', () => {
     expect(cameraPosition.mock.calls.length).toBe(callCountAfterIdle);
   });
 
+  it('rotates around the clicked concept node after focus is set', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.position.set(0, 0, 0);
+    cameraPosition.mockClear();
+
+    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(32);
+    sceneObject.updateMatrixWorld(true);
+
+    const pivotWorld = sceneObject.localToWorld(new THREE.Vector3(10, 0, 0));
+
+    expect(sceneObject.rotation.y).not.toBe(0);
+    expect(sceneObject.position.length()).toBeGreaterThan(0);
+    expect(pivotWorld.x).toBeCloseTo(0, 3);
+    expect(pivotWorld.y).toBeCloseTo(0, 3);
+    expect(pivotWorld.z).toBeCloseTo(0, 3);
+    expect(cameraPosition).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected node center as the pivot when that node position updates', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    graph.nodes[0].x = 24;
+    graph.nodes[0].y = 6;
+    graph.nodes[0].z = -8;
+    sceneObject.rotation.order = 'YXZ';
+    sceneObject.rotation.y = Math.PI / 3;
+
+    act(() => {
+      getLatestGraphProps().onEngineTick();
+    });
+
+    const pivotWorld = sceneObject.localToWorld(new THREE.Vector3(24, 6, -8));
+
+    expect(pivotWorld.x).toBeCloseTo(0, 3);
+    expect(pivotWorld.y).toBeCloseTo(0, 3);
+    expect(pivotWorld.z).toBeCloseTo(0, 3);
+  });
+
   it('rotates the scene on pointer drag without moving the camera', () => {
     const { container } = render(
       <Graph3D
@@ -325,6 +422,53 @@ describe('Graph3D', () => {
     expect(sceneObject.rotation.x).not.toBe(0);
     expect(sceneObject.rotation.y).not.toBe(0);
     expect(cameraPosition.mock.calls.length).toBe(callCountBeforeDrag);
+  });
+
+  it('right-drag rotation uses the focused concept node as the pivot', async () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    sceneObject.rotation.set(0, 0, 0);
+    sceneObject.position.set(0, 0, 0);
+    cameraPosition.mockClear();
+
+    const root = container.firstChild as HTMLElement;
+    fireEvent.mouseDown(root, {
+      button: 2,
+      buttons: 2,
+      clientX: 100,
+      clientY: 120,
+    });
+    fireEvent.mouseMove(root, {
+      buttons: 2,
+      clientX: 140,
+      clientY: 90,
+    });
+    fireEvent.mouseUp(root, { button: 2 });
+    sceneObject.updateMatrixWorld(true);
+
+    const pivotWorld = sceneObject.localToWorld(new THREE.Vector3(10, 0, 0));
+
+    expect(sceneObject.rotation.x).not.toBe(0);
+    expect(sceneObject.rotation.y).not.toBe(0);
+    expect(sceneObject.position.length()).toBeGreaterThan(0);
+    expect(pivotWorld.x).toBeCloseTo(0, 3);
+    expect(pivotWorld.y).toBeCloseTo(0, 3);
+    expect(pivotWorld.z).toBeCloseTo(0, 3);
+    expect(cameraPosition).not.toHaveBeenCalled();
   });
 
   it('does not rotate the scene on left-button drag so node interaction stays available', () => {
@@ -595,9 +739,7 @@ describe('Graph3D', () => {
     cameraPosition.mockClear();
 
     await act(async () => {
-      (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-        onNodeClick: (n: GraphNode) => void;
-      }).onNodeClick(graph.nodes[1]);
+      getLatestGraphProps().onNodeClick(graph.nodes[1]);
     });
 
     const centeredPoint = sceneObject.localToWorld(
@@ -622,6 +764,50 @@ describe('Graph3D', () => {
     );
   });
 
+  it('double-clicking empty space resets node-focused rotation back to the home view', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    sceneObject.rotation.order = 'YXZ';
+    sceneObject.rotation.y = 0.5;
+    sceneObject.position.set(6, 0, 4);
+    sceneObject.updateMatrixWorld(true);
+    cameraPosition.mockClear();
+    vi.advanceTimersByTime(301);
+
+    fireEvent.doubleClick(screen.getByTestId('force-graph'));
+
+    expect(sceneObject.rotation.x).toBeCloseTo(0, 6);
+    expect(sceneObject.rotation.y).toBeCloseTo(0, 6);
+    expect(sceneObject.position.length()).toBeCloseTo(0, 6);
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(27.04, 2),
+        z: 338,
+      }),
+      expect.objectContaining({
+        x: 0,
+        y: 0,
+        z: 0,
+      }),
+      1200,
+    );
+  });
+
   it('keeps the clicked node centered while rotating the scene', async () => {
     const { container } = render(
       <Graph3D
@@ -636,9 +822,7 @@ describe('Graph3D', () => {
     vi.advanceTimersByTime(200);
 
     await act(async () => {
-      (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-        onNodeClick: (n: GraphNode) => void;
-      }).onNodeClick(graph.nodes[0]);
+      getLatestGraphProps().onNodeClick(graph.nodes[0]);
     });
 
     const root = container.firstChild as HTMLElement;
@@ -668,7 +852,6 @@ describe('Graph3D', () => {
     expect(centeredPoint.y).toBeCloseTo(0, 4);
     expect(centeredPoint.z).toBeCloseTo(0, 4);
   });
-
   describe('Concept node document expansion', () => {
     it('clicking a Document node is a no-op and does not fetch', async () => {
       render(
@@ -998,6 +1181,49 @@ describe('Graph3D', () => {
     };
 
     expect(clearedProps.linkWidth(graph.links[0])).toBe(0.7);
+  });
+
+  it('pressing Escape also exits node-focused rotation mode', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    sceneObject.rotation.order = 'YXZ';
+    sceneObject.rotation.y = 0.5;
+    sceneObject.position.set(6, 0, 4);
+    sceneObject.updateMatrixWorld(true);
+    cameraPosition.mockClear();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(sceneObject.rotation.x).toBeCloseTo(0, 6);
+    expect(sceneObject.rotation.y).toBeCloseTo(0, 6);
+    expect(sceneObject.position.length()).toBeCloseTo(0, 6);
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.closeTo(27.04, 2),
+        z: 338,
+      }),
+      expect.objectContaining({
+        x: 0,
+        y: 0,
+        z: 0,
+      }),
+      1200,
+    );
   });
 
   it('uses bundled relationship details when the graph is in mock mode', async () => {

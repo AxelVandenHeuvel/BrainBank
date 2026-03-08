@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyObjectOrbitPosition,
   centerObject3DAtOrigin,
   keepLocalPointAtWorldOrigin,
   rotateObjectFromPointerDelta,
@@ -59,5 +60,25 @@ describe('brainScene helpers', () => {
     expect(centeredPoint.x).toBeCloseTo(0, 4);
     expect(centeredPoint.y).toBeCloseTo(0, 4);
     expect(centeredPoint.z).toBeCloseTo(0, 4);
+  });
+
+  it('updates object position so rotation happens around an arbitrary pivot point', () => {
+    const target = new THREE.Group();
+    const pivot = new THREE.Vector3(10, 0, 0);
+
+    target.rotation.order = 'YXZ';
+    target.rotation.y = Math.PI / 2;
+    applyObjectOrbitPosition(target, pivot);
+
+    expect(target.position.x).toBeCloseTo(10, 4);
+    expect(target.position.y).toBeCloseTo(0, 4);
+    expect(target.position.z).toBeCloseTo(10, 4);
+
+    target.updateMatrixWorld(true);
+    const pivotWorld = target.localToWorld(pivot.clone());
+
+    expect(pivotWorld.x).toBeCloseTo(10, 4);
+    expect(pivotWorld.y).toBeCloseTo(0, 4);
+    expect(pivotWorld.z).toBeCloseTo(0, 4);
   });
 });

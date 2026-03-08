@@ -1,10 +1,17 @@
 #!/bin/bash
 # BrainBank - Start both backend and frontend
 
+# Load .env file if present
+if [ -f ".env" ]; then
+  set -a
+  source .env
+  set +a
+fi
+
 # Check for GEMINI_API_KEY
 if [ -z "$GEMINI_API_KEY" ]; then
   echo "Error: GEMINI_API_KEY not set"
-  echo "Run: export GEMINI_API_KEY=your_key_here"
+  echo "Add it to .env or run: export GEMINI_API_KEY=your_key_here"
   exit 1
 fi
 

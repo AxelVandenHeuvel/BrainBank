@@ -16,6 +16,22 @@ CHUNKS_SCHEMA = pa.schema(
     ]
 )
 
+def find_existing_document(title: str, db_path: str = "./data/lancedb") -> dict | None:
+    """Check if a document with the given title already exists in LanceDB."""
+    _, table = init_lancedb(db_path)
+    try:
+        df = table.to_pandas()
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    matches = df[df["doc_name"] == title]
+    if matches.empty:
+        return None
+    row = matches.iloc[0]
+    return {"doc_id": row["doc_id"], "doc_name": row["doc_name"]}
+
+
 def init_lancedb(db_path: str = "./data/lancedb"):
     # Apply the same safeguard we used for Kuzu to prevent IO crashes on fresh clones
     os.makedirs(db_path, exist_ok=True)
