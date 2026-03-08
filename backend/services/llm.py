@@ -65,12 +65,13 @@ def _parse_json_response(raw_text: str) -> dict:
 def extract_concepts(text: str, doc_name: str) -> dict:
     client = _get_client()
     prompt = (
-        "Analyze the following document and extract:\n"
-        '1. A list of meaningful core concepts. These are the main ideas, topics, or entities that have clear conceptual meaning. Nothing like dates or times should be extracted. Instead, extract meaningful ideas such as "Machine Learning", "Meal Prep", "Ideas on Death", etc.\n'
+        "Analyze the do the following steps:\n"
+        '1. A list of meaningful core themes. These are the main ideas, topics, or entities that have clear conceptual meaning. Nothing like dates or times should be extracted. Instead, extract meaningful ideas such as "Machine Learning", "Meal Prep", "Ideas on Death", etc.\n'
+        "2. Now combine these concepts into at most 4 overarching concepts"
         f"Document title: {doc_name}\n"
         f"Document text:\n{text}\n\n"
         "Respond ONLY with valid JSON in this format:\n"
-        '{"concepts": ["concept1", "concept2", ...], '
+        '{"concepts": ["concept1", "concept2", concept3, concept4 '
     )
     response = client.models.generate_content(
         model=_get_model_name(), contents=prompt
