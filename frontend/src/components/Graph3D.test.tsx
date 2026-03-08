@@ -7,7 +7,9 @@ import type { GraphData, GraphLink, GraphNode, RelationshipDetails } from '../ty
 import { Graph3D } from './Graph3D';
 
 const graphPropsSpy = vi.fn();
+const gltfLoadSpy = vi.fn();
 let sceneObject = new THREE.Scene();
+let canvasGetContextSpy: { mockRestore: () => void } | null = null;
 let resizeObserverCallback:
   | ((entries: Array<{ contentRect: { width: number; height: number } }>) => void)
   | null = null;
@@ -22,7 +24,11 @@ const controls = {
   update: vi.fn(),
 };
 let currentCameraPosition = { x: 200, y: 60, z: 200 };
-const cameraPosition = vi.fn((position?: typeof currentCameraPosition) => {
+const cameraPosition = vi.fn((
+  position?: typeof currentCameraPosition,
+  _lookAt?: typeof currentCameraPosition,
+  _durationMs?: number,
+) => {
   if (!position) {
     return currentCameraPosition;
   }
@@ -73,14 +79,34 @@ vi.mock('react-force-graph-3d', async () => {
 
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
-    load(_url: string, onLoad: (value: { scene: THREE.Object3D }) => void) {
+    load(url: string, onLoad: (value: { scene: THREE.Object3D }) => void) {
+      gltfLoadSpy(url);
+
+      if (url === '/assets/neuron-spinous-stellate-cell.glb') {
+        const scene = new THREE.Group();
+        const dendrite = new THREE.Mesh(
+          new THREE.ConeGeometry(5, 16, 8),
+          new THREE.MeshStandardMaterial({ color: '#ffffff' }),
+        );
+        dendrite.name = 'neuron-dendrite';
+        dendrite.rotation.z = Math.PI / 8;
+        const soma = new THREE.Mesh(
+          new THREE.SphereGeometry(4.5, 8, 8),
+          new THREE.MeshStandardMaterial({ color: '#ffffff' }),
+        );
+        soma.name = 'neuron-soma';
+        soma.position.set(-1, -5, 2);
+        scene.add(dendrite);
+        scene.add(soma);
+        onLoad({ scene });
+        return;
+      }
+
       const scene = new THREE.Group();
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(50, 8, 8));
       mesh.position.set(40, -20, 10);
       scene.add(mesh);
-      onLoad({
-        scene,
-      });
+      onLoad({ scene });
     }
   },
 }));
@@ -140,6 +166,7 @@ function getLatestGraphProps() {
     linkWidth: (link: GraphLink) => number;
     linkLineDash?: (link: GraphLink) => [number, number] | undefined;
     graphData: GraphData;
+    nodeThreeObject: (node: GraphNode) => THREE.Object3D | null;
     linkOpacity: number;
     linkDirectionalParticles: number;
     linkDirectionalParticleWidth?: number;
@@ -154,6 +181,9 @@ describe('Graph3D', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
+    canvasGetContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(() => null as never);
     sceneObject = new THREE.Scene();
     resizeObserverCallback = null;
     currentCameraPosition = { x: 200, y: 60, z: 200 };
@@ -168,6 +198,7 @@ describe('Graph3D', () => {
     graph.nodes[2].z = 0;
     cameraPosition.mockClear();
     graphPropsSpy.mockClear();
+    gltfLoadSpy.mockClear();
     zoomToFit.mockClear();
     refresh.mockClear();
     controls.target.set.mockClear();
@@ -199,12 +230,14 @@ describe('Graph3D', () => {
   });
 
   afterEach(() => {
+    canvasGetContextSpy?.mockRestore();
+    canvasGetContextSpy = null;
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
-  it('centers the home view on the brain shell when it loads', () => {
+  it('centers the home view on the larger brain shell when it loads', () => {
     render(
       <Graph3D
         data={graph}
@@ -220,14 +253,14 @@ describe('Graph3D', () => {
 
     // Camera should be positioned to frame the scaled brain geometry.
     // The SphereGeometry(50) mock with mesh at (40,-20,10) gives:
-    //   centeredBrain.sphere.radius ≈ 130, distance = max(130 * 2.6, 240) = 338
+    //   centeredBrain.sphere.radius ≈ 162.5, distance = max(162.5 * 2.6, 240) = 422.5
     //   orbitTarget ≈ {x:0, y:0, z:0} after centering
-    //   camera.y = target.y + distance * 0.08 ≈ 27.04
+    //   camera.y = target.y + distance * 0.08 ≈ 33.8
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(27.04, 2),
-        z: 338,
+        y: expect.closeTo(33.8, 2),
+        z: 422.5,
       }),
       expect.objectContaining({
         x: 0,
@@ -238,6 +271,108 @@ describe('Graph3D', () => {
     expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
       enableNavigationControls: boolean;
     }).enableNavigationControls).toBe(false);
+  });
+
+  it('loads the neuron model asset for nodes, keeps the existing color mapping, and scales it up', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(gltfLoadSpy).toHaveBeenCalledWith('/assets/neuron-spinous-stellate-cell.glb');
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[0]);
+    expect(nodeObject).not.toBeNull();
+
+    const modelGroup = nodeObject?.getObjectByName('neuron-model');
+    expect(modelGroup).not.toBeNull();
+
+    const bounds = new THREE.Box3().setFromObject(modelGroup!);
+    const diagonal = bounds.getSize(new THREE.Vector3()).length();
+    expect(diagonal).toBeCloseTo(26, 1);
+
+    const expectedColorScore = String(graph.nodes[0].id)
+      .split('')
+      .reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 10000, 0) / 10000;
+    const expectedColor = new THREE.Color(0xff4444).lerp(
+      new THREE.Color(0x4444ff),
+      expectedColorScore,
+    );
+
+    const neuronMeshes: THREE.Mesh[] = [];
+    modelGroup?.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        neuronMeshes.push(child);
+      }
+    });
+
+    expect(neuronMeshes).toHaveLength(2);
+    expect(neuronMeshes[0].geometry.type).toBe('ConeGeometry');
+    neuronMeshes.forEach((mesh) => {
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      expect(material.color.getHex()).toBe(expectedColor.getHex());
+    });
+    expect(nodeObject?.children.some((child) => child instanceof THREE.Sprite)).toBe(true);
+  });
+
+  it('pins nodes to fixed layout anchors so every neuron has a stable hardcoded position', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const renderedNodes = getLatestGraphProps().graphData.nodes;
+    const calculus = renderedNodes.find((node) => node.id === 'concept:Calculus');
+    const derivatives = renderedNodes.find((node) => node.id === 'concept:Derivatives');
+    const mathNotes = renderedNodes.find((node) => node.id === 'doc:abc-123');
+
+    expect(calculus).toEqual(
+      expect.objectContaining({
+        id: 'concept:Calculus',
+        x: 0,
+        y: 30.9,
+        z: 0,
+        fx: 0,
+        fy: 30.9,
+        fz: 0,
+      }),
+    );
+    expect(derivatives).toEqual(
+      expect.objectContaining({
+        id: 'concept:Derivatives',
+        x: -39.9,
+        y: 8.5,
+        z: -31.6,
+        fx: -39.9,
+        fy: 8.5,
+        fz: -31.6,
+      }),
+    );
+    expect(mathNotes).toEqual(
+      expect.objectContaining({
+        id: 'doc:abc-123',
+        x: 4.5,
+        y: -20.5,
+        z: 44.1,
+        fx: 4.5,
+        fy: -20.5,
+        fz: 44.1,
+      }),
+    );
   });
 
   it('re-centers the brain when the graph panel reports its initial measured size', () => {
@@ -271,8 +406,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(27.04, 2),
-        z: 338,
+        y: expect.closeTo(33.8, 2),
+        z: 422.5,
       }),
       expect.objectContaining({
         x: 0,
@@ -363,7 +498,13 @@ describe('Graph3D', () => {
     vi.advanceTimersByTime(32);
     sceneObject.updateMatrixWorld(true);
 
-    const pivotWorld = sceneObject.localToWorld(new THREE.Vector3(10, 0, 0));
+    const pivotWorld = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[0].x ?? 0,
+        graph.nodes[0].y ?? 0,
+        graph.nodes[0].z ?? 0,
+      ),
+    );
 
     expect(sceneObject.rotation.y).not.toBe(0);
     expect(sceneObject.position.length()).toBeGreaterThan(0);
@@ -477,7 +618,13 @@ describe('Graph3D', () => {
     fireEvent.mouseUp(root, { button: 2 });
     sceneObject.updateMatrixWorld(true);
 
-    const pivotWorld = sceneObject.localToWorld(new THREE.Vector3(10, 0, 0));
+    const pivotWorld = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[0].x ?? 0,
+        graph.nodes[0].y ?? 0,
+        graph.nodes[0].z ?? 0,
+      ),
+    );
 
     expect(sceneObject.rotation.x).not.toBe(0);
     expect(sceneObject.rotation.y).not.toBe(0);
@@ -560,8 +707,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(27.04, 2),
-        z: 338,
+        y: expect.closeTo(33.8, 2),
+        z: 422.5,
       }),
       expect.objectContaining({
         x: 0,
@@ -619,8 +766,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(27.04, 2),
-        z: 338,
+        y: expect.closeTo(33.8, 2),
+        z: 422.5,
       }),
       expect.objectContaining({
         x: 0,
@@ -643,7 +790,7 @@ describe('Graph3D', () => {
 
     vi.advanceTimersByTime(200);
     cameraPosition.mockClear();
-    currentCameraPosition = { x: 0, y: 27.04, z: 338 };
+    currentCameraPosition = { x: 0, y: 33.8, z: 422.5 };
 
     const root = container.firstChild as HTMLElement;
 
@@ -653,8 +800,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(24.336, 3),
-        z: expect.closeTo(304.2, 3),
+        y: expect.closeTo(30.42, 3),
+        z: expect.closeTo(380.25, 3),
       }),
       expect.objectContaining({ x: 0, y: 0, z: 0 }),
     );
@@ -665,8 +812,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(29.2032, 3),
-        z: expect.closeTo(365.04, 3),
+        y: expect.closeTo(36.504, 3),
+        z: expect.closeTo(456.3, 3),
       }),
       expect.objectContaining({ x: 0, y: 0, z: 0 }),
     );
@@ -844,12 +991,14 @@ describe('Graph3D', () => {
     expect(lastCall.length).toBeLessThanOrEqual(2);
     // The lookAt target should be the node's world-space position
     const nodePos = graph.nodes[1];
+    const lookAt = lastCall[1];
     const worldPos = sceneObject.localToWorld(
       new THREE.Vector3(nodePos.x ?? 0, nodePos.y ?? 0, nodePos.z ?? 0),
     );
-    expect(lastCall[1].x).toBeCloseTo(worldPos.x, 2);
-    expect(lastCall[1].y).toBeCloseTo(worldPos.y, 2);
-    expect(lastCall[1].z).toBeCloseTo(worldPos.z, 2);
+    expect(lookAt).toBeDefined();
+    expect(lookAt!.x).toBeCloseTo(worldPos.x, 2);
+    expect(lookAt!.y).toBeCloseTo(worldPos.y, 2);
+    expect(lookAt!.z).toBeCloseTo(worldPos.z, 2);
   });
 
   it('double-clicking empty space resets node-focused rotation back to the home view', async () => {
@@ -886,8 +1035,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(27.04, 2),
-        z: 338,
+        y: expect.closeTo(33.8, 2),
+        z: 422.5,
       }),
       expect.objectContaining({
         x: 0,
@@ -1139,12 +1288,16 @@ describe('Graph3D', () => {
     );
 
     const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      graphData: GraphData;
       onEngineTick: () => void;
     };
-    const outsideNode = graph.nodes[0];
+    const outsideNode = props.graphData.nodes[0];
     outsideNode.x = 250;
     outsideNode.y = 210;
     outsideNode.z = 180;
+    outsideNode.fx = 250;
+    outsideNode.fy = 210;
+    outsideNode.fz = 180;
 
     props.onEngineTick();
 
@@ -1153,7 +1306,7 @@ describe('Graph3D', () => {
         outsideNode,
         createBrainContainment(
           new THREE.Mesh(
-            new THREE.SphereGeometry(75, 8, 8),
+            new THREE.SphereGeometry(170, 8, 8),
             new THREE.MeshBasicMaterial(),
           ),
         ),
@@ -1383,8 +1536,8 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(27.04, 2),
-        z: 338,
+        y: expect.closeTo(33.8, 2),
+        z: 422.5,
       }),
       expect.objectContaining({
         x: 0,
@@ -1484,9 +1637,3 @@ describe('Graph3D', () => {
     expect(withoutGhost.graphData.links.some((link) => link.type === 'LATENT_DISCOVERY')).toBe(false);
   });
 });
-
-
-
-
-
-
