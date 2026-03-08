@@ -127,10 +127,10 @@ const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 const POINTER_ROTATION_SPEED = 0.005;
 const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
-const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.45)';
-const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.52)';
-const GHOST_EDGE_WIDTH = 0.8;
-const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 3.5;
+const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.28)';
+const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.34)';
+const GHOST_EDGE_WIDTH = 0.55;
+const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 325;
 const NEURON_MODEL_TARGET_DIAGONAL = 26;
 const NODE_LABEL_Y_OFFSET = 16;
@@ -1073,7 +1073,7 @@ export function Graph3D({
             color: '#7dd3fc',
             wireframe: true,
             transparent: true,
-            opacity: 0.12,
+            opacity: 0.06,
             side: THREE.DoubleSide,
           });
         }
@@ -1485,7 +1485,7 @@ export function Graph3D({
         linkLineDash={getLinkLineDash}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
-        linkOpacity={0.82}
+        linkOpacity={0.55}
         nodeRelSize={5}
         linkDirectionalParticles={0}
         cooldownTicks={120}
