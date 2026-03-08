@@ -143,12 +143,10 @@ const BRAIN_MESH_BASE_OPACITY = 0.06;
 const BRAIN_MESH_TOGGLE_FADE_DURATION_MS = 200;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
 const EXPANDED_DOC_RADIUS = 30;
-const EXPANDED_DIVE_DISTANCE = 120;
+const EXPANDED_VIEW_DISTANCE = 78;
 const NODE_LABEL_Y_OFFSET = 16;
 const DISCOVERY_OUTLINE_COLOR = '#fbbf24';
-const DIVE_ZOOM_CLOSE_DISTANCE = 20;
 const DIVE_ZOOM_IN_DURATION_MS = 700;
-const DIVE_ZOOM_OUT_DURATION_MS = 900;
 /** Seed initial position from a deterministic hash so the force simulation starts
  *  with nodes spread out instead of all at the origin. */
 function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
@@ -319,7 +317,7 @@ export function Graph3D({
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
   const [hasFocusedRotationPivot, setHasFocusedRotationPivot] = useState(false);
   const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
-  const [discoveryModeEnabled, setDiscoveryModeEnabled] = useState(true);
+  const discoveryModeEnabled = true;
   const [latentLinks, setLatentLinks] = useState<GraphLink[]>([]);
   const [expandedConcept, setExpandedConcept] = useState<{
     node: GraphNode;
@@ -437,7 +435,7 @@ export function Graph3D({
 
   const expandedNodeIds = useMemo<Set<string> | null>(() => {
     if (!expandedConcept) return null;
-    const ids = new Set<string>();
+    const ids = new Set<string>([expandedConcept.node.id]);
     expandedConcept.docs.forEach((doc) => ids.add(`doc-expand:${doc.doc_id}`));
     return ids;
   }, [expandedConcept]);
@@ -871,7 +869,7 @@ export function Graph3D({
   function handleConceptExpansion(node: GraphNode) {
     const nodePoint = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
 
-    // Start dive animation: zoom close + fade out brain/nodes
+    // Start dive animation: push the camera inward while the rest of the brain fades away.
     setIsDiving(true);
     diveStartTimeRef.current = performance.now();
 
@@ -885,30 +883,19 @@ export function Graph3D({
     animateCamera(
       {
         x: target.x,
-        y: target.y + DIVE_ZOOM_CLOSE_DISTANCE * 0.08,
-        z: target.z + DIVE_ZOOM_CLOSE_DISTANCE,
+        y: target.y + EXPANDED_VIEW_DISTANCE * 0.08,
+        z: target.z + EXPANDED_VIEW_DISTANCE,
       },
       target,
       DIVE_ZOOM_IN_DURATION_MS,
       () => {
-        // Phase 2: reveal doc sub-nodes and zoom back out to frame them
+        // Once the inward dive finishes, reveal the doc sub-graph in place.
         docsPromise.then((docs) => {
           if (docs.length > 0) {
             setExpandedConcept({ node, docs });
           }
           setIsDiving(false);
           diveStartTimeRef.current = null;
-
-          // Zoom out to frame the doc ring
-          animateCamera(
-            {
-              x: target.x,
-              y: target.y + EXPANDED_DIVE_DISTANCE * 0.08,
-              z: target.z + EXPANDED_DIVE_DISTANCE,
-            },
-            target,
-            DIVE_ZOOM_OUT_DURATION_MS,
-          );
         });
       },
     );
@@ -1894,34 +1881,6 @@ export function Graph3D({
       onTouchStart={handleInteraction}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
-      <div className="absolute left-4 top-4 z-10 flex flex-col gap-2">
-        <div className="rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showBrainMesh}
-              onChange={(event) => {
-                setShowBrainMesh(event.target.checked);
-              }}
-              aria-label="Brain mesh"
-            />
-            <span>Brain Mesh</span>
-          </label>
-        </div>
-        <div className="rounded-full border border-violet-300/30 bg-slate-900/80 px-3 py-2 text-xs text-violet-100">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={discoveryModeEnabled}
-              onChange={(event) => {
-                setDiscoveryModeEnabled(event.target.checked);
-              }}
-              aria-label="Discovery mode"
-            />
-            <span>Discovery Mode</span>
-          </label>
-        </div>
-      </div>
       <ForceGraph3D
         ref={graphRef as never}
         {...dashedLinkProps}
@@ -1982,6 +1941,18 @@ export function Graph3D({
           className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/80 text-xl font-semibold text-slate-100 shadow-lg shadow-slate-950/30 transition hover:bg-slate-700/90"
         >
           ⟳
+        </button>
+        <button
+          type="button"
+          aria-label={showBrainMesh ? 'Hide brain mesh' : 'Show brain mesh'}
+          onClick={() => setShowBrainMesh((current) => !current)}
+          className={`flex h-11 w-11 items-center justify-center rounded-full text-[0.65rem] font-semibold uppercase tracking-[0.18em] shadow-lg shadow-slate-950/30 transition ${
+            showBrainMesh
+              ? 'bg-slate-800/80 text-slate-100 hover:bg-slate-700/90'
+              : 'bg-slate-900/60 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+          }`}
+        >
+          BM
         </button>
       </div>
       {activeCardNode && tooltipPosition && !expandedConcept ? (

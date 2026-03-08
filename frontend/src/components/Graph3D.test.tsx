@@ -304,8 +304,8 @@ describe('Graph3D', () => {
     });
   });
 
-  it('renders a top-left checkbox control that fades the brain mesh in and out', async () => {
-    render(
+  it('renders a right-side brain mesh button with the zoom controls and toggles mesh visibility', async () => {
+    const { container } = render(
       <Graph3D
         data={graph}
         source="api"
@@ -319,9 +319,11 @@ describe('Graph3D', () => {
       await Promise.resolve();
     });
 
-    const toggleCheckbox = screen.getByRole('checkbox', { name: 'Brain mesh' });
-    expect(toggleCheckbox).toBeInTheDocument();
-    expect(toggleCheckbox).toBeChecked();
+    expect(screen.queryByLabelText('Discovery mode')).not.toBeInTheDocument();
+
+    const meshButton = screen.getByRole('button', { name: 'Hide brain mesh' });
+    expect(meshButton).toBeInTheDocument();
+    expect(container.querySelector('.absolute.right-4.top-4.flex.flex-col.gap-2.z-10')).not.toBeNull();
 
     const brainGroup = sceneObject.children[0] as THREE.Group | undefined;
     expect(brainGroup?.visible).toBe(true);
@@ -336,8 +338,8 @@ describe('Graph3D', () => {
       expect(material.opacity).toBeCloseTo(0.06, 6);
     });
 
-    fireEvent.click(toggleCheckbox);
-    expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).not.toBeChecked();
+    fireEvent.click(meshButton);
+    expect(screen.getByRole('button', { name: 'Show brain mesh' })).toBeInTheDocument();
     expect(brainGroup?.visible).toBe(true);
 
     await act(async () => {
@@ -360,8 +362,8 @@ describe('Graph3D', () => {
       expect(material.opacity).toBeCloseTo(0, 6);
     });
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Brain mesh' }));
-    expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Show brain mesh' }));
+    expect(screen.getByRole('button', { name: 'Hide brain mesh' })).toBeInTheDocument();
     expect(brainGroup?.visible).toBe(true);
 
     await act(async () => {
@@ -1272,6 +1274,48 @@ describe('Graph3D', () => {
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
     });
 
+    it('frames the expanded visible set instead of zooming all the way into just the clicked node', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      cameraPosition.mockClear();
+      currentCameraPosition = { x: 0, y: 52, z: 650 };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(currentCameraPosition.y).toBeGreaterThan(3);
+      expect(currentCameraPosition.z).toBeGreaterThan(40);
+      expect(currentCameraPosition.z).toBeLessThan(160);
+    });
+
     it('single-clicking a Concept node does not call onOpenDocument', async () => {
       const onOpenDocument = vi.fn();
       render(
@@ -1863,9 +1907,6 @@ describe('Graph3D', () => {
       expect(withGhost.linkWidth(ghostLink)).toBeCloseTo(0.55, 6);
     }
 
-    fireEvent.click(screen.getByLabelText('Discovery mode'));
-
-    const withoutGhost = getLatestGraphProps();
-    expect(withoutGhost.graphData.links.some((link) => link.type === 'LATENT_DISCOVERY')).toBe(false);
+    expect(screen.queryByLabelText('Discovery mode')).not.toBeInTheDocument();
   });
 });
