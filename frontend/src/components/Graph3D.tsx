@@ -173,9 +173,23 @@ function getVisualNodeColor(node: GraphNode): THREE.Color {
 
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
+  const font = 'bold 52px "Inter", "Roboto", sans-serif';
+  const padding = 80;
+  const height = 128;
+
+  // Measure text width to size canvas dynamically
+  const measureCanvas = document.createElement('canvas');
+  const measureCtx = measureCanvas.getContext('2d');
+  let textWidth = 512; // fallback
+  if (measureCtx) {
+    measureCtx.font = font;
+    textWidth = Math.ceil(measureCtx.measureText(text).width) + padding;
+  }
+  const width = Math.max(256, textWidth);
+
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
+  canvas.width = width;
+  canvas.height = height;
   let ctx: CanvasRenderingContext2D | null = null;
 
   try {
@@ -193,7 +207,7 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
     ctx.roundRect(0, 0, canvas.width, canvas.height, 64);
     ctx.fill();
 
-    ctx.font = 'bold 52px "Inter", "Roboto", sans-serif';
+    ctx.font = font;
     ctx.fillStyle = color;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -204,7 +218,10 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
   texture.minFilter = THREE.LinearFilter;
   const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(16, 4, 1);
+  // Scale width proportionally so the sprite aspect ratio matches the canvas
+  const spriteHeight = 4;
+  const spriteWidth = spriteHeight * (width / height);
+  sprite.scale.set(spriteWidth, spriteHeight, 1);
   sprite.renderOrder = 999;
   return sprite;
 }
