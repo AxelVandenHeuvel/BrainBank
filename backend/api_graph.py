@@ -10,39 +10,16 @@ db, conn = init_kuzu()
 
 @graph_router.get("/graph")
 def get_graph():
-    """Return all nodes and edges for frontend visualization."""
+    """Return Concept nodes and RELATED_TO edges for frontend visualization."""
     try:
-        _, table = init_lancedb()
-        df = table.to_pandas()
-
         nodes = []
         edges = []
 
-        # Concept nodes from Kuzu
         result = conn.execute("MATCH (c:Concept) RETURN c.name")
         while result.has_next():
             name = result.get_next()[0]
             nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
 
-        # Document nodes from LanceDB (distinct docs)
-        if not df.empty:
-            for _, row in df.drop_duplicates("doc_id")[["doc_id", "doc_name"]].iterrows():
-                nodes.append(
-                    {"id": f"doc:{row['doc_id']}", "type": "Document", "name": row["doc_name"]}
-                )
-
-            # MENTIONS edges from LanceDB (one edge per unique doc→concept pair)
-            for _, row in df[["doc_id", "concepts"]].explode("concepts").drop_duplicates().iterrows():
-                if row["concepts"]:
-                    edges.append(
-                        {
-                            "source": f"doc:{row['doc_id']}",
-                            "target": f"concept:{row['concepts']}",
-                            "type": "MENTIONS",
-                        }
-                    )
-
-        # RELATED_TO edges from Kuzu
         result = conn.execute(
             "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
         )
