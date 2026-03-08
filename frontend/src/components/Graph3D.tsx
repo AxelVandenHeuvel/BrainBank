@@ -291,6 +291,7 @@ export function Graph3D({
   onHoverNode: onHoverNodeProp,
 }: Graph3DProps) {
   const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
   const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -391,6 +392,7 @@ export function Graph3D({
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
+  const activeCardNode = expandedConcept ? null : selectedNode ?? hoveredNode;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
@@ -633,6 +635,7 @@ export function Graph3D({
 
   function handleReset() {
     setRotationPivotNode(null);
+    setSelectedNode(null);
     setLatentLinks([]);
 
     const brainHomeView = brainHomeViewRef.current;
@@ -894,15 +897,6 @@ export function Graph3D({
   }
 
   function handleNodeClick(node: GraphNode) {
-    if (node.type === 'Document') {
-      return;
-    }
-
-    if (node.type !== 'Concept') {
-      setLatentLinks([]);
-      return;
-    }
-
     const now = Date.now();
     const nodePoint = {
       x: node.x ?? 0,
@@ -910,8 +904,17 @@ export function Graph3D({
       z: node.z ?? 0,
     };
 
+    clearSelectedEdge();
+    setSelectedNode(node);
     setRotationPivotNode(node.id);
     suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
+
+    if (node.type !== 'Concept') {
+      lastNodeClickRef.current = null;
+      setLatentLinks([]);
+      smoothFlyToNode(nodePoint, 160);
+      return;
+    }
 
     if (
       lastNodeClickRef.current &&
@@ -935,6 +938,9 @@ export function Graph3D({
     if (isGhostLink(link)) {
       return;
     }
+    setSelectedNode(null);
+    setRotationPivotNode(null);
+    setLatentLinks([]);
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
     const targetId = typeof link.target === 'string' ? link.target : link.target.id;
     const sourceConcept = getConceptName(sourceId);
@@ -1294,7 +1300,7 @@ export function Graph3D({
   }, [hasFocusedRotationPivot, selectedEdge]);
 
   useEffect(() => {
-    if (!hoveredNode) {
+    if (!activeCardNode) {
       setTooltipPosition(null);
       return;
     }
@@ -1303,9 +1309,9 @@ export function Graph3D({
 
     const updatePosition = () => {
       const worldPoint = toWorldPoint({
-        x: hoveredNode.x ?? 0,
-        y: hoveredNode.y ?? 0,
-        z: hoveredNode.z ?? 0,
+        x: activeCardNode.x ?? 0,
+        y: activeCardNode.y ?? 0,
+        z: activeCardNode.z ?? 0,
       });
       const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
@@ -1321,7 +1327,7 @@ export function Graph3D({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [hoveredNode]);
+  }, [activeCardNode]);
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
@@ -1435,6 +1441,9 @@ export function Graph3D({
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
+          setSelectedNode(null);
+          setRotationPivotNode(null);
+          setLatentLinks([]);
         }
       }}
       onMouseMove={handleMouseMove}
@@ -1516,12 +1525,20 @@ export function Graph3D({
           </>
         )}
       </div>
-      {hoveredNode && tooltipPosition && !expandedConcept ? (
+      {activeCardNode && tooltipPosition ? (
         <NodeTooltip
-          node={hoveredNode}
-          connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
+          node={activeCardNode}
+          connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
+          actionLabel={selectedNode?.type === 'Concept' ? 'Open docs' : undefined}
+          onAction={
+            selectedNode?.type === 'Concept'
+              ? () => {
+                  void handleConceptExpansion(selectedNode);
+                }
+              : undefined
+          }
         />
       ) : null}
 

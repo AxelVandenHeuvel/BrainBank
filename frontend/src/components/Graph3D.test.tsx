@@ -1184,6 +1184,28 @@ describe('Graph3D', () => {
       expect(screen.queryByRole('heading', { name: 'Calculus' })).toBeNull();
     });
 
+    it('single-clicking a Concept node pins a node card with an open docs action', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+      });
+
+      expect(screen.getByText('Calculus')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Open docs' })).toBeInTheDocument();
+    });
+
     it('expansion overlay shows document cards after fetch resolves', async () => {
       const mockDocs = [
         { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
@@ -1213,7 +1235,91 @@ describe('Graph3D', () => {
         await Promise.resolve();
       });
 
-      expect(screen.getByText('Math Notes')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Math Notes' })).toBeInTheDocument();
+    });
+
+    it('clicking open docs on the pinned node card opens that node documents', async () => {
+      const mockDocs = [
+        {
+          doc_id: 'abc123',
+          name: 'Math Notes',
+          full_text: '# Math Notes\n\nChain rule explanation.',
+        },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Open docs' }));
+        await Promise.resolve();
+      });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/concepts/Calculus/documents',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
+      expect(
+        screen.getByRole('heading', { name: 'Math Notes', level: 1 }),
+      ).toBeInTheDocument();
+    });
+
+    it('double-clicking a Concept node opens the first related document in the viewer', async () => {
+      const mockDocs = [
+        {
+          doc_id: 'abc123',
+          name: 'Math Notes',
+          full_text: '# Math Notes\n\nChain rule explanation.',
+        },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click — Calculus
+        await Promise.resolve();
+      });
+
+      expect(
+        screen.getByRole('heading', { name: 'Math Notes', level: 1 }),
+      ).toBeInTheDocument();
+      expect(screen.getByText('Chain rule explanation.')).toBeInTheDocument();
     });
 
     it('the collapse button closes the overlay', async () => {
