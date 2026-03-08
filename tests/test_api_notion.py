@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +26,7 @@ def test_import_single_page(mock_fetch, mock_ingest):
     assert data["pages"][0]["title"] == "My Page"
     assert data["pages"][0]["doc_id"] == "abc"
     mock_fetch.assert_called_once_with("ntn_test", "abc123de-f456-abc1-23de-f456abc123de")
-    mock_ingest.assert_called_once_with("# Hello\n\nSome content", "My Page")
+    mock_ingest.assert_called_once_with("# Hello\n\nSome content", "My Page", shared_kuzu_db=ANY)
 
 
 @patch("backend.api.ingest_markdown")

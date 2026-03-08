@@ -43,7 +43,7 @@ vi.mock('@milkdown/crepe', () => {
     }
 
     get editor() {
-      return { action: () => {} };
+      return { action: () => {}, use: () => ({ use: () => this.editor }) };
     }
 
     destroy() {
@@ -55,6 +55,9 @@ vi.mock('@milkdown/crepe', () => {
 });
 
 vi.mock('@milkdown/kit/core', () => ({ editorViewCtx: Symbol('editorViewCtx') }));
+vi.mock('@milkdown/kit/utils', () => ({ $prose: (fn: unknown) => fn }));
+vi.mock('@milkdown/kit/prose/state', () => ({ Plugin: class {} }));
+vi.mock('@milkdown/kit/prose/view', () => ({ Decoration: {}, DecorationSet: { empty: {}, create: () => ({}) } }));
 vi.mock('@milkdown/crepe/theme/common/style.css', () => ({}));
 vi.mock('@milkdown/crepe/theme/frame-dark.css', () => ({}));
 

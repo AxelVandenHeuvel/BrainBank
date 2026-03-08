@@ -48,3 +48,15 @@ body {
   padding: 16px 0 !important;
   min-height: 60vh;
 }
+
+.md-syntax-hint {
+  color: #475569;
+  font-size: inherit;
+  font-weight: inherit;
+  margin-right: 2px;
+  user-select: none;
+}
+
+.md-no-placeholder::before {
+  display: none !important;
+}

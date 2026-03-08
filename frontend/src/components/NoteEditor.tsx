@@ -1,8 +1,51 @@
 import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx } from '@milkdown/kit/core';
+import { $prose } from '@milkdown/kit/utils';
+import { Plugin } from '@milkdown/kit/prose/state';
+import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame-dark.css';
+
+const markdownHintsPlugin = $prose(() => {
+  return new Plugin({
+    props: {
+      decorations(state) {
+        const { $from } = state.selection;
+        const parent = $from.parent;
+        if (parent.type.name !== 'heading') return DecorationSet.empty;
+
+        const level = parent.attrs.level as number;
+        const hashes = '#'.repeat(level) + ' ';
+        const pos = $from.before() + 1;
+
+        const decorations: Decoration[] = [];
+
+        decorations.push(
+          Decoration.widget(
+            pos,
+            () => {
+              const span = document.createElement('span');
+              span.textContent = hashes;
+              span.className = 'md-syntax-hint';
+              return span;
+            },
+            { side: -1 },
+          ),
+        );
+
+        // Hide the placeholder on this heading node
+        decorations.push(
+          Decoration.node($from.before(), $from.after(), {
+            class: 'md-no-placeholder',
+          }),
+        );
+
+        return DecorationSet.create(state.doc, decorations);
+      },
+    },
+  });
+});
 
 interface NoteEditorProps {
   onSave: () => void;
@@ -35,7 +78,7 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
       featureConfigs: {
         [Crepe.Feature.Placeholder]: {
           text: 'Start writing...',
-          mode: 'doc',
+          mode: 'block',
         },
         [Crepe.Feature.Latex]: {
           katexOptions: { throwOnError: false },
@@ -48,6 +91,8 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
         setContent(markdown);
       });
     });
+
+    crepe.editor.use(markdownHintsPlugin);
 
     crepe
       .create()

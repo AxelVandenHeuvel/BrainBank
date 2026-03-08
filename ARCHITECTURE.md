@@ -94,12 +94,13 @@ backend/
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
-    lance.py                - LanceDB init + chunks table schema
+    lance.py                - LanceDB init + chunks table schema + duplicate document lookup
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
   services/
     embeddings.py           - Sentence-transformer embedding functions
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
+    pdf.py                  - PDF text extraction using PyMuPDF
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
     journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
@@ -128,7 +129,9 @@ tests/
   services/
     test_llm.py             - LLM extraction tests
     test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
+    test_pdf.py             - PDF text extraction tests
   test_api_notion.py        - Notion import API endpoint tests
+  test_api_upload.py        - File upload API endpoint tests
   retrieval/
     test_query.py           - Query pipeline tests
 ```
@@ -177,13 +180,13 @@ GLTFLoader -- load human-brain.glb, center the model at the scene origin, derive
 The sidebar has a "New Note" button and a file upload option:
 
 1. **New Note** - clicking opens a full-page WYSIWYG markdown editor (NoteEditor) that covers the entire viewport. The editor uses Milkdown Crepe (ProseMirror-based) which renders markdown inline as you type — headings appear as headings, bold renders as bold, lists indent, LaTeX math renders via KaTeX (`$inline$` and `$$block$$`). A toolbar provides formatting buttons. Markdown shortcuts work like Obsidian: type `###` for a heading, `**` for bold, `-` for a list. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
-2. **File Upload** - user picks a `.md` or `.txt` file from the sidebar. Contents are read client-side and sent via `POST /ingest`. Success shows extracted concept count.
+2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped with a `"duplicate"` reason. On completion, a summary shows the total ingested count, or a partial-failure message if some files failed.
 
 3. **Import from Notion** - user clicks "Import from Notion" in the sidebar, enters their Notion integration token and a page/database URL, and clicks Import. The frontend `POST /ingest/notion` sends `{token, url}`. The backend parses the URL to determine page vs database, fetches content via the Notion API, converts blocks to markdown, and runs each page through the standard ingest pipeline. Success shows the number of pages imported.
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target and resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object’s own rotation, and reserves left-click for node interactions such as focus and document expansion. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node’s id as the active rotation target and resolves that node’s live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks a `RELATED_TO` edge, the frontend keeps that exact edge selected, dims unrelated nodes, fetches `/api/relationships/details?source=...&target=...`, and renders `EdgeDetailPanel` with the stored reason plus shared, source-only, and target-only supporting documents. That panel can be dismissed either with its close button or by pressing `Escape`. `MENTIONS` edges remain non-interactive.
 
@@ -213,8 +216,7 @@ Backend returns { answer, source_concepts, discovery_concepts }
 ChatPanel -- render assistant answer + separate source/discovery concept sections
 ```
 
-Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
-Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the panel is purely a visibility change and does not reset local component state. The frontend now uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
+Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. The frontend uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -347,6 +349,15 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 - Returns: `[{"doc_id", "name", "full_text"}]`
 - Queries LanceDB only (no Kuzu). Filters chunks by concept tag, deduplicates by doc_id, and joins all chunk texts into one readable document per result.
 - Returns `[]` if no documents are found for the concept.
+
+### `POST /ingest/upload`
+- Body: `multipart/form-data` with one or more files under the `files` field
+- Accepts `.md`, `.txt`, `.pdf`, `.zip` files
+- PDFs are converted to text server-side via PyMuPDF
+- Zip files are extracted in-memory; `__MACOSX`/hidden files skipped, only `.md`/`.txt`/`.pdf` entries processed
+- Duplicate documents (matching `doc_name` in LanceDB) are skipped with `{"skipped": true, "reason": "duplicate"}`
+- Returns: `{"imported": N, "results": [{"title", "doc_id", "chunks", "concepts"}]}`
+- Errors: `400` with `{"error": "..."}` for unsupported file types
 
 ### `POST /ingest/notion`
 - Body: `{"token": "ntn_...", "url": "https://notion.so/..."}`
