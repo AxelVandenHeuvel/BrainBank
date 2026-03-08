@@ -40,6 +40,27 @@ describe('EdgeDetailPanel', () => {
     expect(screen.getAllByText('Math Notes')).toHaveLength(1);
   });
 
+  it('keeps long relationship content inside a bounded scroll region', () => {
+    render(
+      <EdgeDetailPanel
+        relationship={relationship}
+        isLoading={false}
+        error={null}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('edge-detail-panel')).toHaveClass(
+      'max-h-[calc(100%-2rem)]',
+      'flex',
+      'flex-col',
+    );
+    expect(screen.getByTestId('edge-detail-scroll-content')).toHaveClass(
+      'min-h-0',
+      'overflow-y-auto',
+    );
+  });
+
   it('renders a loading state', () => {
     render(
       <EdgeDetailPanel
