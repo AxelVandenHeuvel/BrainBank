@@ -1,4 +1,5 @@
 import os
+
 import lancedb
 import pyarrow as pa
 
@@ -9,12 +10,34 @@ CHUNKS_SCHEMA = pa.schema(
     [
         pa.field("chunk_id", pa.string()),
         pa.field("doc_id", pa.string()),
-        pa.field("doc_name", pa.string()),            # NEW: Allows the UI to label the floating document
+        pa.field("doc_name", pa.string()),
         pa.field("text", pa.string()),
-        pa.field("concepts", pa.list_(pa.string())),  # NEW: The critical link to Kuzu nodes
+        pa.field("concepts", pa.list_(pa.string())),
         pa.field("vector", pa.list_(pa.float32(), VECTOR_DIM)),
     ]
 )
+
+DOCUMENT_CENTROIDS_SCHEMA = pa.schema(
+    [
+        pa.field("doc_id", pa.string()),
+        pa.field("doc_name", pa.string()),
+        pa.field("centroid_vector", pa.list_(pa.float32(), VECTOR_DIM)),
+    ]
+)
+
+
+def _open_or_create_table(db, table_name: str, schema: pa.Schema):
+    try:
+        table = db.open_table(table_name)
+        existing_cols = set(table.schema.names)
+        required_cols = set(schema.names)
+        if not required_cols.issubset(existing_cols):
+            db.drop_table(table_name)
+            table = db.create_table(table_name, schema=schema)
+    except Exception:
+        table = db.create_table(table_name, schema=schema)
+    return table
+
 
 def find_existing_document(title: str, db_path: str = "./data/lancedb") -> dict | None:
     """Check if a document with the given title already exists in LanceDB."""
@@ -33,18 +56,9 @@ def find_existing_document(title: str, db_path: str = "./data/lancedb") -> dict 
 
 
 def init_lancedb(db_path: str = "./data/lancedb"):
-    # Apply the same safeguard we used for Kuzu to prevent IO crashes on fresh clones
     os.makedirs(db_path, exist_ok=True)
 
     db = lancedb.connect(db_path)
-    try:
-        table = db.open_table("chunks")
-        # If the on-disk schema is missing any required columns, recreate the table.
-        existing_cols = set(table.schema.names)
-        required_cols = set(CHUNKS_SCHEMA.names)
-        if not required_cols.issubset(existing_cols):
-            db.drop_table("chunks")
-            table = db.create_table("chunks", schema=CHUNKS_SCHEMA)
-    except Exception:
-        table = db.create_table("chunks", schema=CHUNKS_SCHEMA)
-    return db, table
+    chunks_table = _open_or_create_table(db, "chunks", CHUNKS_SCHEMA)
+    _open_or_create_table(db, "document_centroids", DOCUMENT_CENTROIDS_SCHEMA)
+    return db, chunks_table

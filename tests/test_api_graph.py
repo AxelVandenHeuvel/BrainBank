@@ -122,6 +122,7 @@ class TestGetGraph:
         assert "source" in edge
         assert "target" in edge
         assert "type" in edge
+        assert "weight" in edge
 
     def test_related_edges_use_stable_type_and_reason(self):
         _ingest_sample()
@@ -133,7 +134,28 @@ class TestGetGraph:
         )
 
         assert related_edge["type"] == "RELATED_TO"
-        assert related_edge["reason"] == "contains"
+        assert related_edge["reason"] == "shared_document"
+        assert related_edge["weight"] == 1.0
+
+    def test_related_edge_weight_increases_across_documents(self):
+        _ingest_document(
+            title="Doc One",
+            text="Calculus and Derivatives both appear here.",
+            extraction={"concepts": ["Calculus", "Derivatives"], "relationships": []},
+        )
+        _ingest_document(
+            title="Doc Two",
+            text="Calculus and Derivatives appear again.",
+            extraction={"concepts": ["Calculus", "Derivatives"], "relationships": []},
+        )
+
+        response = client.get("/api/graph")
+        edges = response.json()["edges"]
+        related_edge = next(
+            edge for edge in edges if edge["source"] == "concept:Calculus" and edge["target"] == "concept:Derivatives"
+        )
+
+        assert related_edge["weight"] == 2.0
 
 
 class TestGetConcepts:
@@ -264,7 +286,7 @@ class TestGetRelationshipDetails:
         assert data["source"] == "Calculus"
         assert data["target"] == "Derivatives"
         assert data["type"] == "RELATED_TO"
-        assert data["reason"] == "shared foundation"
+        assert data["reason"] == "shared_document"
 
         source_names = {document["name"] for document in data["source_documents"]}
         target_names = {document["name"] for document in data["target_documents"]}
@@ -309,7 +331,7 @@ class TestGetRelationshipDetails:
         assert data["source"] == "Derivatives"
         assert data["target"] == "Calculus"
         assert data["type"] == "RELATED_TO"
-        assert data["reason"] == "shared foundation"
+        assert data["reason"] == "shared_document"
 
     def test_shared_document_ids_only_include_overlap(self):
         _ingest_document(

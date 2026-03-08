@@ -16,6 +16,21 @@ from tests.conftest import (
 
 client = TestClient(app)
 
+def test_initializes_kuzu_engine_on_startup(monkeypatch):
+    calls = []
+
+    def fake_get_kuzu_engine():
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr("backend.api.get_kuzu_engine", fake_get_kuzu_engine)
+
+    with TestClient(app):
+        pass
+
+    assert len(calls) == 1
+
+
 
 @pytest.fixture(autouse=True)
 def isolate_api_data(monkeypatch, lance_path, kuzu_path):
@@ -101,3 +116,4 @@ class TestLlmTestEndpoint:
     def test_llm_test_route_requires_question(self):
         response = client.post("/query/test-llm", json={})
         assert response.status_code == 422
+

@@ -32,7 +32,17 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | concepts | STRING[]          | Concepts mentioned in this chunk         |
 | vector   | FLOAT32[384]      | Embedding vector                         |
 
-LanceDB is the sole source of document identity and the concept→document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph.
+LanceDB is the sole source of document identity and the concept-to-document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph.
+
+### LanceDB: `document_centroids` table
+
+| Column          | Type         | Description                                     |
+|-----------------|--------------|-------------------------------------------------|
+| doc_id          | STRING       | Parent document ID                              |
+| doc_name        | STRING       | Human-readable document title                   |
+| centroid_vector | FLOAT32[384] | Mean embedding vector across all document chunks |
+
+`backend/services/embeddings.py` computes this centroid by averaging all chunk `vector` values that share the same `doc_id`.
 
 ### Kuzu: Graph Schema
 
@@ -43,13 +53,13 @@ LanceDB is the sole source of document identity and the concept→document link.
 - `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Relationship Tables:**
-- `RELATED_TO(Concept -> Concept, reason STRING)` - semantic relationships between concepts
+- `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE)` - shared-document relationship with accumulated frequency weight
 - `APPLIED_TO_PROJECT(Concept -> Project)` - concept is applied in a project
 - `GENERATED_TASK(Concept -> Task)` - concept generated a task
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. When the current Kuzu Python binding reports a same-path concurrent-open failure as `IndexError: unordered_map::at: key not found`, `backend/db/kuzu.py` now translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
+Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.), `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend now opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -97,10 +107,10 @@ backend/
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
-    lance.py                - LanceDB init + chunks table schema + duplicate document lookup
+    lance.py                - LanceDB init + chunks/document_centroids schemas + duplicate document lookup
     kuzu.py                 - Kuzu init + graph schema (nodes + edges) + clear concurrent-open error translation
   services/
-    embeddings.py           - Sentence-transformer embedding functions
+    embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
@@ -240,10 +250,16 @@ embeddings.embed_texts() -- sentence-transformers -> 384-dim vectors
 LanceDB.add() -- store chunks with doc_name, concepts[], and vectors
   |              concepts field is the doc<->concept bridge (no Kuzu Document node)
   v
+embeddings.calculate_document_centroid() -- average chunk vectors for this doc_id
+  |
+  v
+LanceDB.add() -- store centroid row in document_centroids
+  |
+  v
 Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
-Kuzu CREATE -- RELATED_TO edges (concept->concept with reason)
+Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
 ```
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
@@ -322,7 +338,7 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
 - Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
-- Returns: `{"nodes": [{"id", "type", "name"}], "edges": [{"source", "target", "type"}]}`
+- Returns: `{"nodes": [{"id", "type", "name", "colorScore"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
 - Full graph for frontend 3D visualization
 
 ### `GET /api/concepts`
@@ -379,3 +395,7 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
+
+
+
+

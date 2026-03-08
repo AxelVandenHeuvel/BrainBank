@@ -12,6 +12,7 @@ class GraphEdgeResponse(BaseModel):
     target: str
     type: str
     reason: str | None = None
+    weight: float | None = None
 
 
 class RelationshipDetailsResponse(BaseModel):

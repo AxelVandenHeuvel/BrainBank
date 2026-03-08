@@ -41,17 +41,18 @@ def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse
 
 def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
     result = conn.execute(
-        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
+        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight"
     )
     edges = []
     while result.has_next():
-        source, target, reason = result.get_next()
+        source, target, reason, weight = result.get_next()
         edges.append(
             GraphEdgeResponse(
                 source=f"concept:{source}",
                 target=f"concept:{target}",
                 type="RELATED_TO",
                 reason=reason,
+                weight=weight,
             )
         )
 
