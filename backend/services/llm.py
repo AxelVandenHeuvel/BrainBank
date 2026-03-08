@@ -2,7 +2,10 @@ import json
 import os
 from urllib.request import Request, urlopen
 
+from dotenv import load_dotenv
 from google import genai
+
+load_dotenv()
 
 _client = None
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
@@ -69,7 +72,7 @@ def extract_concepts(text: str, doc_name: str) -> dict:
         '"relationship": "related_to"}]}'
     )
     response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return _parse_json_response(response.text)
 
@@ -105,7 +108,7 @@ def extract_knowledge(text: str, doc_name: str) -> dict:
         "}"
     )
     response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return _parse_json_response(response.text)
 
@@ -120,24 +123,6 @@ def generate_answer(query: str, context: str, concepts: list[str]) -> str:
         "Provide a grounded answer based only on the context provided."
     )
     response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
-    )
-    return response.text
-
-
-def generate_test_answer(question: str) -> str:
-    """Return a direct model response without any retrieval context."""
-    prompt = (
-        "You are a test route for BrainBank.\n"
-        "Answer the user's question directly and briefly.\n\n"
-        f"Question: {question}"
-    )
-
-    if _get_test_llm_provider() == "ollama":
-        return _generate_ollama_response(question)
-
-    client = _get_client()
-    response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return response.text
