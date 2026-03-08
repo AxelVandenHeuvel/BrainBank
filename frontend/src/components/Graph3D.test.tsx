@@ -273,7 +273,7 @@ describe('Graph3D', () => {
     }).enableNavigationControls).toBe(false);
   });
 
-  it('renders the brain shell with a lighter wireframe opacity', async () => {
+  it('renders the brain shell with a light pink wireframe color and opacity', async () => {
     render(
       <Graph3D
         data={graph}
@@ -296,9 +296,11 @@ describe('Graph3D', () => {
     });
 
     expect(brainMaterials).not.toHaveLength(0);
+    const expectedBrainColor = new THREE.Color('#ec4899').lerp(new THREE.Color('#ffffff'), 0.4);
     brainMaterials.forEach((material) => {
       expect(material.transparent).toBe(true);
       expect(material.opacity).toBeCloseTo(0.06, 6);
+      expect(material.color.getHex()).toBe(expectedBrainColor.getHex());
     });
   });
 

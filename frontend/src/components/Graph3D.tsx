@@ -135,6 +135,10 @@ const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 500;
+const PAGE_ACCENT_PINK = '#ec4899';
+const BRAIN_MESH_COLOR = new THREE.Color(PAGE_ACCENT_PINK)
+  .lerp(new THREE.Color('#ffffff'), 0.4)
+  .getHex();
 const BRAIN_MESH_BASE_OPACITY = 0.06;
 const BRAIN_MESH_TOGGLE_FADE_DURATION_MS = 200;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
@@ -1232,7 +1236,7 @@ export function Graph3D({
       brainGroup.traverse((node) => {
         if (node instanceof THREE.Mesh) {
           const material = new THREE.MeshBasicMaterial({
-            color: '#7dd3fc',
+            color: BRAIN_MESH_COLOR,
             wireframe: true,
             transparent: true,
             opacity: BRAIN_MESH_BASE_OPACITY,
