@@ -62,8 +62,8 @@ def get_concepts():
         concepts.append(
             {"name": name, "document_count": doc_count, "related_concepts": related}
         )
-
-        return {"concepts": concepts}
+    print("Finished get_concepts, leaving connection open to avoid write locks")
+    return {"concepts": concepts}
 
 
 @graph_router.get("/documents")
