@@ -135,6 +135,12 @@ const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 500;
+const PAGE_ACCENT_PINK = '#ec4899';
+const BRAIN_MESH_COLOR = new THREE.Color(PAGE_ACCENT_PINK)
+  .lerp(new THREE.Color('#ffffff'), 0.4)
+  .getHex();
+const BRAIN_MESH_BASE_OPACITY = 0.06;
+const BRAIN_MESH_TOGGLE_FADE_DURATION_MS = 200;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
 const EXPANDED_DOC_RADIUS = 30;
 const EXPANDED_VIEW_DISTANCE = 78;
@@ -245,6 +251,25 @@ function createNodeMaterial(nodeColor: THREE.Color): THREE.MeshStandardMaterial 
   });
 }
 
+function getBrainMeshMaterials(brain: THREE.Object3D): THREE.MeshBasicMaterial[] {
+  const materials: THREE.MeshBasicMaterial[] = [];
+
+  brain.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) {
+      return;
+    }
+
+    const childMaterials = Array.isArray(node.material) ? node.material : [node.material];
+    childMaterials.forEach((material) => {
+      if (material instanceof THREE.MeshBasicMaterial) {
+        materials.push(material);
+      }
+    });
+  });
+
+  return materials;
+}
+
 export function Graph3D({
   data,
   source: graphSource,
@@ -275,6 +300,7 @@ export function Graph3D({
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const cameraAnimationRef = useRef<number | null>(null);
+  const brainMeshAnimationRef = useRef<number | null>(null);
   const simulationSettledRef = useRef(false);
   const pinnedPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
   const lastSearchTargetIdRef = useRef<string | null>(null);
@@ -300,6 +326,11 @@ export function Graph3D({
   const diveStartTimeRef = useRef<number | null>(null);
   const [isDiving, setIsDiving] = useState(false);
   const [showBrainMesh, setShowBrainMesh] = useState(true);
+  const showBrainMeshRef = useRef(showBrainMesh);
+
+  useEffect(() => {
+    showBrainMeshRef.current = showBrainMesh;
+  }, [showBrainMesh]);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -1191,13 +1222,15 @@ export function Graph3D({
 
       brainGroup.traverse((node) => {
         if (node instanceof THREE.Mesh) {
-          node.material = new THREE.MeshBasicMaterial({
-            color: '#7dd3fc',
+          const material = new THREE.MeshBasicMaterial({
+            color: BRAIN_MESH_COLOR,
             wireframe: true,
             transparent: true,
-            opacity: 0.06,
+            opacity: BRAIN_MESH_BASE_OPACITY,
             side: THREE.DoubleSide,
           });
+          material.userData.baseOpacity = BRAIN_MESH_BASE_OPACITY;
+          node.material = material;
         }
       });
 
@@ -1225,6 +1258,11 @@ export function Graph3D({
       });
 
       brainGroupRef.current = brainGroup;
+      const meshVisible = showBrainMeshRef.current;
+      brainGroup.visible = meshVisible;
+      getBrainMeshMaterials(brainGroup).forEach((material) => {
+        material.opacity = meshVisible ? (material.userData.baseOpacity ?? BRAIN_MESH_BASE_OPACITY) : 0;
+      });
       scene.add(brainGroup);
       // Reset settled flag so the reheated simulation runs clamping in onEngineTick
       simulationSettledRef.current = false;
@@ -1262,56 +1300,113 @@ export function Graph3D({
   // Fade + hide brain wireframe during dive and when in expanded concept view
   useEffect(() => {
     const brain = brainGroupRef.current;
-    if (!brain) return;
-
-    if (!isDiving && expandedConcept === null) {
-      brain.visible = showBrainMesh;
-      // Restore each material to its original opacity (captured at dive start)
-      brain.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          const mat = child.material;
-          if (mat.userData.originalOpacity != null) {
-            mat.opacity = mat.userData.originalOpacity;
-          }
-        }
-      });
+    if (!brain) {
       return;
     }
 
-    if (expandedConcept !== null && !isDiving) {
-      brain.visible = false;
+    const brainMaterials = getBrainMeshMaterials(brain);
+    if (brainMaterials.length === 0) {
       return;
     }
 
-    // Capture original opacities before fading
-    brain.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.material) {
-        const mat = child.material;
-        if (mat.userData.originalOpacity == null) {
-          mat.userData.originalOpacity = mat.opacity;
-        }
-      }
-    });
-
-    // During dive: fade out over the zoom-in duration
-    let frameId: number;
-    const animateBrainFade = () => {
-      const now = performance.now();
-      const start = diveStartTimeRef.current ?? now;
-      const progress = Math.min((now - start) / DIVE_ZOOM_IN_DURATION_MS, 1);
-      brain.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          const mat = child.material;
-          const base = mat.userData.originalOpacity ?? mat.opacity;
-          mat.opacity = base * (1 - progress);
-        }
-      });
-      if (progress < 1) {
-        frameId = requestAnimationFrame(animateBrainFade);
+    const stopBrainMeshAnimation = () => {
+      if (brainMeshAnimationRef.current !== null) {
+        cancelAnimationFrame(brainMeshAnimationRef.current);
+        brainMeshAnimationRef.current = null;
       }
     };
-    frameId = requestAnimationFrame(animateBrainFade);
-    return () => cancelAnimationFrame(frameId);
+
+    const setBrainOpacity = (opacity: number) => {
+      brainMaterials.forEach((material) => {
+        material.opacity = opacity;
+      });
+    };
+
+    if (expandedConcept !== null && !isDiving) {
+      stopBrainMeshAnimation();
+      setBrainOpacity(0);
+      brain.visible = false;
+      return stopBrainMeshAnimation;
+    }
+
+    if (isDiving) {
+      stopBrainMeshAnimation();
+      const start = diveStartTimeRef.current ?? performance.now();
+      const materialStates = brainMaterials.map((material) => ({
+        material,
+        baseOpacity: showBrainMesh
+          ? Number(material.userData.baseOpacity ?? BRAIN_MESH_BASE_OPACITY)
+          : 0,
+      }));
+
+      brain.visible = showBrainMesh;
+
+      const animateBrainFade = () => {
+        const now = performance.now();
+        const progress = Math.min((now - start) / DIVE_ZOOM_IN_DURATION_MS, 1);
+
+        materialStates.forEach(({ material, baseOpacity }) => {
+          material.opacity = baseOpacity * (1 - progress);
+        });
+        brain.visible = materialStates.some(({ material }) => material.opacity > 0.001);
+
+        if (progress < 1) {
+          brainMeshAnimationRef.current = requestAnimationFrame(animateBrainFade);
+        } else {
+          brainMeshAnimationRef.current = null;
+        }
+      };
+
+      brainMeshAnimationRef.current = requestAnimationFrame(animateBrainFade);
+      return stopBrainMeshAnimation;
+    }
+
+    const materialStates = brainMaterials.map((material) => ({
+      material,
+      startOpacity: material.opacity,
+      targetOpacity: showBrainMesh
+        ? Number(material.userData.baseOpacity ?? BRAIN_MESH_BASE_OPACITY)
+        : 0,
+    }));
+    const hasOpacityChange = materialStates.some(
+      ({ startOpacity, targetOpacity }) => Math.abs(startOpacity - targetOpacity) > 0.001,
+    );
+
+    stopBrainMeshAnimation();
+
+    if (showBrainMesh) {
+      brain.visible = true;
+    }
+
+    if (!hasOpacityChange) {
+      materialStates.forEach(({ material, targetOpacity }) => {
+        material.opacity = targetOpacity;
+      });
+      brain.visible = showBrainMesh;
+      return stopBrainMeshAnimation;
+    }
+
+    const startTime = performance.now();
+
+    const animateBrainToggle = () => {
+      const now = performance.now();
+      const progress = Math.min((now - startTime) / BRAIN_MESH_TOGGLE_FADE_DURATION_MS, 1);
+
+      materialStates.forEach(({ material, startOpacity, targetOpacity }) => {
+        material.opacity = startOpacity + (targetOpacity - startOpacity) * progress;
+      });
+      brain.visible = showBrainMesh || materialStates.some(({ material }) => material.opacity > 0.001);
+
+      if (progress < 1) {
+        brainMeshAnimationRef.current = requestAnimationFrame(animateBrainToggle);
+      } else {
+        brain.visible = showBrainMesh;
+        brainMeshAnimationRef.current = null;
+      }
+    };
+
+    brainMeshAnimationRef.current = requestAnimationFrame(animateBrainToggle);
+    return stopBrainMeshAnimation;
   }, [expandedConcept, isDiving, showBrainMesh]);
 
   useEffect(() => {

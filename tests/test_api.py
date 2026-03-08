@@ -96,6 +96,50 @@ class TestQueryEndpoint:
         assert "discovery_chunks" in data
         assert "supporting_relationships" in data
 
+    @patch("backend.retrieval.query.generate_partial_answer", return_value="Partial answer")
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_query_global_prompt_includes_documents(
+        self,
+        _mock_ext,
+        _mock_emb_t,
+        _mock_emb_q,
+        _mock_partial,
+        lance_path,
+    ):
+        client.post(
+            "/ingest",
+            json={"text": "Calculus is about derivatives.", "title": "Math"},
+        )
+        db, _table = real_init_lancedb(lance_path)
+        summaries = db.open_table("community_summaries")
+        summaries.add(
+            [
+                {
+                    "community_id": "community:0001",
+                    "member_concepts": ["Calculus", "Derivatives"],
+                    "summary": "Calculus and derivatives appear together.",
+                    "summary_vector": mock_embed_query("Calculus and derivatives"),
+                }
+            ]
+        )
+
+        response = client.post(
+            "/query",
+            json={"question": "Give me a high level summary of calculus"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["answer"] == "Partial answer"
+        assert len(data["source_documents"]) == 1
+        assert data["source_documents"][0]["name"] == "Math"
+        assert data["discovery_documents"] == []
+        assert data["source_chunks"] == []
+        assert data["discovery_chunks"] == []
+        assert data["supporting_relationships"] == []
+
     def test_query_missing_fields(self):
         response = client.post("/query", json={})
         assert response.status_code == 422

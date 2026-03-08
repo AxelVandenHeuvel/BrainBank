@@ -90,13 +90,14 @@ describe('ChatPanel', () => {
     expect(screen.getByText('You are building BrainBank.')).toBeInTheDocument();
     expect(screen.getByText('Source concepts')).toBeInTheDocument();
     expect(screen.getByText('Discovery concepts')).toBeInTheDocument();
-    expect(screen.getByText('Source documents')).toBeInTheDocument();
-    expect(screen.getByText('Discovery documents')).toBeInTheDocument();
+    expect(screen.getByText('Linked documents')).toBeInTheDocument();
+    expect(screen.getByText('Source:')).toBeInTheDocument();
+    expect(screen.getByText('Discovery:')).toBeInTheDocument();
     expect(screen.getByText('Supporting relationships')).toBeInTheDocument();
     expect(screen.getByText('Evidence excerpts')).toBeInTheDocument();
     expect(screen.getAllByText('BrainBank')).toHaveLength(2);
     expect(screen.getByText('Knowledge Graph')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Architecture Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Architecture Notes' })).toBeInTheDocument();
     expect(screen.getByText('BrainBank connects notes into a graph.')).toBeInTheDocument();
     expect(screen.getByText('BrainBank -> Knowledge Graph')).toBeInTheDocument();
     expect(screen.queryByText('GraphRAG')).not.toBeInTheDocument();
@@ -208,7 +209,7 @@ describe('ChatPanel', () => {
 
     render(<ChatPanel graphSource="api" onOpenDocument={openDocument} />);
 
-    await user.click(screen.getByRole('button', { name: 'Architecture Notes' }));
+    await user.click(screen.getByRole('link', { name: 'Architecture Notes' }));
 
     expect(openDocument).toHaveBeenCalledWith('doc-1', 'Architecture Notes');
   });
