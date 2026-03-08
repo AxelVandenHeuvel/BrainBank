@@ -83,7 +83,7 @@ class TestQueryBrainbank:
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
     def test_accepts_internal_retrieval_config(self, _mock_emb, _mock_llm, lance_path, kuzu_path):
         self._ingest_sample(lance_path, kuzu_path)
-        config = RetrievalConfig(max_graph_hops=2, max_discovery_chunks=3)
+        config = RetrievalConfig(max_graph_hops=2, latent_doc_chunk_limit=1)
 
         result = query_brainbank(
             "What is calculus?",
