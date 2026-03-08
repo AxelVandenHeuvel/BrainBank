@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Ingest now includes concept consolidation: extraction receives top canonical concept hints, semantically equivalent mentions are mapped onto canonical names, and low-density concepts can be merged into broader neighbors to keep concept density in a healthy range. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Ingest now includes concept consolidation: extraction receives top canonical concept hints, semantically equivalent mentions are mapped onto canonical names, low-density concepts can be merged into broader neighbors, and a strict orphan pass can force-merge sparse concepts into a parent candidate set. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
 
 ## Stack
 
@@ -19,7 +19,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
 | Graph Analytics | NetworkX           | Batch Louvain community detection |
 | Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
-| LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
+| LLM         | Gemini 2.5 Flash + Gemini 3.1 Flash-Lite + Ollama | Gemini extraction/forced orphan merge decisions + grounded answers |
 
 ## Data Model
 
@@ -144,7 +144,7 @@ backend/
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
-    llm.py                  - BrainBank prompt workflows and JSON parsing for extraction/answering
+    llm.py                  - BrainBank prompt workflows + JSON parsing + provider-agnostic 429 backoff/retry handling
     llm_providers.py        - Provider registry plus Gemini/Ollama transport adapters
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
@@ -152,7 +152,7 @@ backend/
     heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
-    consolidator.py         - Canonical concept mapping + density-control merges (<3 docs merge candidates, >10 docs flagged)
+    consolidator.py         - Canonical concept mapping + density-control merges with threshold gates, batched LLM decisions, and forced orphan reaper merges
     processor.py            - Ingest pipeline: chunk -> embed -> hinted extract -> canonicalize -> store -> consolidate
   session/
     memory.py               - In-memory session store with bounded turn window and TTL
@@ -173,7 +173,7 @@ scripts/
   print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
   seed_mock_demo_data.py     - Seeds the hackathon demo corpus into local databases
-  rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup, then recomputes concept centroids and community summaries
+  rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup → heal_graph (semantic bridges) → forced orphan reaper → recomputes concept centroids and community summaries
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
@@ -363,12 +363,12 @@ Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
 Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
   |
   v
-ingestion.consolidator.consolidate_graph() -- merge under-populated concepts (<3 docs) into broader neighbors when LLM confirms subsumption
+ingestion.consolidator.consolidate_graph() -- AUTO-MERGE if similarity > 0.92, SKIP if < 0.75, else send batched merge decisions to LLM
 ```
 
 Note: Per-ingest Leiden clustering has been removed. Community detection now runs only via batch rebuild (`scripts/rebuild_graphrag_artifacts.py`) or the `/api/recluster` endpoint.
 
-Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks. Consolidation keeps concept density targeted around 3-10 documents per concept by attempting merges for sparse concepts and logging rename/merge counts during ingest.
+Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu and document identity/concept tagging live entirely in LanceDB chunks. Consolidation keeps concept density targeted around 3-10 documents per concept by attempting merges for sparse concepts and logging rename/merge counts during ingest. The API also runs a strict orphan reaper pass (`force_consolidate_orphans`) every 5th manual `POST /ingest` call.
 
 ## GraphRAG Artifact Rebuild Flow
 
@@ -377,6 +377,12 @@ Input: current LanceDB chunks + current Kuzu weighted concept graph
   |
   v
 scripts.rebuild_graphrag_artifacts.run_consolidation_cleanup() -- run density-control merges over existing graph/chunk metadata
+  |
+  v
+scripts.heal_graph.heal_graph() -- add SEMANTIC_BRIDGE edges between similar but disconnected concepts
+  |
+  v
+scripts.rebuild_graphrag_artifacts.run_force_orphan_cleanup() -- strict orphan pass: force concepts with <3 docs into top-1 vector neighbor (LLM decision, fallback to nearest if LLM fails)
   |
   v
 retrieval.artifacts._build_concept_centroid_records() -- average chunk vectors per canonical concept
@@ -403,7 +409,7 @@ embeddings.embed_texts() -- embed each summary
 LanceDB replace community_summaries -- persist community summaries for global GraphRAG
 ```
 
-This rebuild remains batch-oriented. The script now starts with a consolidation cleanup pass (density-control merges across existing data), then refreshes `concept_centroids` and `community_summaries` from the healed graph/chunk state.
+This rebuild is batch-oriented and runs in order: density-control merges → semantic bridge healing → forced orphan reaper (with LLM decision + vector-neighbor fallback) → concept centroids → community summaries.
 
 ## Notion Import Flow (`POST /ingest/notion`)
 
@@ -509,6 +515,7 @@ If LanceDB has zero ingested chunks, `/query` returns a specific empty-database 
 ### `POST /ingest`
 - Body: `{"text": "...", "title": "..."}`
 - Returns: `{"doc_id": "...", "chunks": N, "concepts": [...]}`
+- Every 5th manual ingest request triggers `force_consolidate_orphans` after ingest completes, using the shared Kuzu engine and a fresh short-lived connection.
 
 ### `POST /ingest/demo/mock`
 - Body: empty
@@ -605,4 +612,7 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
+
+
+
 

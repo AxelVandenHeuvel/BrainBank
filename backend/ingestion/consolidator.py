@@ -7,12 +7,17 @@ import kuzu as _kuzu
 
 from backend.db.kuzu import merge_concepts
 from backend.services.embeddings import embed_texts
-from backend.services.llm_providers import get_provider
+from backend.services.llm import generate_text_with_backoff
 
 CANONICAL_SIMILARITY_THRESHOLD = 0.85
 UNDER_POPULATED_MIN_DOCS = 3
 OVER_POPULATED_MAX_DOCS = 10
 NEAREST_CONCEPT_CANDIDATES = 3
+AUTO_MERGE_SIMILARITY_THRESHOLD = 0.92
+LLM_DECISION_MIN_SIMILARITY = 0.75
+LLM_BATCH_SIZE = 5
+FORCED_ORPHAN_NEAREST_CANDIDATES = 5
+FORCED_ORPHAN_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +62,33 @@ def _escape_lance_literal(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _replace_concept_in_chunks(chunks_table, source_name: str, target_name: str) -> int:
+    """Replace source_name with target_name in every chunk's concepts array.
+
+    Uses LanceDB's native ``update`` with ``array_replace`` so that the
+    operation is atomic and does not depend on chunk_id string-escaping.
+    Returns the number of rows updated.
+    """
+    if source_name == target_name:
+        return 0
+
+    escaped_source = source_name.replace("'", "''")
+    escaped_target = target_name.replace("'", "''")
+
+    try:
+        result = chunks_table.update(
+            where=f"list_contains(concepts, '{escaped_source}')",
+            values_sql={"concepts": f"array_replace(concepts, '{escaped_source}', '{escaped_target}')"},
+        )
+        return result.rows_updated
+    except Exception:
+        return 0
+
+
+def _batched(items: list[dict], size: int) -> list[list[dict]]:
+    return [items[index:index + size] for index in range(0, len(items), size)]
+
+
 class ConceptConsolidator:
     def __init__(
         self,
@@ -93,6 +125,7 @@ class ConceptConsolidator:
     def consolidate_graph(self, conn: _kuzu.Connection) -> dict[str, int]:
         concept_centroids = self._load_concept_centroids()
         document_counts = self._concept_document_counts()
+        concept_frequencies = self._concept_frequency_hints(document_counts)
 
         under_populated = sorted(
             concept
@@ -106,35 +139,117 @@ class ConceptConsolidator:
         )
 
         merged_count = 0
+        auto_merged_count = 0
+        llm_merged_count = 0
+        skipped_low_similarity_count = 0
+        llm_candidates: list[dict] = []
+
         for source_name in under_populated:
-            nearest = self._nearest_concepts(
+            nearest = self._nearest_concepts_with_scores(
                 source_name,
                 concept_centroids,
                 limit=NEAREST_CONCEPT_CANDIDATES,
             )
-            if not nearest:
+            broader_candidates = [
+                (target_name, similarity)
+                for target_name, similarity in nearest
+                if concept_frequencies.get(target_name, 0) >= UNDER_POPULATED_MIN_DOCS
+            ]
+            if not broader_candidates:
                 continue
 
-            target_name = self._select_merge_target_with_llm(source_name, nearest)
-            if not target_name or target_name == source_name:
+            top_target, top_similarity = broader_candidates[0]
+            if top_similarity > AUTO_MERGE_SIMILARITY_THRESHOLD:
+                if self._apply_merge(conn, source_name, top_target):
+                    merged_count += 1
+                    auto_merged_count += 1
                 continue
 
-            self._replace_concept_in_chunk_metadata(source_name, target_name)
-            merge_concepts(conn, source_name, target_name)
-            merged_count += 1
+            if top_similarity < LLM_DECISION_MIN_SIMILARITY:
+                skipped_low_similarity_count += 1
+                continue
+
+            llm_candidates.append(
+                {
+                    "source": source_name,
+                    "candidates": broader_candidates,
+                }
+            )
+
+        for batch in _batched(llm_candidates, LLM_BATCH_SIZE):
+            decisions = self._decide_merges_batch(batch)
+            for candidate in batch:
+                source_name = candidate["source"]
+                target_name = decisions.get(source_name)
+                if not target_name:
+                    continue
+                if self._apply_merge(conn, source_name, target_name):
+                    merged_count += 1
+                    llm_merged_count += 1
 
         summary = {
             "merged_count": merged_count,
             "renamed_count": self.last_renamed_count,
             "under_populated_count": len(under_populated),
             "over_populated_count": len(over_populated),
+            "auto_merged_count": auto_merged_count,
+            "llm_merged_count": llm_merged_count,
+            "skipped_low_similarity_count": skipped_low_similarity_count,
+            "llm_candidate_count": len(llm_candidates),
         }
         logger.info(
-            "Concept consolidation summary: merged=%d renamed=%d under_populated=%d over_populated=%d",
+            "Concept consolidation summary: merged=%d renamed=%d under_populated=%d over_populated=%d auto=%d llm=%d skipped_low=%d llm_candidates=%d",
             summary["merged_count"],
             summary["renamed_count"],
             summary["under_populated_count"],
             summary["over_populated_count"],
+            summary["auto_merged_count"],
+            summary["llm_merged_count"],
+            summary["skipped_low_similarity_count"],
+            summary["llm_candidate_count"],
+        )
+        return summary
+
+    def force_consolidate_orphans(self, conn: _kuzu.Connection) -> dict[str, int]:
+        concept_centroids = self._load_concept_centroids()
+        document_counts = self._concept_document_counts()
+        orphans = sorted(
+            concept_name
+            for concept_name, count in document_counts.items()
+            if 0 < count < UNDER_POPULATED_MIN_DOCS
+        )
+
+        forced_merges = 0
+        llm_calls = 0
+
+        for orphan_name in orphans:
+            nearest = self._nearest_concepts_with_scores(
+                orphan_name,
+                concept_centroids,
+                limit=FORCED_ORPHAN_NEAREST_CANDIDATES,
+            )
+            candidates = [name for name, _score in nearest][:FORCED_ORPHAN_NEAREST_CANDIDATES]
+            if not candidates:
+                continue
+
+            llm_calls += 1
+            chosen_parent = self._decide_forced_orphan_parent(orphan_name, candidates)
+            if not chosen_parent:
+                chosen_parent = candidates[0]
+
+            if self._apply_merge(conn, orphan_name, chosen_parent):
+                forced_merges += 1
+
+        summary = {
+            "orphans_seen": len(orphans),
+            "llm_calls": llm_calls,
+            "forced_merges": forced_merges,
+        }
+        logger.info(
+            "Forced orphan consolidation summary: orphans_seen=%d llm_calls=%d forced_merges=%d",
+            summary["orphans_seen"],
+            summary["llm_calls"],
+            summary["forced_merges"],
         )
         return summary
 
@@ -226,12 +341,27 @@ class ConceptConsolidator:
             for concept_name, doc_ids in concepts_to_docs.items()
         }
 
-    def _nearest_concepts(
+    def _concept_frequency_hints(self, fallback_counts: dict[str, int]) -> dict[str, int]:
+        try:
+            df = self.concept_centroids_table.to_pandas()
+        except Exception:
+            return dict(fallback_counts)
+
+        if df.empty or "document_count" not in df.columns:
+            return dict(fallback_counts)
+
+        frequencies: dict[str, int] = dict(fallback_counts)
+        for row in df.itertuples(index=False):
+            concept_name = str(row.concept_name)
+            frequencies[concept_name] = int(row.document_count)
+        return frequencies
+
+    def _nearest_concepts_with_scores(
         self,
         concept_name: str,
         centroids: dict[str, list[float]],
         limit: int,
-    ) -> list[str]:
+    ) -> list[tuple[str, float]]:
         source_vector = centroids.get(concept_name)
         if source_vector is None:
             source_vector = self._compute_source_centroid_from_chunks(concept_name)
@@ -246,7 +376,7 @@ class ConceptConsolidator:
             scored.append((candidate_name, similarity))
 
         scored.sort(key=lambda item: (-item[1], item[0]))
-        return [name for name, _score in scored[:limit]]
+        return scored[:limit]
 
     def _compute_source_centroid_from_chunks(self, concept_name: str) -> list[float] | None:
         try:
@@ -275,34 +405,107 @@ class ConceptConsolidator:
         count = float(len(vectors))
         return [value / count for value in totals]
 
-    def _select_merge_target_with_llm(self, source_name: str, candidates: list[str]) -> str | None:
-        prompt = (
-            "You are consolidating concept names for a graph.\n"
-            "Pick one broader canonical concept from the candidates if the source should be merged.\n"
-            "If no merge should happen, return NONE.\n\n"
-            f"Source concept: {source_name}\n"
-            f"Candidates: {', '.join(candidates)}\n\n"
-            "Respond ONLY as JSON with shape {\"merge_into\": \"candidate name or NONE\"}."
+    def _build_batch_merge_prompt(self, candidates: list[dict]) -> str:
+        candidate_payload = []
+        for candidate in candidates:
+            candidate_payload.append(
+                {
+                    "source": candidate["source"],
+                    "candidates": [
+                        {
+                            "name": target_name,
+                            "similarity": round(float(similarity), 4),
+                        }
+                        for target_name, similarity in candidate["candidates"]
+                    ],
+                }
+            )
+
+        return (
+            "You are consolidating graph concepts.\n"
+            "For each source concept, decide one action: MERGE into one of the candidate names, or KEEP_NEW.\n"
+            "Here are potential merges:\n"
+            f"{json.dumps(candidate_payload)}\n\n"
+            "Respond ONLY with JSON in this exact shape:\n"
+            "{\"decisions\":[{\"source\":\"...\",\"action\":\"MERGE|KEEP_NEW\",\"merge_into\":\"candidate or NONE\"}]}"
         )
 
+    def _build_force_orphan_prompt(self, orphan_name: str, candidates: list[str]) -> str:
+        candidates_str = ", ".join([f"'{c}'" for c in candidates])
+        return (
+            f"You are a knowledge graph consolidation engine.\n"
+            f"The concept '{orphan_name}' is under-represented and must be absorbed.\n"
+            f"You MUST merge it into one of these {len(candidates)} candidates: [{candidates_str}].\n"
+            f"DO NOT explain your choice. Respond with only the chosen candidate name.\n"
+            f"If multiple candidates fit, prefer the most semantically fundamental one.\n"
+            f"Chosen Candidate Name:"
+        )
+
+    def _decide_forced_orphan_parent(self, orphan_name: str, candidates: list[str]) -> str | None:
+        prompt = self._build_force_orphan_prompt(orphan_name, candidates)
         try:
-            response_text = get_provider().generate_text(prompt)
-            data = _parse_json_response(response_text)
+            response = generate_text_with_backoff(
+                prompt,
+                provider_name="gemini",
+                gemini_model=FORCED_ORPHAN_GEMINI_MODEL,
+            )
         except Exception as error:
             logger.warning(
-                "LLM merge decision failed for %r with candidates %r: %s",
-                source_name,
-                candidates,
+                "Forced orphan merge decision failed for %s: %s",
+                orphan_name,
                 error,
             )
             return None
 
-        target_name = str(data.get("merge_into", "")).strip()
-        if not target_name or target_name.upper() == "NONE":
+        response_name = response.strip().strip('"').strip("'")
+        if not response_name:
             return None
-        if target_name not in candidates:
-            return None
-        return target_name
+
+        by_lower = {candidate.lower(): candidate for candidate in candidates}
+        return by_lower.get(response_name.lower())
+
+    def _decide_merges_batch(self, candidates: list[dict]) -> dict[str, str]:
+        if not candidates:
+            return {}
+
+        prompt = self._build_batch_merge_prompt(candidates)
+
+        try:
+            response_text = generate_text_with_backoff(prompt)
+            data = _parse_json_response(response_text)
+        except Exception as error:
+            logger.warning("LLM batch merge decision failed: %s", error)
+            return {}
+
+        allowed_targets: dict[str, set[str]] = {
+            candidate["source"]: {name for name, _score in candidate["candidates"]}
+            for candidate in candidates
+        }
+
+        decisions: dict[str, str] = {}
+        for decision in data.get("decisions", []):
+            source_name = str(decision.get("source", "")).strip()
+            action = str(decision.get("action", "")).strip().upper()
+            target_name = str(decision.get("merge_into", "")).strip()
+
+            if source_name not in allowed_targets:
+                continue
+            if action != "MERGE":
+                continue
+            if target_name not in allowed_targets[source_name]:
+                continue
+
+            decisions[source_name] = target_name
+
+        return decisions
+
+    def _apply_merge(self, conn: _kuzu.Connection, source_name: str, target_name: str) -> bool:
+        if not source_name or not target_name or source_name == target_name:
+            return False
+
+        _replace_concept_in_chunks(self.chunks_table, source_name, target_name)
+        merge_concepts(conn, source_name, target_name)
+        return True
 
     def _replace_concept_in_chunk_metadata(self, source_name: str, target_name: str) -> int:
         if source_name == target_name:
