@@ -182,6 +182,7 @@ export function Graph3D({
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
   const [hasFocusedRotationPivot, setHasFocusedRotationPivot] = useState(false);
+  const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = data;
@@ -202,6 +203,11 @@ export function Graph3D({
     return nodeId.slice('concept:'.length);
   }
 
+  function getNodeName(nodeId: string): string {
+    const node = displayData.nodes.find((candidate) => candidate.id === nodeId);
+    return node?.name ?? nodeId;
+  }
+
   function isSelectedLink(link: GraphLink): boolean {
     if (!selectedEdge) {
       return false;
@@ -211,6 +217,17 @@ export function Graph3D({
     const target = typeof link.target === 'string' ? link.target : link.target.id;
 
     return source === selectedEdge.sourceId && target === selectedEdge.targetId;
+  }
+
+  function isFocusedNodeLink(link: GraphLink): boolean {
+    if (!focusedEdgeNodeId) {
+      return false;
+    }
+
+    const source = typeof link.source === 'string' ? link.source : link.source.id;
+    const target = typeof link.target === 'string' ? link.target : link.target.id;
+
+    return source === focusedEdgeNodeId || target === focusedEdgeNodeId;
   }
 
   function clearSelectedEdge() {
@@ -369,6 +386,7 @@ export function Graph3D({
   function setRotationPivotNode(nodeId: string | null) {
     activeRotationNodeIdRef.current = nodeId;
     setHasFocusedRotationPivot(nodeId !== null);
+    setFocusedEdgeNodeId(nodeId);
   }
 
   function toWorldPoint(point: { x: number; y: number; z: number }) {
@@ -640,18 +658,12 @@ export function Graph3D({
   }
 
   async function handleLinkClick(link: GraphLink) {
-    if (link.type !== 'RELATED_TO') {
-      return;
-    }
-
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
     const targetId = typeof link.target === 'string' ? link.target : link.target.id;
     const sourceConcept = getConceptName(sourceId);
     const targetConcept = getConceptName(targetId);
-
-    if (!sourceConcept || !targetConcept) {
-      return;
-    }
+    const sourceName = getNodeName(sourceId);
+    const targetName = getNodeName(targetId);
 
     const mockDetailsKey = `${sourceId}->${targetId}`;
     const mockDetails = mockRelationshipDetailsByEdge[mockDetailsKey];
@@ -662,22 +674,32 @@ export function Graph3D({
       reason: link.reason ?? '',
     });
     setRelationshipDetails({
-      source: sourceConcept,
-      target: targetConcept,
-      type: 'RELATED_TO',
-      reason: link.reason ?? 'Related concepts',
+      source: sourceName,
+      target: targetName,
+      type: link.type,
+      reason: link.reason ?? `${link.type} connection`,
       source_documents: [],
       target_documents: [],
       shared_document_ids: [],
     });
     setRelationshipError(null);
-    setIsRelationshipLoading(true);
+    setIsRelationshipLoading(link.type === 'RELATED_TO');
+
+    if (link.type !== 'RELATED_TO') {
+      return;
+    }
+
+    if (!sourceConcept || !targetConcept) {
+      setRelationshipError('Relationship details are only available for concept-to-concept links.');
+      setIsRelationshipLoading(false);
+      return;
+    }
 
     if (graphSource === 'mock') {
       setRelationshipDetails(
         mockDetails ?? {
-          source: sourceConcept,
-          target: targetConcept,
+          source: sourceName,
+          target: targetName,
           type: 'RELATED_TO',
           reason: link.reason ?? 'Related concepts',
           source_documents: [],
@@ -997,6 +1019,10 @@ export function Graph3D({
       return ACTIVE_LINK_COLOR;
     }
 
+    if (focusedEdgeNodeId) {
+      return isFocusedNodeLink(link) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
+    }
+
     if (hoveredNode) {
       return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
     }
@@ -1005,11 +1031,8 @@ export function Graph3D({
   }
 
   function getLinkWidth(link: GraphLink): number {
-    if (isSelectedLink(link)) {
-      return 3.2;
-    }
-
-    return isDirectHoverLink(link, hoveredNode) ? 2.8 : 0.7;
+    void link;
+    return 0.7;
   }
 
   return (
@@ -1062,10 +1085,9 @@ export function Graph3D({
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
-        linkOpacity={0.7}
+        linkOpacity={0.82}
         nodeRelSize={5}
-        linkDirectionalParticles={hoveredNode ? 2 : 0}
-        linkDirectionalParticleWidth={2}
+        linkDirectionalParticles={0}
         cooldownTicks={120}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}

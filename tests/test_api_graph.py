@@ -282,6 +282,35 @@ class TestGetRelationshipDetails:
 
         assert response.status_code == 404
 
+    def test_returns_relationship_details_for_reverse_direction(self):
+        _ingest_document(
+            title="Reverse Direction Notes",
+            text="Calculus and Derivatives are connected.",
+            extraction={
+                "concepts": ["Calculus", "Derivatives"],
+                "relationships": [
+                    {
+                        "from": "Calculus",
+                        "to": "Derivatives",
+                        "relationship": "shared foundation",
+                    }
+                ],
+            },
+        )
+
+        response = client.get(
+            "/api/relationships/details",
+            params={"source": "Derivatives", "target": "Calculus"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["source"] == "Derivatives"
+        assert data["target"] == "Calculus"
+        assert data["type"] == "RELATED_TO"
+        assert data["reason"] == "shared foundation"
+
     def test_shared_document_ids_only_include_overlap(self):
         _ingest_document(
             title="Shared Edge Evidence",

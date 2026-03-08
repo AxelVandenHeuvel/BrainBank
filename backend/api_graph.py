@@ -80,7 +80,7 @@ def get_relationship_details(
 ):
     """Return stored evidence for one concept-to-concept relationship."""
     result = conn.execute(
-        "MATCH (a:Concept {name: $source})-[r:RELATED_TO]->(b:Concept {name: $target}) "
+        "MATCH (a:Concept {name: $source})-[r:RELATED_TO]-(b:Concept {name: $target}) "
         "RETURN r.reason",
         parameters={"source": source, "target": target},
     )

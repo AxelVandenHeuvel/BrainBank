@@ -56,7 +56,7 @@ export interface RelationshipDocument {
 export interface RelationshipDetails {
   source: string;
   target: string;
-  type: 'RELATED_TO';
+  type: string;
   reason: string;
   source_documents: RelationshipDocument[];
   target_documents: RelationshipDocument[];

@@ -138,6 +138,9 @@ function getLatestGraphProps() {
     nodeColor: (node: GraphNode) => string;
     linkColor: (link: GraphLink) => string;
     linkWidth: (link: GraphLink) => number;
+    linkOpacity: number;
+    linkDirectionalParticles: number;
+    linkDirectionalParticleWidth?: number;
     width: number;
     height: number;
     enableNavigationControls: boolean;
@@ -695,6 +698,37 @@ describe('Graph3D', () => {
     expect(props.linkHoverPrecision).toBeGreaterThanOrEqual(8);
   });
 
+  it('makes edges slightly more opaque so the click targets are easier to see', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    expect(getLatestGraphProps().linkOpacity).toBeGreaterThan(0.7);
+  });
+
+  it('renders edges as plain lines without directional particles', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+
+    expect(props.linkDirectionalParticles).toBe(0);
+    expect(props.linkDirectionalParticleWidth).toBeUndefined();
+  });
+
   it('double-clicking a node focuses it', async () => {
     render(
       <Graph3D
@@ -1061,6 +1095,67 @@ describe('Graph3D', () => {
     );
   });
 
+  it('clicking a MENTIONS edge opens the detail panel with its connection type', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+    };
+
+    await act(async () => {
+      await props.onLinkClick(graph.links[1]);
+    });
+
+    expect(screen.getByText('MENTIONS')).toBeInTheDocument();
+    expect(screen.getByText('Math Notes to Calculus')).toBeInTheDocument();
+    expect(screen.getByText('MENTIONS connection')).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('clicking a node persists highlight on its adjacent edges until focus changes', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    const focusedProps = getLatestGraphProps();
+
+    expect(focusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(focusedProps.linkColor(graph.links[1])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(focusedProps.linkWidth(graph.links[0])).toBe(0.7);
+    expect(focusedProps.linkWidth(graph.links[1])).toBe(0.7);
+
+    await act(async () => {
+      getLatestGraphProps().onNodeClick(graph.nodes[1]);
+    });
+
+    const refocusedProps = getLatestGraphProps();
+
+    expect(refocusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(refocusedProps.linkColor(graph.links[1])).toBe('rgba(51, 65, 85, 0.22)');
+    expect(refocusedProps.linkWidth(graph.links[0])).toBe(0.7);
+    expect(refocusedProps.linkWidth(graph.links[1])).toBe(0.7);
+  });
+
   it('selected edge styling takes precedence over hover styling', async () => {
     render(
       <Graph3D
@@ -1089,28 +1184,8 @@ describe('Graph3D', () => {
     };
 
     expect(selectedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
-    expect(selectedProps.linkWidth(graph.links[0])).toBeGreaterThan(selectedProps.linkWidth(graph.links[1]));
-  });
-
-  it('clicking a MENTIONS edge does not open the panel', () => {
-    render(
-      <Graph3D
-        data={graph}
-        source="api"
-        query=""
-        hoveredNode={null}
-        onHoverNode={vi.fn()}
-      />,
-    );
-
-    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
-      onLinkClick: (link: GraphLink) => Promise<void> | void;
-    };
-
-    props.onLinkClick(graph.links[1]);
-
-    expect(screen.queryByText('Derivative Rules')).not.toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(selectedProps.linkWidth(graph.links[0])).toBe(0.7);
+    expect(selectedProps.linkWidth(graph.links[1])).toBe(0.7);
   });
 
   it('closing the panel clears selected edge state', async () => {
