@@ -30,8 +30,13 @@ def _open_database(db_path: str) -> kuzu.Database:
 
 def _init_schema(conn: kuzu.Connection) -> None:
     conn.execute(
-        "CREATE NODE TABLE IF NOT EXISTS Concept(name STRING, colorScore DOUBLE, PRIMARY KEY (name))"
+        "CREATE NODE TABLE IF NOT EXISTS Concept(name STRING, colorScore DOUBLE, community_id INT64, PRIMARY KEY (name))"
     )
+    # Add community_id to existing databases that predate this column.
+    try:
+        conn.execute("ALTER TABLE Concept ADD community_id INT64 DEFAULT -1")
+    except Exception:
+        pass  # Column already present — nothing to do.
     conn.execute(
         "CREATE NODE TABLE IF NOT EXISTS Project(name STRING, status STRING, PRIMARY KEY (name))"
     )
@@ -42,8 +47,13 @@ def _init_schema(conn: kuzu.Connection) -> None:
         "CREATE NODE TABLE IF NOT EXISTS Reflection(reflection_id STRING, text STRING, PRIMARY KEY (reflection_id))"
     )
     conn.execute(
-        "CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept, reason STRING, weight DOUBLE)"
+        "CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept, reason STRING, weight DOUBLE, edge_type STRING)"
     )
+    # Add edge_type to existing databases that predate this column.
+    try:
+        conn.execute("ALTER TABLE RELATED_TO ADD edge_type STRING DEFAULT 'RELATED_TO'")
+    except Exception:
+        pass  # Column already present.
     conn.execute("CREATE REL TABLE IF NOT EXISTS APPLIED_TO_PROJECT(FROM Concept TO Project)")
     conn.execute("CREATE REL TABLE IF NOT EXISTS GENERATED_TASK(FROM Concept TO Task)")
     conn.execute("CREATE REL TABLE IF NOT EXISTS SPARKED_REFLECTION(FROM Concept TO Reflection)")
@@ -77,6 +87,15 @@ def get_db_connection():
         yield conn
     finally:
         conn.close()
+
+
+def update_node_communities(conn: kuzu.Connection, community_map: dict[str, int]) -> None:
+    """Write Leiden community IDs back to Concept nodes in bulk."""
+    for name, community_id in community_map.items():
+        conn.execute(
+            "MATCH (c:Concept {name: $name}) SET c.community_id = $community_id",
+            parameters={"name": name, "community_id": community_id},
+        )
 
 
 def init_kuzu(db_path: str = "./data/kuzu"):

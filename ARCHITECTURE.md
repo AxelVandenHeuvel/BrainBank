@@ -15,6 +15,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | API         | FastAPI                 | HTTP endpoints                   |
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
+| Clustering  | igraph + leidenalg      | Weighted Leiden community detection |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
 | Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
 | LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
@@ -47,13 +48,13 @@ LanceDB is the sole source of document identity and the concept-to-document link
 ### Kuzu: Graph Schema
 
 **Node Tables:**
-- `Concept(name STRING PRIMARY KEY)` - knowledge concepts extracted from documents
+- `Concept(name STRING, colorScore DOUBLE, community_id INT64, PRIMARY KEY(name))` - knowledge concepts; `community_id` is set by Leiden clustering after each ingestion (-1 / NULL means unclassified)
 - `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
 - `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
 - `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Relationship Tables:**
-- `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE)` - shared-document relationship with accumulated frequency weight
+- `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE, edge_type STRING)` - concept relationship; `edge_type` is `'RELATED_TO'` for organic shared-document edges and `'SEMANTIC_BRIDGE'` for edges added by `heal_graph`
 - `APPLIED_TO_PROJECT(Concept -> Project)` - concept is applied in a project
 - `GENERATED_TASK(Concept -> Task)` - concept generated a task
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
@@ -102,18 +103,21 @@ frontend/
       chat.ts                - Shared chat message and session types
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
     lance.py                - LanceDB init + chunks/document_centroids schemas + duplicate document lookup
-    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + clear concurrent-open error translation
+    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + update_node_communities() + clear concurrent-open error translation
   services/
+    clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
+  scripts/
+    heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
@@ -140,7 +144,10 @@ tests/
   ingestion/
     test_chunker.py         - Chunking logic tests
     test_processor.py       - Ingestion pipeline tests
+  scripts/
+    test_heal_graph.py      - heal_graph: cosine similarity, centroid computation, edge-exists, bridge insertion tests
   services/
+    test_clustering.py      - Leiden clustering: empty/small-graph handling + community assignment tests
     test_llm.py             - LLM extraction tests
     test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
     test_pdf.py             - PDF text extraction tests
@@ -274,6 +281,12 @@ Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
 Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
+  |
+  v
+clustering.run_leiden_clustering() -- build igraph from RELATED_TO edges, run Leiden (weighted)
+  |
+  v
+kuzu.update_node_communities() -- SET c.community_id on every Concept node
 ```
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
@@ -358,8 +371,8 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
 - Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
-- Returns: `{"nodes": [{"id", "type", "name", "colorScore"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
-- Full graph for frontend 3D visualization
+- Returns: `{"nodes": [{"id", "type", "name", "colorScore", "community_id"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
+- Full graph for frontend 3D visualization; `community_id` drives community-palette coloring in the 3D brain
 
 ### `GET /api/concepts`
 - Returns: `{"concepts": [{"name", "document_count", "related_concepts"}]}`
@@ -394,6 +407,12 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 - Searches `document_centroids` by vector similarity.
 - Excludes documents that already contain `concept_name`.
 - Returns at most 5 latent-similar documents.
+### `POST /api/recluster`
+- No body required
+- Runs Leiden clustering over all current Concept nodes and writes `community_id` back
+- Returns: `{"clustered": N}` (count of concepts assigned a community)
+- Useful for seeding community IDs on existing databases without triggering a new ingest
+
 ### `GET /api/stats`
 - Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`
 
