@@ -62,13 +62,14 @@ def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
     edges = []
     while result.has_next():
         source, target, reason, weight = result.get_next()
+        safe_weight = float(weight) if weight is not None else 1.0
         edges.append(
             GraphEdgeResponse(
                 source=f"concept:{source}",
                 target=f"concept:{target}",
                 type="RELATED_TO",
                 reason=reason,
-                weight=weight,
+                weight=safe_weight,
             )
         )
 
@@ -85,7 +86,6 @@ def get_graph(conn: kuzu.Connection = Depends(get_db_connection)):
         nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name, "colorScore": color_score})
 
     edges = [edge.model_dump() for edge in get_related_to_edges(conn)]
-
     return {"nodes": nodes, "edges": edges}
 
 
@@ -249,3 +249,4 @@ def get_stats(conn: kuzu.Connection = Depends(get_db_connection)):
         "total_concepts": concept_result.get_next()[0],
         "total_relationships": rel_result.get_next()[0],
     }
+

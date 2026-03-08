@@ -157,6 +157,14 @@ class TestGetGraph:
 
         assert related_edge["weight"] == 2.0
 
+    def test_all_graph_edges_return_numeric_weight(self):
+        _ingest_sample()
+        response = client.get("/api/graph")
+        edges = response.json()["edges"]
+
+        assert len(edges) > 0
+        assert all(isinstance(edge.get("weight"), (int, float)) for edge in edges)
+
 
 class TestGetConcepts:
     def test_response_structure(self):
@@ -464,3 +472,4 @@ class TestGetLatentDiscovery:
         data = response.json()
         assert data["concept_name"] == "NonExistent"
         assert data["results"] == []
+

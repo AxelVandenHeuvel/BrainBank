@@ -41,13 +41,18 @@ export function useGraphData(): UseGraphDataResult {
         }
 
         const payload = await response.json();
+        const graphPayload = Array.isArray((payload as { edges?: unknown[] }).edges)
+          ? payload
+          : Array.isArray((payload as { links?: unknown[] }).links)
+            ? { ...payload, edges: (payload as { links: unknown[] }).links }
+            : payload;
 
-        if (!validateGraphApiResponse(payload)) {
+        if (!validateGraphApiResponse(graphPayload)) {
           throw new Error('Invalid graph payload');
         }
 
         setResult({
-          data: normalizeGraphData(payload),
+          data: normalizeGraphData(graphPayload),
           source: 'api',
           isLoading: false,
           error: null,
