@@ -134,6 +134,9 @@ const NEURON_MODEL_TARGET_DIAGONAL = 10;
 const EXPANDED_DOC_RADIUS = 30;
 const EXPANDED_DIVE_DISTANCE = 120;
 const NODE_LABEL_Y_OFFSET = 16;
+const DIVE_ZOOM_CLOSE_DISTANCE = 20;
+const DIVE_ZOOM_IN_DURATION_MS = 700;
+const DIVE_ZOOM_OUT_DURATION_MS = 900;
 /** Seed initial position from a deterministic hash so the force simulation starts
  *  with nodes spread out instead of all at the origin. */
 function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
@@ -289,6 +292,8 @@ export function Graph3D({
     node: GraphNode;
     docs: RelationshipDocument[];
   } | null>(null);
+  const diveStartTimeRef = useRef<number | null>(null);
+  const [isDiving, setIsDiving] = useState(false);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -657,6 +662,8 @@ export function Graph3D({
     setSelectedNode(null);
     setLatentLinks([]);
     setExpandedConcept(null);
+    setIsDiving(false);
+    diveStartTimeRef.current = null;
 
     const brainHomeView = brainHomeViewRef.current;
 
@@ -777,12 +784,12 @@ export function Graph3D({
     handleZoom(event.deltaY < 0 ? WHEEL_ZOOM_IN_FACTOR : WHEEL_ZOOM_OUT_FACTOR);
   }
 
-  async function handleConceptExpansion(node: GraphNode) {
+  async function fetchConceptDocs(conceptName: string): Promise<RelationshipDocument[]> {
     let docs: RelationshipDocument[] = [];
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
-      const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`, {
+      const response = await fetch(`/api/concepts/${encodeURIComponent(conceptName)}/documents`, {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -790,12 +797,54 @@ export function Graph3D({
         docs = await response.json();
       }
     } catch { }
+    if (docs.length === 0) docs = getMockDocumentsForConcept(conceptName);
+    return docs;
+  }
 
-    if (docs.length === 0) docs = getMockDocumentsForConcept(node.name);
+  function handleConceptExpansion(node: GraphNode) {
+    const nodePoint = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
 
-    if (docs.length > 0) {
-      setExpandedConcept({ node, docs });
-    }
+    // Start dive animation: zoom close + fade out brain/nodes
+    setIsDiving(true);
+    diveStartTimeRef.current = performance.now();
+
+    // Prefetch docs while camera zooms in
+    const docsPromise = fetchConceptDocs(node.name);
+
+    // Phase 1: zoom into the concept node
+    sceneFocusPointRef.current = nodePoint;
+    applySceneFocusPoint();
+    const target = lookAtTargetRef.current;
+    animateCamera(
+      {
+        x: target.x,
+        y: target.y + DIVE_ZOOM_CLOSE_DISTANCE * 0.08,
+        z: target.z + DIVE_ZOOM_CLOSE_DISTANCE,
+      },
+      target,
+      DIVE_ZOOM_IN_DURATION_MS,
+      () => {
+        // Phase 2: reveal doc sub-nodes and zoom back out to frame them
+        docsPromise.then((docs) => {
+          if (docs.length > 0) {
+            setExpandedConcept({ node, docs });
+          }
+          setIsDiving(false);
+          diveStartTimeRef.current = null;
+
+          // Zoom out to frame the doc ring
+          animateCamera(
+            {
+              x: target.x,
+              y: target.y + EXPANDED_DIVE_DISTANCE * 0.08,
+              z: target.z + EXPANDED_DIVE_DISTANCE,
+            },
+            target,
+            DIVE_ZOOM_OUT_DURATION_MS,
+          );
+        });
+      },
+    );
   }
 
   async function loadLatentDiscovery(node: GraphNode): Promise<void> {
@@ -830,6 +879,7 @@ export function Graph3D({
     targetPos: { x: number; y: number; z: number },
     targetLookAt: { x: number; y: number; z: number },
     durationMs: number = CAMERA_MOVE_DURATION_MS,
+    onComplete?: () => void,
   ) {
     // Cancel any in-flight camera animation so consecutive moves don't conflict.
     if (cameraAnimationRef.current !== null) {
@@ -867,6 +917,7 @@ export function Graph3D({
         cameraAnimationRef.current = requestAnimationFrame(animate);
       } else {
         cameraAnimationRef.current = null;
+        onComplete?.();
       }
     }
 
@@ -955,9 +1006,8 @@ export function Graph3D({
       lastNodeClickRef.current.nodeId === node.id &&
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
-      // Double click: dive into concept — zoom close and show doc sub-graph
-      focusPoint(nodePoint, EXPANDED_DIVE_DISTANCE);
-      void handleConceptExpansion(node);
+      // Double click: dive into concept — animated zoom in, then reveal doc sub-graph
+      handleConceptExpansion(node);
       lastNodeClickRef.current = null;
       return;
     }
@@ -1164,12 +1214,60 @@ export function Graph3D({
     clampNodesWithinBrain(true);
   }, [displayData.nodes]);
 
-  // Hide brain wireframe when in expanded concept view
+  // Fade + hide brain wireframe during dive and when in expanded concept view
   useEffect(() => {
     const brain = brainGroupRef.current;
     if (!brain) return;
-    brain.visible = expandedConcept === null;
-  }, [expandedConcept]);
+
+    if (!isDiving && expandedConcept === null) {
+      brain.visible = true;
+      // Restore each material to its original opacity (captured at dive start)
+      brain.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.material) {
+          const mat = child.material;
+          if (mat.userData.originalOpacity != null) {
+            mat.opacity = mat.userData.originalOpacity;
+          }
+        }
+      });
+      return;
+    }
+
+    if (expandedConcept !== null && !isDiving) {
+      brain.visible = false;
+      return;
+    }
+
+    // Capture original opacities before fading
+    brain.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material) {
+        const mat = child.material;
+        if (mat.userData.originalOpacity == null) {
+          mat.userData.originalOpacity = mat.opacity;
+        }
+      }
+    });
+
+    // During dive: fade out over the zoom-in duration
+    let frameId: number;
+    const animateBrainFade = () => {
+      const now = performance.now();
+      const start = diveStartTimeRef.current ?? now;
+      const progress = Math.min((now - start) / DIVE_ZOOM_IN_DURATION_MS, 1);
+      brain.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.material) {
+          const mat = child.material;
+          const base = mat.userData.originalOpacity ?? mat.opacity;
+          mat.opacity = base * (1 - progress);
+        }
+      });
+      if (progress < 1) {
+        frameId = requestAnimationFrame(animateBrainFade);
+      }
+    };
+    frameId = requestAnimationFrame(animateBrainFade);
+    return () => cancelAnimationFrame(frameId);
+  }, [expandedConcept, isDiving]);
 
   useEffect(() => {
     if (!data.nodes.length) {
@@ -1299,6 +1397,13 @@ export function Graph3D({
     const animate = () => {
       const time = performance.now();
 
+      // Compute dive fade progress (0 = normal, 1 = fully faded out)
+      let diveFade = 0;
+      if (diveStartTimeRef.current !== null) {
+        const elapsed = time - diveStartTimeRef.current;
+        diveFade = Math.min(elapsed / DIVE_ZOOM_IN_DURATION_MS, 1);
+      }
+
       displayData.nodes.forEach((node) => {
         const obj = (node as any).__threeObj as THREE.Object3D | undefined;
         if (!obj) return;
@@ -1310,16 +1415,32 @@ export function Graph3D({
         // Dim non-matching nodes during search; hide everything except doc sub-nodes in expanded view
         const isSearchDimmed = hasQuery && !matchedNodeIds.has(node.id);
         const isExpandHidden = expandedNodeIds !== null && !expandedNodeIds.has(node.id);
+        const isDocExpand = node.id.startsWith('doc-expand:');
         const dimOpacity = isExpandHidden ? 0 : 0.08;
         const isDimmed = isSearchDimmed || isExpandHidden;
+
+        let meshOpacity: number;
+        let spriteOpacity: number;
+        if (isDimmed) {
+          meshOpacity = dimOpacity;
+          spriteOpacity = dimOpacity;
+        } else if (diveFade > 0 && !isDocExpand) {
+          // During dive-in, fade out all non-doc nodes
+          meshOpacity = 0.9 * (1 - diveFade);
+          spriteOpacity = 1 * (1 - diveFade);
+        } else {
+          meshOpacity = 0.9;
+          spriteOpacity = 1;
+        }
+
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh && child.material) {
             const mat = child.material as THREE.MeshStandardMaterial;
-            mat.opacity = isDimmed ? dimOpacity : 0.9;
+            mat.opacity = meshOpacity;
             mat.transparent = true;
           }
           if (child instanceof THREE.Sprite && child.material) {
-            child.material.opacity = isDimmed ? dimOpacity : 1;
+            child.material.opacity = spriteOpacity;
           }
         });
       });

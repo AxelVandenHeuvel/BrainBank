@@ -1089,6 +1089,12 @@ describe('Graph3D', () => {
         await Promise.resolve();
       });
 
+      // Advance past the dive zoom-in animation so onComplete fires
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
       const latestData = getLatestGraphProps().graphData;
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:abc123')).toBe(true);
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
@@ -1165,6 +1171,12 @@ describe('Graph3D', () => {
         await Promise.resolve();
       });
 
+      // Advance past the dive zoom-in animation so onComplete fires
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
       // API returned empty so mock fallback docs appear as sub-nodes
       const latestData = getLatestGraphProps().graphData;
       const docExpandNodes = latestData.nodes.filter((n: GraphNode) => n.id.startsWith('doc-expand:'));
@@ -1189,6 +1201,12 @@ describe('Graph3D', () => {
         onNodeClick(graph.nodes[0]); // first click
         vi.advanceTimersByTime(100);
         onNodeClick(graph.nodes[0]); // double click
+        await Promise.resolve();
+      });
+
+      // Advance past the dive zoom-in animation
+      await act(async () => {
+        vi.advanceTimersByTime(800);
         await Promise.resolve();
       });
 
@@ -1228,6 +1246,12 @@ describe('Graph3D', () => {
         onNodeClick(graph.nodes[0]); // first click
         vi.advanceTimersByTime(100);
         onNodeClick(graph.nodes[0]); // double click — expands concept
+        await Promise.resolve();
+      });
+
+      // Advance past the dive zoom-in animation so onComplete fires
+      await act(async () => {
+        vi.advanceTimersByTime(800);
         await Promise.resolve();
       });
 
