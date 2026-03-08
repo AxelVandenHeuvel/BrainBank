@@ -36,6 +36,7 @@ interface UseChatResult {
   messages: ChatMessage[];
   isLoading: boolean;
   createSession: () => void;
+  deleteSession: (sessionId: string) => void;
   selectSession: (sessionId: string) => void;
   sendMessage: (question: string) => Promise<void>;
 }
@@ -163,6 +164,24 @@ export function useChat(): UseChatResult {
     setActiveSessionId(sessionId);
   }
 
+  function deleteSession(sessionId: string) {
+    setSessions((previousSessions) => {
+      const nextSessions = previousSessions.filter((session) => session.id !== sessionId);
+
+      if (nextSessions.length === 0) {
+        const fallbackSession = createEmptySession();
+        setActiveSessionId(fallbackSession.id);
+        return [fallbackSession];
+      }
+
+      if (sessionId === activeSessionId) {
+        setActiveSessionId(nextSessions[0].id);
+      }
+
+      return sortSessionsByUpdatedAt(nextSessions);
+    });
+  }
+
   function appendMessage(sessionId: string, message: ChatMessage) {
     const nextUpdatedAt = new Date().toISOString();
 
@@ -250,6 +269,7 @@ export function useChat(): UseChatResult {
     messages,
     isLoading,
     createSession,
+    deleteSession,
     selectSession,
     sendMessage,
   };

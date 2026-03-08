@@ -7,6 +7,7 @@ import type { ChatMessage } from '../types/chat';
 const sendMessage = vi.fn();
 const createSession = vi.fn();
 const selectSession = vi.fn();
+const deleteSession = vi.fn();
 const openDocument = vi.fn();
 let isLoading = false;
 let activeSessionId = 'session-2';
@@ -64,6 +65,7 @@ vi.mock('../hooks/useChat', () => ({
     sendMessage,
     createSession,
     selectSession,
+    deleteSession,
   }),
 }));
 
@@ -72,6 +74,7 @@ import { ChatPanel } from './ChatPanel';
 describe('ChatPanel', () => {
   afterEach(() => {
     vi.useRealTimers();
+    deleteSession.mockReset();
   });
 
   it('renders message history, retrieval concept sections, and loading state', () => {
@@ -79,8 +82,9 @@ describe('ChatPanel', () => {
     render(<ChatPanel graphSource="api" onOpenDocument={openDocument} />);
 
     expect(screen.getByTestId('chat-panel-shell')).toHaveClass('lg:h-full', 'lg:min-h-0');
+    expect(screen.getByTestId('chat-panel-body')).toHaveClass('min-h-0', 'flex-1');
     expect(screen.getByTestId('chat-panel-messages')).toHaveClass('flex-1', 'overflow-y-auto');
-    expect(screen.getByTestId('chat-panel-form')).toHaveClass('shrink-0');
+    expect(screen.getByTestId('chat-panel-form')).toHaveClass('mt-auto', 'shrink-0');
     expect(screen.queryByRole('button', { name: 'Earlier chat' })).not.toBeInTheDocument();
     expect(screen.getByText('What am I building?')).toBeInTheDocument();
     expect(screen.getByText('You are building BrainBank.')).toBeInTheDocument();
@@ -176,6 +180,18 @@ describe('ChatPanel', () => {
       'aria-expanded',
       'true',
     );
+  });
+
+  it('deletes a chat session from the history list', async () => {
+    isLoading = false;
+    const user = userEvent.setup();
+
+    render(<ChatPanel graphSource="api" />);
+
+    await user.click(screen.getByRole('button', { name: 'Toggle chat history' }));
+    await user.click(screen.getByRole('button', { name: 'Delete Earlier chat' }));
+
+    expect(deleteSession).toHaveBeenCalledWith('session-1');
   });
 
   it('warns when the graph is mock data because chat only queries live ingested notes', () => {

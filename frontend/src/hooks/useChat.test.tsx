@@ -187,4 +187,51 @@ describe('useChat', () => {
     expect(result.current.activeSessionId).toBe('session-1');
     expect(result.current.messages).toEqual([{ role: 'user', content: 'First question' }]);
   });
+
+  it('deletes the active session and falls back to the next most recent session', () => {
+    localStorage.setItem(
+      'brainbank.chat.sessions',
+      JSON.stringify([
+        {
+          id: 'session-1',
+          title: 'First chat',
+          createdAt: '2026-03-07T18:00:00.000Z',
+          updatedAt: '2026-03-07T18:05:00.000Z',
+          messages: [{ role: 'user', content: 'First question' }],
+        },
+        {
+          id: 'session-2',
+          title: 'Second chat',
+          createdAt: '2026-03-07T19:00:00.000Z',
+          updatedAt: '2026-03-07T19:05:00.000Z',
+          messages: [{ role: 'user', content: 'Second question' }],
+        },
+      ]),
+    );
+    localStorage.setItem('brainbank.chat.activeSessionId', 'session-2');
+
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.deleteSession('session-2');
+    });
+
+    expect(result.current.sessions).toHaveLength(1);
+    expect(result.current.activeSessionId).toBe('session-1');
+    expect(result.current.messages).toEqual([{ role: 'user', content: 'First question' }]);
+  });
+
+  it('creates a fresh empty session when deleting the only remaining chat', () => {
+    const { result } = renderHook(() => useChat());
+    const originalSessionId = result.current.activeSessionId;
+
+    act(() => {
+      result.current.deleteSession(originalSessionId);
+    });
+
+    expect(result.current.sessions).toHaveLength(1);
+    expect(result.current.activeSessionId).not.toBe(originalSessionId);
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.sessions[0].title).toBe('New chat');
+  });
 });

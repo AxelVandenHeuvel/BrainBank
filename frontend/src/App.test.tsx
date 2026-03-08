@@ -76,7 +76,11 @@ vi.mock('./components/ChatPanel', () => ({
     const [draft, setDraft] = useState('');
 
     return (
-      <div data-testid="chat-panel" data-graph-source={graphSource}>
+      <div
+        data-testid="chat-panel"
+        data-graph-source={graphSource}
+        data-has-bottom-composer="true"
+      >
         <label htmlFor="chat-draft">Draft</label>
         <input
           id="chat-draft"
@@ -212,6 +216,7 @@ describe('App', () => {
       'lg:right-3',
       'lg:w-[30rem]',
     );
+    expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-has-bottom-composer', 'true');
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
 
     // Type in chat
