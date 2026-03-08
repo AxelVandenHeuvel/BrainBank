@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, ingest controls, and a translucent brain-shell overlay.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay.
 
 ## Stack
 
@@ -47,7 +47,7 @@ LanceDB is the sole source of document identity and the concept→document link.
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata.
+Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`.
 
 ## Project Structure
 
@@ -64,8 +64,9 @@ frontend/
     App.tsx                  - Layout shell, legend, and search state
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Right-side chat UI for LLM query history
-      Graph3D.tsx            - 3D graph scene and interaction behavior
+      ChatPanel.tsx          - Right-side chat UI with session list and active conversation
+      EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
+      Graph3D.tsx            - 3D graph scene, edge selection, and interaction behavior
       IngestPanel.tsx        - Note input + file upload for ingestion
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
@@ -75,16 +76,19 @@ frontend/
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
+      chatStorage.ts         - localStorage helpers for persisted chat sessions
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
       mockGraph.ts           - Development graph payload
     test/
       setup.ts               - Vitest setup
+    types/
+      chat.ts                - Shared chat message and session types
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
-  schemas.py                - Shared Pydantic response models (DocumentResponse)
+  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   db/
     lance.py                - LanceDB init + chunks table schema
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
@@ -133,6 +137,8 @@ graphData.normalizeGraphData() -- convert { nodes, edges } -> { nodes, links }
 Graph3D -- react-force-graph-3d scene
   |         |
   |         +-- hover -> highlight node + neighbors, tooltip
+  |         +-- click RELATED_TO edge -> fetch /api/relationships/details
+  |         +-- selected RELATED_TO edge -> persistent highlight + EdgeDetailPanel
   |         +-- search -> highlight matches, zoom camera
   |         +-- load -> zoomToFit for default framing
   |         +-- idle (5s) -> slow camera auto-rotation
@@ -153,6 +159,8 @@ Both modes `POST /ingest` with `{title, text}`. On success the panel shows conce
 
 The frontend uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Graph3D also derives a dedicated home-view camera target from the loaded brain bounds, so reset and initial framing center the brain shell in the viewport instead of centering only the node cluster. It resumes slow rotation after 5 seconds of inactivity, cancels rotation on pointer activity, exposes floating controls in the upper-right corner, and supports double-click node focus. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
+When a user clicks a `RELATED_TO` edge, the frontend keeps that exact edge selected, dims unrelated nodes, fetches `/api/relationships/details?source=...&target=...`, and renders `EdgeDetailPanel` with the stored reason plus shared, source-only, and target-only supporting documents. `MENTIONS` edges remain non-interactive.
+
 ## Frontend Chat Flow
 
 ```
@@ -162,7 +170,12 @@ Input: user question in right-side panel
 ChatPanel -- controlled input + session message history
   |
   v
-useChat.sendMessage() -- append user message and set loading state
+useChat -- load/create/select persisted sessions and expose active messages
+  |
+  +-- localStorage via chatStorage -- restore sessions + active session id
+  |
+  v
+useChat.sendMessage() -- append user message to active session and set loading state
   |
   v
 POST /query/test-llm -- proxied by Vite in development to the backend API
@@ -174,7 +187,7 @@ Backend returns { answer, discovery_concepts, mode }
 ChatPanel -- render assistant answer + discovery concept tags
 ```
 
-Chat history persists for the current browser session because it lives in React state inside `useChat`. No local storage or backend persistence is involved yet. The panel is toggled from a single side-mounted control so it can collapse without adding a second toolbar area. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
+Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the panel is purely a visibility change and does not reset local component state. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -232,13 +245,12 @@ embeddings.embed_query() -- embed question to 384-dim vector
 LanceDB.search() -- top 5 nearest chunks (vector similarity)
   |
   v
-Kuzu: find Concepts -- for each chunk_id, find linked Concept nodes
-  |                     via MENTIONS edges (list_contains on chunk_ids)
+LanceDB chunk metadata -- read per-chunk `concepts[]` as source concepts
   v
 Kuzu: 1-hop expansion -- for each source Concept, find RELATED_TO
   |                       neighbors = "discovery concepts"
   v
-Retrieve expanded chunks -- get chunk texts for discovery concepts
+LanceDB chunk metadata -- get extra chunk texts for discovery concepts
   |
   v
 llm.generate_answer() -- Gemini generates grounded answer from all context
