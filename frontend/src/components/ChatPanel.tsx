@@ -27,6 +27,11 @@ export function ChatPanel() {
   }
 
   return (
+    <section
+      data-testid="chat-panel-shell"
+      className="flex min-h-[24rem] flex-1 flex-col rounded-3xl border border-white/10 bg-slate-900/60 p-4 lg:h-full lg:min-h-0"
+    >
+      <div className="flex items-center justify-between">
     <section className="flex min-h-[24rem] flex-1 flex-col rounded-3xl border border-white/10 bg-slate-900/60 p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -49,6 +54,13 @@ export function ChatPanel() {
         </div>
       </div>
 
+      <div
+        data-testid="chat-panel-messages"
+        className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1 lg:min-h-0"
+      >
+        {messages.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-cyan-300/15 bg-slate-950/60 p-4 text-sm leading-6 text-slate-400">
+            Ask a question about your projects, tasks, or connections in the graph.
       <div className="mt-4 grid flex-1 gap-4 overflow-hidden lg:grid-cols-[12rem_minmax(0,1fr)]">
         <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
@@ -119,6 +131,30 @@ export function ChatPanel() {
             })}
           </div>
 
+      <form
+        data-testid="chat-panel-form"
+        className="mt-4 flex shrink-0 gap-3"
+        onSubmit={handleSubmit}
+      >
+        <label htmlFor="chat-question" className="sr-only">
+          Ask BrainBank
+        </label>
+        <input
+          id="chat-question"
+          type="text"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="Ask what matters next"
+          className="flex-1 rounded-2xl border border-cyan-300/20 bg-slate-950/90 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-300/60"
+        />
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-cyan-300/50"
+        >
+          Send
+        </button>
+      </form>
           <form className="mt-4 flex gap-3" onSubmit={handleSubmit}>
             <label htmlFor="chat-question" className="sr-only">
               Ask BrainBank

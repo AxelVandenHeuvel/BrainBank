@@ -5,7 +5,6 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import {
   ACTIVE_LINK_COLOR,
-  autoRotateCamera,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
   centerCameraOnTarget,
@@ -16,13 +15,16 @@ import {
   findMatchingNodeIds,
   getConnectionCount,
   isDirectHoverLink,
-  zoomToNode,
 } from '../lib/graphView';
 import {
   clampNodesToContainment,
   createBrainContainment,
   type BrainContainment,
 } from '../lib/brainModel';
+import {
+  centerObject3DAtOrigin,
+  rotateObjectFromPointerDelta,
+} from '../lib/brainScene';
 import { mockRelationshipDetailsByEdge } from '../mock/mockGraph';
 import type {
   GraphData,
@@ -41,6 +43,10 @@ interface OrbitControlsLike {
   autoRotateSpeed: number;
   addEventListener: (event: string, callback: () => void) => void;
   removeEventListener: (event: string, callback: () => void) => void;
+  target: {
+    set: (x: number, y: number, z: number) => void;
+  };
+  update: () => void;
 }
 
 interface ForceGraphHandle {
@@ -102,6 +108,12 @@ const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
+const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.08;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
+const POINTER_ROTATION_SPEED = 0.005;
+const IDLE_ROTATION_SPEED = 0.002;
+const MAX_SCENE_TILT = Math.PI / 3;
 // Radius of the transparent container sphere in graph units
 const CONTAINER_SPHERE_RADIUS = 22;
 // Distance from concept center at which doc nodes are pinned
@@ -118,6 +130,7 @@ export function Graph3D({
   hoveredNode,
   onHoverNode,
 }: Graph3DProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
   const brainHomeViewRef = useRef<BrainHomeView | null>(null);
@@ -127,6 +140,9 @@ export function Graph3D({
     null,
   );
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
+  const isRightDragRotatingRef = useRef(false);
+  const lastDragPositionRef = useRef({ x: 0, y: 0 });
+  const containerSizeRef = useRef({ width: 0, height: 0 });
 
   // Ref used inside the async fetch callback to detect stale expansions.
   const expandedConceptIdRef = useRef<string | null>(null);
@@ -138,6 +154,7 @@ export function Graph3D({
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(
     null,
   );
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(
     null,
   );
@@ -260,6 +277,55 @@ export function Graph3D({
     };
   }
 
+  function getRotationRoot() {
+    return graphRef.current?.scene() ?? null;
+  }
+
+  function resetSceneRotation() {
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    rotationRoot.rotation.set(0, 0, 0);
+    rotationRoot.updateMatrixWorld(true);
+  }
+
+  function toWorldPoint(point: { x: number; y: number; z: number }) {
+    const worldPoint = new THREE.Vector3(point.x, point.y, point.z);
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return worldPoint;
+    }
+
+    rotationRoot.updateMatrixWorld(true);
+    return rotationRoot.localToWorld(worldPoint);
+  }
+
+  function focusPoint(
+    point: { x: number; y: number; z: number },
+    distance: number,
+  ) {
+    const worldPoint = toWorldPoint(point);
+
+    lookAtTargetRef.current = {
+      x: worldPoint.x,
+      y: worldPoint.y,
+      z: worldPoint.z,
+    };
+    graphRef.current?.cameraPosition(
+      {
+        x: worldPoint.x + distance,
+        y: worldPoint.y + distance * 0.25,
+        z: worldPoint.z + distance,
+      },
+      lookAtTargetRef.current,
+      CAMERA_MOVE_DURATION_MS,
+    );
+  }
+
   function stopIdleRotation() {
     if (idleRotationIntervalRef.current !== null) {
       window.clearInterval(idleRotationIntervalRef.current);
@@ -275,7 +341,15 @@ export function Graph3D({
     idleTimeoutRef.current = window.setTimeout(() => {
       stopIdleRotation();
       idleRotationIntervalRef.current = window.setInterval(() => {
-        autoRotateCamera(graphRef);
+        const rotationRoot = getRotationRoot();
+
+        if (!rotationRoot) {
+          return;
+        }
+
+        rotationRoot.rotation.order = 'YXZ';
+        rotationRoot.rotation.y += IDLE_ROTATION_SPEED;
+        rotationRoot.updateMatrixWorld(true);
       }, IDLE_ROTATE_INTERVAL_MS);
     }, IDLE_ROTATE_DELAY_MS);
   }
@@ -289,6 +363,7 @@ export function Graph3D({
     const brainHomeView = brainHomeViewRef.current;
 
     if (brainHomeView) {
+      resetSceneRotation();
       lookAtTargetRef.current = brainHomeView.target;
       centerCameraOnTarget(
         graphRef,
@@ -301,6 +376,66 @@ export function Graph3D({
 
     lookAtTargetRef.current = getGraphCenter();
     graphRef.current?.zoomToFit(CAMERA_MOVE_DURATION_MS, AUTO_CENTER_PADDING);
+  }
+
+  function handleMouseDown(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 2) {
+      return;
+    }
+
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest('button')
+    ) {
+      return;
+    }
+
+    isRightDragRotatingRef.current = true;
+    lastDragPositionRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    handleInteraction();
+    event.preventDefault();
+  }
+
+  function handleMouseMove(event: React.MouseEvent<HTMLDivElement>) {
+    handleInteraction();
+
+    if (!isRightDragRotatingRef.current) {
+      return;
+    }
+
+    if ((event.buttons & 2) !== 2) {
+      isRightDragRotatingRef.current = false;
+      return;
+    }
+
+    const deltaX = event.clientX - lastDragPositionRef.current.x;
+    const deltaY = event.clientY - lastDragPositionRef.current.y;
+    lastDragPositionRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+
+    const rotationRoot = getRotationRoot();
+
+    if (!rotationRoot) {
+      return;
+    }
+
+    rotateObjectFromPointerDelta(
+      rotationRoot,
+      deltaX,
+      deltaY,
+      POINTER_ROTATION_SPEED,
+      MAX_SCENE_TILT,
+    );
+    rotationRoot.updateMatrixWorld(true);
+  }
+
+  function handleMouseEnd() {
+    isRightDragRotatingRef.current = false;
   }
 
   function handleZoom(scale: number) {
@@ -411,12 +546,14 @@ export function Graph3D({
       lastNodeClickRef.current.nodeId === node.id &&
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
-      zoomToNode(graphRef, node, 100);
-      lookAtTargetRef.current = {
-        x: node.x ?? 0,
-        y: node.y ?? 0,
-        z: node.z ?? 0,
-      };
+      focusPoint(
+        {
+          x: node.x ?? 0,
+          y: node.y ?? 0,
+          z: node.z ?? 0,
+        },
+        100,
+      );
       lastNodeClickRef.current = null;
       return;
     }
@@ -424,12 +561,14 @@ export function Graph3D({
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
 
     // Single click: gentle zoom toward the node + expand/collapse its documents
-    zoomToNode(graphRef, node, 160);
-    lookAtTargetRef.current = {
-      x: node.x ?? 0,
-      y: node.y ?? 0,
-      z: node.z ?? 0,
-    };
+    focusPoint(
+      {
+        x: node.x ?? 0,
+        y: node.y ?? 0,
+        z: node.z ?? 0,
+      },
+      160,
+    );
 
     void handleConceptExpansion(node);
   }
@@ -530,61 +669,46 @@ export function Graph3D({
 
     const loader = new GLTFLoader();
     let cancelled = false;
-    let brainGroup: THREE.Object3D | null = null;
+    let brainGroup: THREE.Group | null = null;
 
     loader.load(BRAIN_MODEL_URL, (gltf) => {
       if (cancelled) {
         return;
       }
 
-      const loadedScene = gltf.scene;
+      const centeredBrain = centerObject3DAtOrigin(gltf.scene, 260);
+      brainGroup = centeredBrain.pivot;
 
-      if (loadedScene instanceof THREE.Object3D) {
-        brainGroup = loadedScene;
+      brainGroup.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.material = new THREE.MeshBasicMaterial({
+            color: '#7dd3fc',
+            wireframe: true,
+            transparent: true,
+            opacity: 0.12,
+            side: THREE.DoubleSide,
+          });
+        }
+      });
 
-        const bounds = new THREE.Box3().setFromObject(brainGroup);
-        const center = bounds.getCenter(new THREE.Vector3());
-        const size = bounds.getSize(new THREE.Vector3()).length() || 1;
-        const scale = 260 / size;
-
-        brainGroup.position.sub(center);
-        brainGroup.scale.setScalar(scale);
-
-        brainGroup.traverse((node) => {
-          if (node instanceof THREE.Mesh) {
-            node.material = new THREE.MeshBasicMaterial({
-              color: '#7dd3fc',
-              wireframe: true,
-              transparent: true,
-              opacity: 0.12,
-              side: THREE.DoubleSide,
-            });
-          }
-        });
-
-        brainGroup.updateMatrixWorld(true);
-        const framedBounds = new THREE.Box3().setFromObject(brainGroup);
-        const framedSize = framedBounds.getSize(new THREE.Vector3());
-        const framedSphere = framedBounds.getBoundingSphere(new THREE.Sphere());
-        brainContainmentRef.current = createBrainContainment(brainGroup);
-        brainHomeViewRef.current = {
-          distance: Math.max(
-            framedSphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
-            MIN_BRAIN_HOME_VIEW_DISTANCE,
-          ),
-          target: {
-            x: framedSphere.center.x,
-            y: framedSphere.center.y + framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
-            z: framedSphere.center.z,
-          },
-        };
-        clampNodesWithinBrain(true);
-        scene.add(brainGroup);
-        handleReset();
-        return;
-      }
-
-      scene.add(loadedScene as unknown as THREE.Object3D);
+      const framedSize = centeredBrain.bounds.getSize(new THREE.Vector3());
+      brainContainmentRef.current = createBrainContainment(brainGroup);
+      brainHomeViewRef.current = {
+        distance: Math.max(
+          centeredBrain.sphere.radius * BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
+          MIN_BRAIN_HOME_VIEW_DISTANCE,
+        ),
+        target: {
+          x: centeredBrain.orbitTarget.x,
+          y:
+            centeredBrain.orbitTarget.y +
+            framedSize.y * BRAIN_HOME_VIEW_VERTICAL_BIAS,
+          z: centeredBrain.orbitTarget.z,
+        },
+      };
+      clampNodesWithinBrain(true);
+      scene.add(brainGroup);
+      handleReset();
     });
 
     return () => {
@@ -617,6 +741,63 @@ export function Graph3D({
   }, [data.nodes.length]);
 
   useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      const nextSize = {
+        width: container.clientWidth,
+        height: container.clientHeight,
+      };
+      const previousSize = containerSizeRef.current;
+
+      if (
+        nextSize.width > 0 &&
+        nextSize.height > 0 &&
+        (nextSize.width !== previousSize.width ||
+          nextSize.height !== previousSize.height)
+      ) {
+        containerSizeRef.current = nextSize;
+        setViewportSize(nextSize);
+        handleReset();
+      }
+
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextSize = {
+        width: entry?.contentRect.width ?? container.clientWidth,
+        height: entry?.contentRect.height ?? container.clientHeight,
+      };
+      const previousSize = containerSizeRef.current;
+
+      if (
+        nextSize.width <= 0 ||
+        nextSize.height <= 0 ||
+        (nextSize.width === previousSize.width &&
+          nextSize.height === previousSize.height)
+      ) {
+        return;
+      }
+
+      containerSizeRef.current = nextSize;
+      setViewportSize(nextSize);
+      handleReset();
+    });
+
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!query.trim()) {
       return;
     }
@@ -628,12 +809,14 @@ export function Graph3D({
       return;
     }
 
-    lookAtTargetRef.current = {
-      x: firstMatch.x ?? 0,
-      y: firstMatch.y ?? 0,
-      z: firstMatch.z ?? 0,
-    };
-    zoomToNode(graphRef, firstMatch, 140);
+    focusPoint(
+      {
+        x: firstMatch.x ?? 0,
+        y: firstMatch.y ?? 0,
+        z: firstMatch.z ?? 0,
+      },
+      140,
+    );
   }, [displayData.nodes, query]);
 
   useEffect(() => {
@@ -645,10 +828,15 @@ export function Graph3D({
     let frameId = 0;
 
     const updatePosition = () => {
+      const worldPoint = toWorldPoint({
+        x: hoveredNode.x ?? 0,
+        y: hoveredNode.y ?? 0,
+        z: hoveredNode.z ?? 0,
+      });
       const coords = graphRef.current?.graph2ScreenCoords(
-        hoveredNode.x ?? 0,
-        hoveredNode.y ?? 0,
-        hoveredNode.z ?? 0,
+        worldPoint.x,
+        worldPoint.y,
+        worldPoint.z,
       );
 
       if (coords) {
@@ -711,6 +899,13 @@ export function Graph3D({
 
   return (
     <div
+      ref={containerRef}
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      onContextMenu={(event) => event.preventDefault()}
+      onMouseMove={handleMouseMove}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseEnd}
+      onMouseLeave={handleMouseEnd}
       className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)]"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
@@ -726,6 +921,8 @@ export function Graph3D({
       <ForceGraph3D
         ref={graphRef as never}
         graphData={displayData}
+        width={viewportSize.width || undefined}
+        height={viewportSize.height || undefined}
         backgroundColor="rgba(0,0,0,0)"
         nodeColor={getNodeColor}
         nodeVal={(node) => {
@@ -752,6 +949,7 @@ export function Graph3D({
         onNodeClick={(node) => handleNodeClick(node as GraphNode)}
         onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
         enableNodeDrag={false}
+        enableNavigationControls={false}
         controlType="orbit"
       />
       <div className="absolute right-4 top-4 flex flex-col gap-2">
