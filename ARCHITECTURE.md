@@ -96,14 +96,14 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset (neuron GLB removed; nodes are procedural dodecahedrons)
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell with collapsible sidebar, top search bar, fully wired tab system, FileExplorer, EditorArea, Graph3D callbacks, and always-mounted graph
+    App.tsx                  - Layout shell with collapsible sidebar, top search bar, permanent Brain tab, fully wired tab system, FileExplorer, TabBar, DocumentEditor, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
       ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
       DocumentEditor.tsx     - Auto-saving Milkdown Crepe editor with debounced save (POST /ingest for new, lightweight PUT /api/documents/{id} for existing)
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
-      EditorArea.tsx         - Container combining TabBar + DocumentEditor, keyed by activeTabId for remount on tab switch
+      EditorArea.tsx         - Container combining TabBar + DocumentEditor (legacy; no longer used by App.tsx, which renders TabBar and DocumentEditor directly)
       Graph3D.tsx            - 3D graph scene, enlarged brain shell, dodecahedron nodes, force-directed layout, concept dive-in with document sub-graph, and callback props (onOpenDocument, onConceptFocused) for parent tab integration
       FileExplorer.tsx       - Sidebar file tree: collapsible concept folders with document items, auto-expand on highlight, refetchSignal prop for parent-triggered refresh
       IngestPanel.tsx        - New Note button + file upload + Notion import
@@ -111,7 +111,7 @@ frontend/
       NoteEditor.tsx         - Full-page markdown note editor (legacy, replaced by DocumentEditor for tab system)
       NodeTooltip.tsx        - Hover or selected-node card showing node name, type, and connection count
       SearchBar.tsx          - Slim horizontal search input for the top bar
-      TabBar.tsx             - Horizontal tab bar with active highlighting, close buttons, and new-tab italic indicator
+      TabBar.tsx             - Horizontal tab bar with active highlighting, conditional close buttons (hidden when `closable === false`), and new-tab italic indicator
     hooks/
       useChat.ts             - POST /query hook for chat state, retrieval answers, and concept metadata
       useFileTree.ts         - GET /api/concepts + /api/documents hook, builds concept->document tree for sidebar
@@ -129,7 +129,7 @@ frontend/
     types/
       chat.ts                - Shared chat message and session types
       graph.ts               - Graph node, edge, link, and discovery types
-      notes.ts               - OpenTab interface for the tab system
+      notes.ts               - OpenTab interface for the tab system (includes optional `closable` field)
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/documents/{doc_id} (PUT lightweight + POST reingest), /api/stats, /api/concepts/{name}/documents
@@ -268,7 +268,7 @@ The sidebar has a "New Note" button and a file upload option:
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout uses a flex-based shell with a collapsible left sidebar (default expanded at 22rem, collapsed to 3rem with a chevron toggle and CSS transitions), a top search bar spanning the main content area, and the 3D graph below it. The graph is always mounted in the DOM; when `activeTabId` is set, the graph section is hidden with CSS (`invisible h-0`) to preserve Three.js state, and the `EditorArea` component appears in its place. Tab system state (`openTabs`, `activeTabId`, `highlightedConcept`, `fileTreeRefetchSignal`) is declared in `App.tsx` and fully wired to all child components. The `OpenTab` interface is exported from `types/notes.ts`. The old `view: 'graph' | 'editor'` state machine and NoteEditor full-page overlay have been removed.
+The desktop layout uses a flex-based shell with a collapsible left sidebar (default expanded at 22rem, collapsed to 3rem with a chevron toggle and CSS transitions), a top search bar spanning the main content area, a tab bar below the search bar, and the content area below the tabs. The graph is always mounted in the DOM; when a document tab is active (i.e. `activeTabId !== BRAIN_TAB_ID`), the graph section is hidden with CSS (`invisible` + absolute positioning) to preserve Three.js state, and the `DocumentEditor` appears in its place. When the Brain tab is active, the graph is fully visible and the editor is not rendered. Tab system state (`openTabs`, `activeTabId`, `highlightedConcept`, `fileTreeRefetchSignal`) is declared in `App.tsx` and fully wired to all child components. The `OpenTab` interface is exported from `types/notes.ts` and includes an optional `closable` field (defaults to `true`; set to `false` for the Brain tab). The old `view: 'graph' | 'editor'` state machine and NoteEditor full-page overlay have been removed.
 
 The sidebar renders a `FileExplorer` below the data source panel. FileExplorer shows concept folders with nested document items. Clicking a document fetches its content via `GET /api/concepts/{conceptName}/documents` and opens it in a new tab. The `highlightedConcept` state flows from `Graph3D` (via `onConceptFocused`) to `FileExplorer`, which auto-expands and scrolls to the highlighted folder. After a document save or ingest, `App.tsx` increments `fileTreeRefetchSignal` which triggers FileExplorer to re-fetch its tree data.
 
@@ -276,11 +276,13 @@ The sidebar renders a `FileExplorer` below the data source panel. FileExplorer s
 
 ### Tab System
 
-The tabbed editor system consists of three components:
+The tab bar always shows a permanent "Brain" tab (`BRAIN_TAB_ID = '__brain__'`) as its first entry. This tab cannot be closed (`closable: false` on the `OpenTab` type). When the Brain tab is active, the 3D graph is visible. Document tabs are appended after the Brain tab; when a document tab is active, the graph is hidden via CSS and the `DocumentEditor` is shown. Closing the last document tab returns focus to the Brain tab. `App.tsx` computes `allTabs` via a memo that prepends the brain tab before any document tabs. `activeTabId` defaults to `BRAIN_TAB_ID`.
 
-- **TabBar** (`TabBar.tsx`) - Horizontal row of tabs showing document titles. The active tab has a pink accent border. Each tab has a close button (x) that stops propagation to avoid also selecting. New/unsaved tabs display their title in italic. Returns null when no tabs are open.
+The system is composed of two active components rendered directly in `App.tsx` (EditorArea is no longer used by App.tsx):
+
+- **TabBar** (`TabBar.tsx`) - Horizontal row of tabs showing document titles. The active tab has a pink accent border. Each closable tab has a close button (x) that stops propagation to avoid also selecting; the close button is hidden when the tab's `closable` field is `false`. New/unsaved tabs display their title in italic. Returns null when no tabs are open.
 - **DocumentEditor** (`DocumentEditor.tsx`) - Auto-saving Milkdown Crepe editor. Reuses the same Crepe configuration as the legacy NoteEditor (ProseMirror WYSIWYG with LaTeX support). On every content change, a 1.5-second debounce timer starts. When it fires, new documents POST to `/ingest` and existing documents PUT to `/api/documents/{docId}`. Shows a subtle save status indicator ("Saving...", "Saved", or "Error"). Title changes propagate via `onTitleChange`. Pending saves flush immediately on unmount.
-- **EditorArea** (`EditorArea.tsx`) - Container that combines TabBar at the top with DocumentEditor below. Uses a `key` prop tied to `activeTabId` to force remount when switching tabs. Returns null when no active tab exists.
+- **EditorArea** (`EditorArea.tsx`) - Legacy container that combines TabBar at the top with DocumentEditor below. Still exists but is no longer imported or used by `App.tsx`, which renders `TabBar` and `DocumentEditor` directly for more control over the Brain tab layout.
 
 The layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend uses the loaded brain mesh as a real containment boundary for the graph, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the dodecahedron nodes stay inside the shell. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales it to a larger target diagonal (`325`) so the default framing gives the visualization more room. That shell is rendered as a very light wireframe overlay (`opacity: 0.06`) so it frames the brain without competing with the nodes. Each graph node is rendered as a procedural `DodecahedronGeometry` with flat shading and a text label sprite above it, colored by community palette when a `community_id` is present or by the red-to-blue score gradient otherwise.
 
