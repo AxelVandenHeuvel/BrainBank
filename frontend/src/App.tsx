@@ -77,19 +77,42 @@ export default function App() {
   }
 
   function handleDocSaved(docId: string, newDocId?: string, currentContent?: string) {
+    const wasNewTab = openTabs.find((t) => t.id === docId)?.isNew ?? false;
+
     setOpenTabs((prev) =>
-      prev.map((t) => {
-        if (t.id !== docId) return t;
-        // Update the tab id, preserve content so remount doesn't lose it, mark as not new
-        return {
-          ...t,
-          id: newDocId ?? docId,
-          isNew: false,
-          content: currentContent ?? t.content,
-        };
-      }),
+      {
+        const idx = prev.findIndex((t) => t.id === docId);
+        if (idx === -1) return prev;
+
+        const savedTab = prev[idx];
+
+        if (savedTab.isNew) {
+          const next = prev.filter((t) => t.id !== docId);
+          if (activeTabId === docId) {
+            if (next.length === 0) {
+              setActiveTabId(BRAIN_TAB_ID);
+            } else if (idx < next.length) {
+              setActiveTabId(next[idx].id);
+            } else {
+              setActiveTabId(next[next.length - 1].id);
+            }
+          }
+          return next;
+        }
+
+        return prev.map((t) => {
+          if (t.id !== docId) return t;
+          // Update the tab id, preserve content so remount doesn't lose it, mark as not new
+          return {
+            ...t,
+            id: newDocId ?? docId,
+            isNew: false,
+            content: currentContent ?? t.content,
+          };
+        });
+      }
     );
-    if (newDocId && activeTabId === docId) {
+    if (!wasNewTab && newDocId && activeTabId === docId) {
       setActiveTabId(newDocId);
     }
     refetch();
@@ -111,18 +134,15 @@ export default function App() {
     openDocument(docId, name, content);
 
     if (source === 'api') {
-      fetch(`/api/concepts/${encodeURIComponent(conceptName)}/documents`)
+      fetch(`/api/documents/${encodeURIComponent(docId)}`)
         .then((res) => {
           if (!res.ok) throw new Error('fetch failed');
           return res.json();
         })
-        .then((docs: { doc_id: string; name: string; full_text: string }[]) => {
-          const doc = docs.find((d) => d.doc_id === docId);
-          if (doc) {
-            setOpenTabs((prev) =>
-              prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
-            );
-          }
+        .then((doc: { doc_id: string; name: string; full_text: string }) => {
+          setOpenTabs((prev) =>
+            prev.map((t) => (t.id === docId ? { ...t, content: doc.full_text } : t)),
+          );
         })
         .catch(() => { /* already showing mock content */ });
     }

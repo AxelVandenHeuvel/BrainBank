@@ -125,6 +125,19 @@ describe('DocumentEditor', () => {
     expect(screen.getByTestId('save-status')).toBeInTheDocument();
   });
 
+  it('renders a manual save button', () => {
+    render(
+      <DocumentEditor
+        docId="doc-1"
+        initialTitle="Test"
+        initialContent=""
+        isNew={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save note' })).toBeInTheDocument();
+  });
+
   it('title changes call onTitleChange', async () => {
     const user = userEvent.setup();
     const onTitleChange = vi.fn();
@@ -143,7 +156,7 @@ describe('DocumentEditor', () => {
     expect(onTitleChange).toHaveBeenCalledWith('doc-1', 'New Title');
   });
 
-  it('auto-save triggers after debounce for new docs (POST /ingest)', async () => {
+  it('does not save a new note while the user is typing', async () => {
     vi.useFakeTimers();
 
     render(
@@ -166,17 +179,40 @@ describe('DocumentEditor', () => {
       mockOnChange?.('Hello world');
     });
 
-    // Advance past the 1.5s debounce
     await act(async () => {
-      vi.advanceTimersByTime(1600);
+      vi.advanceTimersByTime(5000);
     });
 
-    expect(fetch).toHaveBeenCalledWith('/ingest', expect.objectContaining({
-      method: 'POST',
-    }));
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('auto-save triggers after debounce for existing docs (PUT /api/documents/{docId})', async () => {
+  it('manual save persists a title-only new note through the lightweight document endpoint', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <DocumentEditor
+        docId="new-1"
+        initialTitle="Untitled"
+        initialContent=""
+        isNew={true}
+      />,
+    );
+
+    const titleInput = screen.getByDisplayValue('Untitled');
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Short draft');
+    await user.click(screen.getByRole('button', { name: 'Save note' }));
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/documents',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ title: 'Short draft', text: '' }),
+      }),
+    );
+  });
+
+  it('does not save an existing note while the user is typing', async () => {
     vi.useFakeTimers();
 
     render(
@@ -198,8 +234,34 @@ describe('DocumentEditor', () => {
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(1600);
+      vi.advanceTimersByTime(5000);
     });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('manual save persists existing notes through PUT /api/documents/{docId}', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <DocumentEditor
+        docId="existing-1"
+        initialTitle="Existing"
+        initialContent=""
+        isNew={false}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      mockMarkdown = 'Updated content';
+      mockOnChange?.('Updated content');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Save note' }));
 
     expect(fetch).toHaveBeenCalledWith(
       '/api/documents/existing-1',
