@@ -84,6 +84,8 @@ frontend/
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  sample_data/
+    college_math_notes.py   - Loads and seeds the sample college math corpus
   schemas.py                - Shared Pydantic response models (DocumentResponse)
   db/
     lance.py                - LanceDB init + chunks table schema
@@ -98,10 +100,18 @@ backend/
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
     query.py                - Query pipeline: search -> expand -> answer
+sample_data/
+  college_math_notes/
+    catalog.json            - Metadata for the sample math note corpus
+    *.md                    - College student math note documents for document-opening tests
+scripts/
+  seed_college_math_notes.py - Seeds the sample math note corpus into local databases
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
   test_api_graph.py         - Graph export API tests
+  sample_data/
+    test_college_math_notes.py - Sample data loading and seeding tests
   db/
     test_lance.py           - LanceDB init tests
     test_kuzu.py            - Kuzu init tests
@@ -116,6 +126,10 @@ tests/
 ```
 
 Each file has a single responsibility. Tests mirror the source structure.
+
+## Sample Data Seeding
+
+`sample_data/college_math_notes` contains a small college-student math corpus for frontend document-opening tests. `scripts/seed_college_math_notes.py` loads the catalog, splits each markdown file into paragraph chunks, writes deterministic vectors plus chunk text into LanceDB, and upserts the matching Concept and RELATED_TO graph data into Kuzu. The seeder skips any sample `doc_id` values that are already present, so rerunning it does not duplicate the sample documents.
 
 ## Frontend Graph Flow
 
