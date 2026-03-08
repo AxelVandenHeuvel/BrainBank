@@ -302,7 +302,7 @@ describe('Graph3D', () => {
     });
   });
 
-  it('renders a top-left checkbox control that toggles the brain mesh visibility', async () => {
+  it('renders a top-left checkbox control that fades the brain mesh in and out', async () => {
     render(
       <Graph3D
         data={graph}
@@ -323,14 +323,63 @@ describe('Graph3D', () => {
 
     const brainGroup = sceneObject.children[0] as THREE.Group | undefined;
     expect(brainGroup?.visible).toBe(true);
+    const brainMaterials: THREE.MeshBasicMaterial[] = [];
+    brainGroup?.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial) {
+        brainMaterials.push(child.material);
+      }
+    });
+    expect(brainMaterials).not.toHaveLength(0);
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeCloseTo(0.06, 6);
+    });
 
     fireEvent.click(toggleCheckbox);
     expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).not.toBeChecked();
+    expect(brainGroup?.visible).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+      await Promise.resolve();
+    });
+
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeGreaterThan(0);
+      expect(material.opacity).toBeLessThan(0.06);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+    });
+
     expect(brainGroup?.visible).toBe(false);
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeCloseTo(0, 6);
+    });
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Brain mesh' }));
     expect(screen.getByRole('checkbox', { name: 'Brain mesh' })).toBeChecked();
     expect(brainGroup?.visible).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+      await Promise.resolve();
+    });
+
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeGreaterThan(0);
+      expect(material.opacity).toBeLessThan(0.06);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+    });
+
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeCloseTo(0.06, 6);
+    });
   });
 
   it('creates dodecahedron node with correct color and label', () => {
