@@ -59,7 +59,7 @@ describe('useGraphData', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.source).toBe('mock');
-    expect(result.current.error).toBe('Invalid graph payload');
+    expect(result.current.error).toBe('Empty or invalid graph payload');
   });
 
   it('uses api data when related edges include null reason', async () => {

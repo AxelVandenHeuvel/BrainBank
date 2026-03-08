@@ -22,6 +22,7 @@ def query_brainbank(
     kuzu_db_path: str = "./data/kuzu",
     shared_kuzu_db=None,
     config: RetrievalConfig | None = None,
+    history: list[dict] | None = None,
 ) -> dict:
     if config is None:
         config = RetrievalConfig()
@@ -49,7 +50,7 @@ def query_brainbank(
             search_result.discovery_chunks,
             config.max_context_words,
         )
-        answer = generate_answer(user_query, context, all_concepts)
+        answer = generate_answer(user_query, context, all_concepts, history=history or None)
 
         return QueryResult(
             answer=answer,
