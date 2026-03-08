@@ -103,6 +103,28 @@ class TestExtractConcepts:
         assert '"relationships"' in prompt
 
 
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_prompt_includes_existing_concept_mapping_guidance(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = """
+            {
+              "concepts": ["Integrals"],
+              "relationships": []
+            }
+            """
+        mock_get_provider.return_value = provider
+
+        extract_concepts(
+            "Definite integrals build on antiderivatives.",
+            "Calc II",
+            existing_concepts=["Integrals", "Derivatives"],
+        )
+
+        prompt = provider.generate_text.call_args.args[0]
+        assert "Prioritize mapping extracted ideas to the provided list of existing concepts" in prompt
+        assert "Only create a new concept name if the idea is genuinely novel" in prompt
+        assert "Integrals, Derivatives" in prompt
+
 class TestModelSelection:
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)
     @patch("backend.services.llm.get_provider")

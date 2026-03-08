@@ -1,6 +1,6 @@
 import kuzu as _kuzu
 
-from backend.db.kuzu import init_kuzu
+from backend.db.kuzu import get_open_database_for_path, init_kuzu
 from backend.db.lance import init_lancedb
 from backend.retrieval.context import build_local_context
 from backend.retrieval.global_search import run_global_search
@@ -22,8 +22,18 @@ EMPTY_BRAINBANK_MESSAGE = (
 def _get_query_connection(shared_kuzu_db, kuzu_db_path: str):
     if shared_kuzu_db is not None:
         return shared_kuzu_db, _kuzu.Connection(shared_kuzu_db), False
-    kuzu_db, conn = init_kuzu(kuzu_db_path)
-    return kuzu_db, conn, True
+
+    try:
+        kuzu_db, conn = init_kuzu(kuzu_db_path)
+        return kuzu_db, conn, True
+    except RuntimeError as error:
+        if "Could not set lock on file" not in str(error):
+            raise
+
+        existing_db = get_open_database_for_path(kuzu_db_path)
+        if existing_db is None:
+            raise
+        return existing_db, _kuzu.Connection(existing_db), False
 
 
 def query_brainbank(

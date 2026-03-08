@@ -23,7 +23,20 @@ def _parse_json_response(raw_text: str) -> dict:
     return json.loads(raw.strip())
 
 
-def _build_extraction_prompt(text: str, doc_name: str) -> str:
+def _build_extraction_prompt(
+    text: str,
+    doc_name: str,
+    existing_concepts: list[str] | None = None,
+) -> str:
+    existing_concepts_section = ""
+    if existing_concepts:
+        existing_concepts_section = (
+            "Canonical concept mapping rules:\n"
+            "- Prioritize mapping extracted ideas to the provided list of existing concepts if they are semantically equivalent.\n"
+            "- Only create a new concept name if the idea is genuinely novel to the database.\n"
+            f"- Existing concepts: {', '.join(existing_concepts)}\n\n"
+        )
+
     return (
         "You extract concepts for a knowledge-graph-driven notes system.\n"
         "Goal: produce concepts that create useful cross-document connections without noisy one-off terms.\n\n"
@@ -33,6 +46,7 @@ def _build_extraction_prompt(text: str, doc_name: str) -> str:
         "- Use noun phrases (1-4 words), Title Case, and stable canonical wording.\n"
         "- Keep concepts that are reusable across notes; avoid dates, course admin terms, and vague words.\n"
         "- Include key techniques/rules when they materially matter to the note.\n\n"
+        f"{existing_concepts_section}"
         "Relationship selection rules:\n"
         "- Return 3-10 directed relationships between returned concepts.\n"
         "- Use concise relationship labels (1-4 words) that explain why the concepts connect.\n"
@@ -49,8 +63,16 @@ def _build_extraction_prompt(text: str, doc_name: str) -> str:
     )
 
 
-def extract_concepts(text: str, doc_name: str) -> dict:
-    prompt = _build_extraction_prompt(text=text, doc_name=doc_name)
+def extract_concepts(
+    text: str,
+    doc_name: str,
+    existing_concepts: list[str] | None = None,
+) -> dict:
+    prompt = _build_extraction_prompt(
+        text=text,
+        doc_name=doc_name,
+        existing_concepts=existing_concepts,
+    )
     response_text = get_provider().generate_text(prompt)
     return _parse_json_response(response_text)
 
