@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
 
 ## Stack
 
@@ -137,7 +137,8 @@ backend/
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
-    llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
+    llm.py                  - BrainBank prompt workflows and JSON parsing for extraction/answering
+    llm_providers.py        - Provider registry plus Gemini/Ollama transport adapters
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
   scripts/
@@ -180,7 +181,8 @@ tests/
     test_heal_graph.py      - heal_graph: cosine similarity, centroid computation, edge-exists, bridge insertion tests
   services/
     test_clustering.py      - Leiden clustering: empty/small-graph handling + community assignment tests
-    test_llm.py             - LLM extraction tests
+    test_llm.py             - Prompt workflow and extraction tests
+    test_llm_providers.py   - Provider registry and Gemini/Ollama adapter tests
     test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
     test_pdf.py             - PDF text extraction tests
   test_api_notion.py        - Notion import API endpoint tests
@@ -523,11 +525,12 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 
 | Variable       | Required | Purpose            |
 |----------------|----------|--------------------|
+| BRAINBANK_LLM_PROVIDER | No | Default backend LLM provider for extraction and retrieval answers (default: `gemini`) |
 | GEMINI_API_KEY | Yes      | Gemini API authentication |
 | GEMINI_MODEL   | No       | Override model name (default: `gemini-2.5-flash`) |
-| TEST_LLM_PROVIDER | No    | Test route provider: `gemini` or `ollama` |
+| TEST_LLM_PROVIDER | No    | Optional override for the `/test-llm` route; if unset it reuses `BRAINBANK_LLM_PROVIDER` |
 | OLLAMA_BASE_URL | No      | Local Ollama base URL (default: `http://localhost:11434`) |
-| OLLAMA_MODEL | No         | Local Ollama model for the test route (default: `llama3.2:3b`) |
+| OLLAMA_MODEL | No         | Local Ollama model for any Ollama-backed route (default: `llama3.2:3b`) |
 
 Database paths default to `./data/lancedb` and `./data/kuzu`.
 
@@ -544,4 +547,3 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
-

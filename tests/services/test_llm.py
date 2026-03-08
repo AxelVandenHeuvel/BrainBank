@@ -8,20 +8,11 @@ from backend.services.llm import (
     synthesize_answers,
     generate_test_answer,
 )
-
-
-def _mock_response(text: str):
-    response = Mock()
-    response.text = text
-    return response
-
-
 class TestExtractConcepts:
-    @patch("backend.services.llm._get_client")
-    def test_extract_concepts_still_returns_legacy_shape(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response(
-            """```json
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_still_returns_legacy_shape(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = """```json
             {
               "concepts": ["Calculus", "Derivatives"],
               "relationships": [
@@ -29,8 +20,7 @@ class TestExtractConcepts:
               ]
             }
             ```"""
-        )
-        mock_get_client.return_value = client
+        mock_get_provider.return_value = provider
 
         result = extract_concepts("Calculus notes", "Math Notes")
 
@@ -45,10 +35,10 @@ class TestExtractConcepts:
             ],
         }
 
-    @patch("backend.services.llm._get_client")
-    def test_extract_concepts_strips_markdown_code_fences(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response(
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_strips_markdown_code_fences(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = (
             """```json
             {
               "concepts": [],
@@ -56,7 +46,7 @@ class TestExtractConcepts:
             }
             ```"""
         )
-        mock_get_client.return_value = client
+        mock_get_provider.return_value = provider
 
         result = extract_concepts("Entry text", "Journal")
 
@@ -65,11 +55,10 @@ class TestExtractConcepts:
             "relationships": [],
         }
 
-    @patch("backend.services.llm._get_client")
-    def test_extract_concepts_passes_document_title_and_text_to_gemini(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response(
-            """
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_passes_document_title_and_text_to_provider(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = """
             {
               "concepts": ["Graph database"],
               "relationships": [
@@ -77,8 +66,7 @@ class TestExtractConcepts:
               ]
             }
             """
-        )
-        mock_get_client.return_value = client
+        mock_get_provider.return_value = provider
 
         journal_text = (
             "## Work\n"
@@ -88,15 +76,15 @@ class TestExtractConcepts:
         )
         extract_concepts(journal_text, "Daily Journal")
 
-        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        prompt = provider.generate_text.call_args.args[0]
         assert "Daily Journal" in prompt
         assert journal_text in prompt
         assert '"concepts"' in prompt
 
-    @patch("backend.services.llm._get_client")
-    def test_extract_concepts_prompt_enforces_balanced_graph_concept_count(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response(
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_prompt_enforces_balanced_graph_concept_count(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = (
             """
             {
               "concepts": ["Calculus", "Derivatives", "Chain Rule", "Product Rule"],
@@ -104,11 +92,11 @@ class TestExtractConcepts:
             }
             """
         )
-        mock_get_client.return_value = client
+        mock_get_provider.return_value = provider
 
         extract_concepts("Chain rule builds on derivatives and calculus.", "Derivative Notes")
 
-        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        prompt = provider.generate_text.call_args.args[0]
         assert "Return between 4 and 8 concepts" in prompt
         assert "1-2 high-level anchor concepts" in prompt
         assert "2-6 specific method/entity concepts" in prompt
@@ -117,23 +105,26 @@ class TestExtractConcepts:
 
 class TestModelSelection:
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)
-    @patch("backend.services.llm._get_client")
-    def test_generate_answer_uses_current_default_model(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response("Answer")
-        mock_get_client.return_value = client
+    @patch("backend.services.llm.get_provider")
+    def test_generate_answer_uses_selected_provider(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = "Answer"
+        mock_get_provider.return_value = provider
 
         result = generate_answer("What is calculus?", "Context", ["Calculus"])
 
         assert result == "Answer"
-        assert client.models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash"
+        mock_get_provider.assert_called_once_with()
+        prompt = provider.generate_text.call_args.args[0]
+        assert "What is calculus?" in prompt
+        assert "Context" in prompt
 
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)
-    @patch("backend.services.llm._get_client")
-    def test_generate_partial_answer_uses_summary_and_member_concepts(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response("Partial")
-        mock_get_client.return_value = client
+    @patch("backend.services.llm.get_provider")
+    def test_generate_partial_answer_uses_summary_and_member_concepts(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = "Partial"
+        mock_get_provider.return_value = provider
 
         result = generate_partial_answer(
             "Summarize the corpus",
@@ -142,17 +133,17 @@ class TestModelSelection:
         )
 
         assert result == "Partial"
-        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        prompt = provider.generate_text.call_args.args[0]
         assert "Summarize the corpus" in prompt
         assert "This community is about calculus." in prompt
         assert "Calculus, Derivatives" in prompt
 
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)
-    @patch("backend.services.llm._get_client")
-    def test_synthesize_answers_combines_partials(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response("Synthesized")
-        mock_get_client.return_value = client
+    @patch("backend.services.llm.get_provider")
+    def test_synthesize_answers_combines_partials(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = "Synthesized"
+        mock_get_provider.return_value = provider
 
         result = synthesize_answers(
             "What are the main ideas?",
@@ -160,17 +151,17 @@ class TestModelSelection:
         )
 
         assert result == "Synthesized"
-        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        prompt = provider.generate_text.call_args.args[0]
         assert "What are the main ideas?" in prompt
         assert "Partial answer 1" in prompt
         assert "Partial answer 2" in prompt
 
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)
-    @patch("backend.services.llm._get_client")
-    def test_generate_community_summary_uses_member_concepts_and_evidence(self, mock_get_client):
-        client = Mock()
-        client.models.generate_content.return_value = _mock_response("Community summary")
-        mock_get_client.return_value = client
+    @patch("backend.services.llm.get_provider")
+    def test_generate_community_summary_uses_member_concepts_and_evidence(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = "Community summary"
+        mock_get_provider.return_value = provider
 
         result = generate_community_summary(
             "community:0001",
@@ -179,42 +170,23 @@ class TestModelSelection:
         )
 
         assert result == "Community summary"
-        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        prompt = provider.generate_text.call_args.args[0]
         assert "community:0001" in prompt
         assert "Calculus, Limits" in prompt
         assert "Chunk evidence one" in prompt
         assert "Chunk evidence two" in prompt
 
-    @patch.dict("backend.services.llm.os.environ", {"BRAINBANK_LLM_PROVIDER": "ollama"}, clear=False)
-    @patch("backend.services.llm.urlopen")
-    def test_generate_answer_can_use_local_ollama(self, mock_urlopen):
-        response = Mock()
-        response.read.return_value = b'{"response": "Grounded local answer"}'
-        mock_urlopen.return_value.__enter__.return_value = response
-
-        result = generate_answer("What is calculus?", "Context from retrieval", ["Calculus"])
-
-        assert result == "Grounded local answer"
-        request = mock_urlopen.call_args.args[0]
-        assert request.full_url == "http://localhost:11434/api/generate"
-        assert request.get_method() == "POST"
-        assert b'"model": "llama3.2:3b"' in request.data
-        assert b'What is calculus?' in request.data
-        assert b'Context from retrieval' in request.data
-        assert b'Calculus' in request.data
-
     @patch.dict("backend.services.llm.os.environ", {"TEST_LLM_PROVIDER": "ollama"}, clear=False)
-    @patch("backend.services.llm.urlopen")
-    def test_generate_test_answer_can_use_local_ollama(self, mock_urlopen):
-        response = Mock()
-        response.read.return_value = b'{"response": "Local model reply"}'
-        mock_urlopen.return_value.__enter__.return_value = response
+    @patch("backend.services.llm.get_provider")
+    def test_generate_test_answer_uses_test_provider_override(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = "Local model reply"
+        mock_get_provider.return_value = provider
 
         result = generate_test_answer("Say hello")
 
         assert result == "Local model reply"
-        request = mock_urlopen.call_args.args[0]
-        assert request.full_url == "http://localhost:11434/api/generate"
-        assert request.get_method() == "POST"
-        assert b'"model": "llama3.2:3b"' in request.data
-        assert b'"prompt": "Say hello"' in request.data
+        mock_get_provider.assert_called_once_with(provider_name="ollama")
+        prompt = provider.generate_text.call_args.args[0]
+        assert "You are a test route for BrainBank." in prompt
+        assert "Question: Say hello" in prompt
