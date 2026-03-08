@@ -83,6 +83,12 @@ interface TooltipPosition {
   y: number;
 }
 
+interface FixedNodeAnchor {
+  x: number;
+  y: number;
+  z: number;
+}
+
 interface BrainHomeView {
   distance: number;
   focusPoint: {
@@ -107,6 +113,7 @@ interface SelectedRelationshipEdge {
 }
 
 const BRAIN_MODEL_URL = '/assets/human-brain.glb';
+const NEURON_MODEL_URL = '/assets/neuron-spinous-stellate-cell.glb';
 const CAMERA_MOVE_DURATION_MS = 1200;
 const AUTO_CENTER_PADDING = 120;
 const IDLE_ROTATE_DELAY_MS = 5000;
@@ -121,18 +128,125 @@ const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
 const POINTER_ROTATION_SPEED = 0.005;
 const IDLE_ROTATION_SPEED = 0.002;
 const MAX_SCENE_TILT = Math.PI / 3;
-const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.45)';
-const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.52)';
+const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.28)';
+const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.34)';
 const SEMANTIC_BRIDGE_COLOR = 'rgba(251, 191, 36, 0.6)';
-const GHOST_EDGE_WIDTH = 0.8;
+const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
-const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 3.5;
+const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
+const BRAIN_MODEL_TARGET_DIAGONAL = 325;
+const NEURON_MODEL_TARGET_DIAGONAL = 26;
+const NODE_LABEL_Y_OFFSET = 16;
+const NODE_LAYOUT_ANCHORS: ReadonlyArray<FixedNodeAnchor> = [
+  { x: 0, y: 30.9, z: 0 },
+  { x: -39.9, y: 8.5, z: -31.6 },
+  { x: 4.5, y: -20.5, z: 44.1 },
+  { x: 27.4, y: 29.1, z: -30.9 },
+  { x: -65.6, y: -2.4, z: 10 },
+  { x: 33.5, y: -36.5, z: 18.4 },
+  { x: -16.9, y: 19.2, z: -54.2 },
+  { x: -31.7, y: -16.4, z: 52.8 },
+  { x: 32.4, y: 43.1, z: -10.2 },
+  { x: -70.5, y: 6.2, z: -25.2 },
+  { x: 25.6, y: -32.3, z: 47.2 },
+  { x: 19.2, y: 30.7, z: -52.9 },
+  { x: -69.4, y: -8.8, z: 34.8 },
+  { x: 29.4, y: -49.6, z: 5.6 },
+  { x: -46, y: 16.5, z: -56.5 },
+  { x: -9.7, y: -25.2, z: 64.8 },
+  { x: 41.5, y: 43.2, z: -30.2 },
+  { x: -87.3, y: 0.7, z: -3.1 },
+  { x: 41.4, y: -42.8, z: 35.6 },
+  { x: -3.6, y: 28, z: -67.5 },
+  { x: -55.6, y: -16.2, z: 57.6 },
+  { x: 26.1, y: 56.4, z: -3 },
+  { x: -74.3, y: 11.5, z: -44.7 },
+  { x: 16.8, y: -34.2, z: 64.6 },
+  { x: 34.9, y: 40.3, z: -52.7 },
+  { x: -90, y: -6, z: 24.8 },
+  { x: 44, y: -53.2, z: 17.6 },
+  { x: -34.6, y: 23.3, z: -71.4 },
+  { x: -30.3, y: -24.5, z: 72.9 },
+  { x: 46.3, y: 53.5, z: -21 },
+  { x: -95.3, y: 5.2, z: -21.7 },
+  { x: 39.4, y: -43.8, z: 53 },
+  { x: 14.1, y: 35.8, z: -71.2 },
+  { x: -78.1, y: -13.7, z: 52.3 },
+  { x: 23.1, y: -63.8, z: 1.7 },
+  { x: -67.1, y: 17.3, z: -62.7 },
+  { x: 0.4, y: -33.3, z: 77.1 },
+  { x: 47.3, y: 49.1, z: -45.1 },
+  { x: -103.9, y: -2, z: 8.3 },
+  { x: 50.9, y: -53.7, z: 33.4 },
+  { x: -17, y: 30.1, z: -80.6 },
+  { x: -53.6, y: -22, z: 73.6 },
+  { x: 41.6, y: 63, z: -9.9 },
+  { x: -94.5, y: 10.4, z: -41.9 },
+  { x: 29.7, y: -42.7, z: 69.2 },
+  { x: 32, y: 43.6, z: -68 },
+  { x: -97.7, y: -9.9, z: 40 },
+  { x: 44.7, y: -64, z: 11.9 },
+  { x: -52.6, y: 23.5, z: -77.6 },
+  { x: -21, y: -30.9, z: 84.4 },
+  { x: 54.1, y: 57.6, z: -33.2 },
+  { x: -111, y: 2.8, z: -12 },
+  { x: 50.2, y: -52.5, z: 51 },
+  { x: 3.5, y: 37.2, z: -83.8 },
+  { x: -77.1, y: -18.4, z: 67.6 },
+  { x: 20.4, y: 72.2, z: -0.9 },
+  { x: -86.1, y: 16.2, z: -61.5 },
+  { x: 13.3, y: -40.3, z: 82.6 },
+  { x: 47.3, y: 51.4, z: -59.3 },
+  { x: -112.7, y: -5.4, z: 22.4 },
+  { x: 55.6, y: -62.7, z: 27.2 },
+  { x: -33, y: 30.1, z: -88 },
+  { x: -45.3, y: -27.5, z: 85.9 },
+  { x: 53, y: 66.2, z: -19.4 },
+];
+
+function getDeterministicNodeColorScore(node: GraphNode): number {
+  if (node.colorScore !== undefined) {
+    return node.colorScore;
+  }
+
+  return (
+    String(node.id).split('').reduce((acc, char) => {
+      return (acc * 31 + char.charCodeAt(0)) % 10000;
+    }, 0) / 10000
+  );
+}
+
+function getVisualNodeColor(node: GraphNode): THREE.Color {
+  return new THREE.Color(0xff4444).lerp(
+    new THREE.Color(0x4444ff),
+    getDeterministicNodeColorScore(node),
+  );
+}
+
+function createOverflowAnchor(index: number): FixedNodeAnchor {
+  const angle = index * 2.399963229728653;
+  const radius = 88 + (index % 9) * 4;
+  const height = ((index % 7) - 3) * 12;
+
+  return {
+    x: Math.cos(angle) * radius,
+    y: height,
+    z: Math.sin(angle) * radius * 0.82,
+  };
+}
 
 function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 128;
-  const ctx = canvas.getContext('2d');
+  let ctx: CanvasRenderingContext2D | null = null;
+
+  try {
+    ctx = canvas.getContext('2d');
+  } catch {
+    ctx = null;
+  }
+
   if (ctx) {
     ctx.fillStyle = 'rgba(0,0,0,0)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -157,6 +271,21 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
   sprite.renderOrder = 999;
   return sprite;
 }
+
+function createColoredNeuronMaterial(nodeColor: THREE.Color): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color: nodeColor,
+    emissive: nodeColor.clone().multiplyScalar(0.08),
+    roughness: 0.38,
+    metalness: 0.08,
+    clearcoat: 0.22,
+    transmission: 0.12,
+    transparent: true,
+    opacity: 0.92,
+    side: THREE.DoubleSide,
+  });
+}
+
 export function Graph3D({
   data,
   source: graphSource,
@@ -165,6 +294,7 @@ export function Graph3D({
   onHoverNode: onHoverNodeProp,
 }: Graph3DProps) {
   const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
   const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -184,6 +314,7 @@ export function Graph3D({
   const expandedConceptIdRef = useRef<string | null>(null);
   const cameraAnimationRef = useRef<number | null>(null);
   const lastSearchTargetIdRef = useRef<string | null>(null);
+  const fixedNodeAnchorsRef = useRef<Map<string, FixedNodeAnchor>>(new Map());
 
   const [expandedConcept, setExpandedConcept] = useState<GraphNode | null>(null);
   const [expandedDocs, setExpandedDocs] = useState<RelationshipDocument[] | null>(null);
@@ -197,41 +328,74 @@ export function Graph3D({
   const [focusedEdgeNodeId, setFocusedEdgeNodeId] = useState<string | null>(null);
   const [discoveryModeEnabled, setDiscoveryModeEnabled] = useState(true);
   const [latentLinks, setLatentLinks] = useState<GraphLink[]>([]);
+  const [neuronTemplate, setNeuronTemplate] = useState<THREE.Object3D | null>(null);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
-    if (!discoveryModeEnabled || latentLinks.length === 0) {
-      return data;
-    }
-
     const existingNodeIds = new Set(data.nodes.map((node) => node.id));
-    const ghostNodes: GraphNode[] = [];
+    const nodes = [...data.nodes];
+    const links = [...data.links];
 
-    for (const link of latentLinks) {
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      if (existingNodeIds.has(targetId)) {
-        continue;
+    if (discoveryModeEnabled && latentLinks.length > 0) {
+      const ghostNodes: GraphNode[] = [];
+
+      for (const link of latentLinks) {
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        if (existingNodeIds.has(targetId)) {
+          continue;
+        }
+
+        existingNodeIds.add(targetId);
+        const targetName = targetId.startsWith('doc:') ? targetId.slice('doc:'.length) : targetId;
+        ghostNodes.push({
+          id: targetId,
+          type: 'Document',
+          name: targetName,
+        });
       }
 
-      existingNodeIds.add(targetId);
-      const targetName = targetId.startsWith('doc:') ? targetId.slice('doc:'.length) : targetId;
-      ghostNodes.push({
-        id: targetId,
-        type: 'Document',
-        name: targetName,
-      });
+      nodes.push(...ghostNodes);
+      links.push(...latentLinks);
     }
+    const missingNodes = nodes
+      .filter((node) => !fixedNodeAnchorsRef.current.has(node.id))
+      .sort((left, right) => left.id.localeCompare(right.id));
+
+    missingNodes.forEach((node) => {
+      const anchorIndex = fixedNodeAnchorsRef.current.size;
+      const anchor =
+        NODE_LAYOUT_ANCHORS[anchorIndex] ?? createOverflowAnchor(anchorIndex - NODE_LAYOUT_ANCHORS.length);
+      fixedNodeAnchorsRef.current.set(node.id, anchor);
+    });
+
+    nodes.forEach((node) => {
+      const anchor = fixedNodeAnchorsRef.current.get(node.id);
+
+      if (!anchor) {
+        return;
+      }
+
+      node.x = anchor.x;
+      node.y = anchor.y;
+      node.z = anchor.z;
+      node.fx = anchor.x;
+      node.fy = anchor.y;
+      node.fz = anchor.z;
+      node.vx = 0;
+      node.vy = 0;
+      node.vz = 0;
+    });
 
     return {
-      nodes: [...data.nodes, ...ghostNodes],
-      links: [...data.links, ...latentLinks],
+      nodes,
+      links,
     };
   }, [data, discoveryModeEnabled, latentLinks]);
-  const haloDataMapRef = useRef<Record<string, any[]>>({});
 
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
+  const activeCardNode = expandedConcept ? null : selectedNode ?? hoveredNode;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
@@ -287,97 +451,37 @@ export function Graph3D({
   }
 
   const getNodeThreeObject = useCallback((node: GraphNode): THREE.Object3D | null => {
+    if (!neuronTemplate) {
+      return null;
+    }
+
     const group = new THREE.Group();
 
-    let nodeColor: THREE.Color;
-    if (node.type === 'Concept' && node.community_id != null) {
-      // Use Leiden community palette when community_id is available.
-      nodeColor = new THREE.Color(communityColor(node.community_id));
-    } else {
-      // Fall back to colorScore lerp (or id-hash when colorScore is absent).
-      const hash = String(node.id).split('').reduce((acc, char) => {
-          return (acc * 31 + char.charCodeAt(0)) % 10000;
-      }, 0) / 10000;
-      const colorScore = node.colorScore !== undefined ? node.colorScore : hash;
-      const deepRed = new THREE.Color(0xFF4444);
-      const electricBlue = new THREE.Color(0x4444FF);
-      nodeColor = deepRed.clone().lerp(electricBlue, colorScore);
-    }
+    const nodeColor =
+      node.type === 'Concept' && node.community_id != null
+        ? new THREE.Color(communityColor(node.community_id))
+        : getVisualNodeColor(node);
     const hexColor = `#${nodeColor.getHexString()}`;
 
-    const sphereMaterial = new THREE.MeshPhysicalMaterial({
-        color: nodeColor,
-        roughness: 0.1,
-        metalness: 0.1,
-        transmission: 0.8,
-        transparent: true,
-        opacity: 0.4,
-        depthWrite: false,
-        side: THREE.DoubleSide,
+    const modelGroup = neuronTemplate.clone(true);
+    modelGroup.name = 'neuron-model';
+    modelGroup.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
+
+      child.material = createColoredNeuronMaterial(nodeColor);
+      child.castShadow = false;
+      child.receiveShadow = false;
     });
-
-    const sphereMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(6.5, 32, 32),
-      sphereMaterial
-    );
-    group.add(sphereMesh);
-
-    const haloGroup = new THREE.Group();
-    haloGroup.name = 'halo';
-
-    const haloMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: false,
-      opacity: 1,
-    });
-    const haloGeom = new THREE.SphereGeometry(0.4, 8, 8);
-
-    if (!haloDataMapRef.current[node.id]) {
-      haloDataMapRef.current[node.id] = Array.from({ length: 15 }).map(() => ({
-          radius: 1.5 + Math.random() * 4.0,
-          theta: Math.random() * 2 * Math.PI,
-          phi: Math.acos(2 * Math.random() - 1),
-          speed: 0.0015,
-          offset: Math.random() * Math.PI * 2
-      }));
-    }
-    const hData = haloDataMapRef.current[node.id];
-
-    const spawnTime = performance.now();
-    haloGroup.rotation.y = spawnTime * 0.0003;
-    haloGroup.rotation.x = spawnTime * 0.0001;
-
-    for (let i = 0; i < 15; i++) {
-        const mesh = new THREE.Mesh(haloGeom, haloMaterial);
-        const d = hData[i];
-
-        const r = d.radius + Math.sin(spawnTime * d.speed + d.offset) * 0.4;
-        mesh.position.setFromSphericalCoords(r, d.phi, d.theta);
-
-        mesh.userData = d;
-        haloGroup.add(mesh);
-    }
-    group.add(haloGroup);
+    group.add(modelGroup);
 
     const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
-    labelSprite.position.set(0, 10.5, 0);
+    labelSprite.position.set(0, NODE_LABEL_Y_OFFSET, 0);
     group.add(labelSprite);
 
-    group.userData.update = (time: number) => {
-        haloGroup.rotation.y = time * 0.0003;
-        haloGroup.rotation.x = time * 0.0001;
-
-        haloGroup.children.forEach(child => {
-            const d = child.userData;
-            const r = d.radius + Math.sin(time * d.speed + d.offset) * 0.4;
-            child.position.setFromSphericalCoords(r, d.phi, d.theta);
-        });
-    };
-
     return group;
-  // Only recreate node objects when the actual graph data changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayData]);
+  }, [neuronTemplate]);
 
   function clampNodesWithinBrain(refresh = false) {
     const containment = brainContainmentRef.current;
@@ -387,6 +491,14 @@ export function Graph3D({
     }
 
     const changed = clampNodesToContainment(displayData.nodes, containment);
+
+    displayData.nodes.forEach((node) => {
+      fixedNodeAnchorsRef.current.set(node.id, {
+        x: node.x ?? 0,
+        y: node.y ?? 0,
+        z: node.z ?? 0,
+      });
+    });
 
     if (changed && refresh) {
       graphRef.current?.refresh();
@@ -534,6 +646,7 @@ export function Graph3D({
 
   function handleReset() {
     setRotationPivotNode(null);
+    setSelectedNode(null);
     setLatentLinks([]);
 
     const brainHomeView = brainHomeViewRef.current;
@@ -795,15 +908,6 @@ export function Graph3D({
   }
 
   function handleNodeClick(node: GraphNode) {
-    if (node.type === 'Document') {
-      return;
-    }
-
-    if (node.type !== 'Concept') {
-      setLatentLinks([]);
-      return;
-    }
-
     const now = Date.now();
     const nodePoint = {
       x: node.x ?? 0,
@@ -811,8 +915,17 @@ export function Graph3D({
       z: node.z ?? 0,
     };
 
+    clearSelectedEdge();
+    setSelectedNode(node);
     setRotationPivotNode(node.id);
     suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
+
+    if (node.type !== 'Concept') {
+      lastNodeClickRef.current = null;
+      setLatentLinks([]);
+      smoothFlyToNode(nodePoint, 160);
+      return;
+    }
 
     if (
       lastNodeClickRef.current &&
@@ -836,6 +949,9 @@ export function Graph3D({
     if (isGhostLink(link)) {
       return;
     }
+    setSelectedNode(null);
+    setRotationPivotNode(null);
+    setLatentLinks([]);
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
     const targetId = typeof link.target === 'string' ? link.target : link.target.id;
     const sourceConcept = getConceptName(sourceId);
@@ -959,7 +1075,7 @@ export function Graph3D({
         return;
       }
 
-      const centeredBrain = centerObject3DAtOrigin(gltf.scene, 260);
+      const centeredBrain = centerObject3DAtOrigin(gltf.scene, BRAIN_MODEL_TARGET_DIAGONAL);
       brainGroup = centeredBrain.pivot;
 
       brainGroup.traverse((node) => {
@@ -968,7 +1084,7 @@ export function Graph3D({
             color: '#7dd3fc',
             wireframe: true,
             transparent: true,
-            opacity: 0.12,
+            opacity: 0.06,
             side: THREE.DoubleSide,
           });
         }
@@ -999,6 +1115,24 @@ export function Graph3D({
       if (brainGroup) {
         scene.remove(brainGroup);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const loader = new GLTFLoader();
+    let cancelled = false;
+
+    loader.load(NEURON_MODEL_URL, (gltf) => {
+      if (cancelled) {
+        return;
+      }
+
+      const centeredNeuron = centerObject3DAtOrigin(gltf.scene, NEURON_MODEL_TARGET_DIAGONAL);
+      setNeuronTemplate(centeredNeuron.pivot);
+    });
+
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -1177,7 +1311,7 @@ export function Graph3D({
   }, [hasFocusedRotationPivot, selectedEdge]);
 
   useEffect(() => {
-    if (!hoveredNode) {
+    if (!activeCardNode) {
       setTooltipPosition(null);
       return;
     }
@@ -1186,9 +1320,9 @@ export function Graph3D({
 
     const updatePosition = () => {
       const worldPoint = toWorldPoint({
-        x: hoveredNode.x ?? 0,
-        y: hoveredNode.y ?? 0,
-        z: hoveredNode.z ?? 0,
+        x: activeCardNode.x ?? 0,
+        y: activeCardNode.y ?? 0,
+        z: activeCardNode.z ?? 0,
       });
       const coords = graphRef.current?.graph2ScreenCoords(worldPoint.x, worldPoint.y, worldPoint.z);
 
@@ -1204,7 +1338,7 @@ export function Graph3D({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [hoveredNode]);
+  }, [activeCardNode]);
 
   function getBaseNodeColor(node: GraphNode): string {
     if (node.type === 'Concept') {
@@ -1279,6 +1413,14 @@ export function Graph3D({
     return Math.log(weight + 1) * ESTABLISHED_LINK_WIDTH_MULTIPLIER;
   }
 
+  function getLinkLineDash(link: GraphLink): [number, number] | undefined {
+    if (isGhostLink(link)) {
+      return [2, 1];
+    }
+
+    return undefined;
+  }
+
   // Stable callback refs so ForceGraph3D doesn't see new function identity on every render
   const handleNodeClickRef = useRef(handleNodeClick);
   handleNodeClickRef.current = handleNodeClick;
@@ -1299,6 +1441,9 @@ export function Graph3D({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const dashedLinkProps = {
+    linkLineDash: getLinkLineDash,
+  } as any;
 
   return (
     <div
@@ -1324,6 +1469,9 @@ export function Graph3D({
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
+          setSelectedNode(null);
+          setRotationPivotNode(null);
+          setLatentLinks([]);
         }
       }}
       onMouseMove={handleMouseMove}
@@ -1349,6 +1497,7 @@ export function Graph3D({
       </div>
       <ForceGraph3D
         ref={graphRef as never}
+        {...dashedLinkProps}
         graphData={displayData}
         width={viewportSize.width || undefined}
         height={viewportSize.height || undefined}
@@ -1361,9 +1510,10 @@ export function Graph3D({
         nodeThreeObject={getNodeThreeObject as (node: object) => THREE.Object3D}
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
+        linkLineDash={getLinkLineDash}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
-        linkOpacity={0.82}
+        linkOpacity={0.55}
         nodeRelSize={5}
         linkDirectionalParticles={0}
         cooldownTicks={120}
@@ -1404,12 +1554,20 @@ export function Graph3D({
           </>
         )}
       </div>
-      {hoveredNode && tooltipPosition && !expandedConcept ? (
+      {activeCardNode && tooltipPosition ? (
         <NodeTooltip
-          node={hoveredNode}
-          connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
+          node={activeCardNode}
+          connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
+          actionLabel={selectedNode?.type === 'Concept' ? 'Open docs' : undefined}
+          onAction={
+            selectedNode?.type === 'Concept'
+              ? () => {
+                  void handleConceptExpansion(selectedNode);
+                }
+              : undefined
+          }
         />
       ) : null}
 
@@ -1432,8 +1590,3 @@ export function Graph3D({
     </div>
   );
 }
-
-
-
-
-

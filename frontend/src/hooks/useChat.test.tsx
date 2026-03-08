@@ -28,11 +28,14 @@ describe('useChat', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(fetchMock).toHaveBeenCalledWith('/query', {
+    expect(fetchMock).toHaveBeenCalledWith('/query', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: 'What is calculus?' }),
-    });
+    }));
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.question).toBe('What is calculus?');
+    expect(sentBody.session_id).toBeDefined();
+    expect(sentBody.history).toEqual([]);
     expect(result.current.messages).toEqual([
       { role: 'user', content: 'What is calculus?' },
       {

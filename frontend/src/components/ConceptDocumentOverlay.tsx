@@ -31,7 +31,9 @@ export function ConceptDocumentOverlay({
     }
 
     setSelectedDocumentId((current) =>
-      documents.some((document) => document.doc_id === current) ? current : null,
+      documents.some((document) => document.doc_id === current)
+        ? current
+        : documents[0].doc_id,
     );
   }, [documents]);
 
