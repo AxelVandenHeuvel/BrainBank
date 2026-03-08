@@ -36,3 +36,9 @@ export interface ChatSession {
   updatedAt: string;
   messages: ChatMessage[];
 }
+
+export interface AssistantMessageSelection {
+  sourceConcepts: string[];
+  discoveryConcepts: string[];
+  message: ChatMessage;
+}

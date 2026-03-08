@@ -10,6 +10,7 @@ import { TabBar } from './components/TabBar';
 import { useGraphData } from './hooks/useGraphData';
 import { findMatchingNodeIds } from './lib/graphView';
 import { getMockDocumentsForConcept } from './mock/mockGraph';
+import type { AssistantMessageSelection } from './types/chat';
 import type { OpenTab } from './types/notes';
 
 const BRAIN_TAB_ID = '__brain__';
@@ -36,6 +37,8 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string>(BRAIN_TAB_ID);
   const [highlightedConcept, setHighlightedConcept] = useState<string | null>(null);
   const [fileTreeRefetchSignal, setFileTreeRefetchSignal] = useState(0);
+  const [selectedAssistantMessage, setSelectedAssistantMessage] =
+    useState<AssistantMessageSelection | null>(null);
 
   // --- Tab management ---
 
@@ -273,6 +276,14 @@ export default function App() {
               data={data}
               source={source}
               query={deferredQuery}
+              chatFocus={
+                selectedAssistantMessage
+                  ? {
+                      sourceConcepts: selectedAssistantMessage.sourceConcepts,
+                      discoveryConcepts: selectedAssistantMessage.discoveryConcepts,
+                    }
+                  : null
+              }
               onOpenDocument={openDocument}
               onConceptFocused={setHighlightedConcept}
             />
@@ -297,7 +308,7 @@ export default function App() {
         {/* Chat overlay */}
         <aside
           data-testid="chat-overlay"
-          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[24rem] lg:min-h-0 ${
+          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[30rem] lg:min-h-0 ${
             isChatOpen ? 'flex lg:pointer-events-auto' : 'hidden lg:flex lg:pointer-events-none'
           }`}
           aria-hidden={!isChatOpen}
@@ -320,7 +331,11 @@ export default function App() {
                 : 'invisible translate-x-8 opacity-0'
             }`}
           >
-            <ChatPanel graphSource={source} onOpenDocument={handleChatOpenDocument} />
+            <ChatPanel
+              graphSource={source}
+              onOpenDocument={handleChatOpenDocument}
+              onAssistantMessageSelect={setSelectedAssistantMessage}
+            />
           </div>
         </aside>
 
