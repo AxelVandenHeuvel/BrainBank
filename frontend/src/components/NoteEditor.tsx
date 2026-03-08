@@ -1,4 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Crepe } from '@milkdown/crepe';
+import { editorViewCtx } from '@milkdown/kit/core';
+import '@milkdown/crepe/theme/common/style.css';
+import '@milkdown/crepe/theme/frame-dark.css';
 
 interface NoteEditorProps {
   onSave: () => void;
@@ -10,10 +14,87 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const editorRoot = useRef<HTMLDivElement>(null);
+  const crepeRef = useRef<Crepe | null>(null);
+
+  useEffect(() => {
+    if (!editorRoot.current || crepeRef.current) return;
+
+    let destroyed = false;
+
+    const crepe = new Crepe({
+      root: editorRoot.current,
+      defaultValue: '',
+      features: {
+        [Crepe.Feature.Toolbar]: false,
+        [Crepe.Feature.Latex]: true,
+        [Crepe.Feature.BlockEdit]: false,
+        [Crepe.Feature.ImageBlock]: false,
+        [Crepe.Feature.Cursor]: false,
+      },
+      featureConfigs: {
+        [Crepe.Feature.Placeholder]: {
+          text: 'Start writing...',
+          mode: 'doc',
+        },
+        [Crepe.Feature.Latex]: {
+          katexOptions: { throwOnError: false },
+        },
+      },
+    });
+
+    crepe.on((listener) => {
+      listener.markdownUpdated((_ctx, markdown) => {
+        setContent(markdown);
+      });
+    });
+
+    crepe
+      .create()
+      .then(() => {
+        if (destroyed) return;
+        crepeRef.current = crepe;
+
+        // Backspace on empty heading instantly converts to paragraph
+        const el = editorRoot.current?.querySelector('.ProseMirror');
+        if (el) {
+          el.addEventListener('keydown', (e) => {
+            if ((e as KeyboardEvent).key !== 'Backspace') return;
+            crepe.editor.action((ctx) => {
+              const view = ctx.get(editorViewCtx);
+              const { state } = view;
+              const { $from } = state.selection;
+              const node = $from.parent;
+              if (
+                node.type.name === 'heading' &&
+                node.textContent === '' &&
+                $from.parentOffset === 0
+              ) {
+                const pos = $from.before();
+                view.dispatch(
+                  state.tr.setNodeMarkup(pos, state.schema.nodes.paragraph),
+                );
+                (e as Event).preventDefault();
+              }
+            });
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('Milkdown Crepe failed to initialize:', err);
+      });
+
+    return () => {
+      destroyed = true;
+      crepe.destroy().catch(() => {});
+      crepeRef.current = null;
+    };
+  }, []);
 
   async function handleSave() {
     const trimmedTitle = title.trim() || 'Untitled';
-    if (!content.trim()) return;
+    const markdown = crepeRef.current?.getMarkdown() ?? content;
+    if (!markdown.trim()) return;
 
     setSaving(true);
     setError(null);
@@ -22,7 +103,7 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
       const response = await fetch('/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: trimmedTitle, text: content.trim() }),
+        body: JSON.stringify({ title: trimmedTitle, text: markdown.trim() }),
       });
 
       if (!response.ok) {
@@ -38,14 +119,16 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
   }
 
   return (
-    <div className="flex h-full min-h-[70vh] flex-col rounded-[2rem] border border-white/10 bg-slate-950/75 p-6 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:min-h-0">
-      <div className="mb-6 flex shrink-0 items-center justify-between">
+    <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+      {/* Header bar */}
+      <div className="flex items-center justify-between border-b border-white/10 px-6 py-3">
         <button
           onClick={onCancel}
           className="text-sm text-slate-400 transition hover:text-slate-200"
         >
           Back to graph
         </button>
+
         <button
           onClick={handleSave}
           disabled={!content.trim() || saving}
@@ -55,23 +138,24 @@ export function NoteEditor({ onSave, onCancel }: NoteEditorProps) {
         </button>
       </div>
 
-      <input
-        type="text"
-        placeholder="Untitled"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        className="mb-4 shrink-0 border-none bg-transparent text-3xl font-semibold text-white outline-none placeholder:text-slate-600"
-      />
+      {/* Title */}
+      <div className="px-6 pt-6">
+        <input
+          type="text"
+          placeholder="Untitled"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="w-full border-none bg-transparent text-3xl font-semibold text-white outline-none placeholder:text-slate-600"
+        />
+      </div>
 
-      <textarea
-        placeholder="Start writing..."
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-        className="flex-1 resize-none border-none bg-transparent text-base leading-7 text-slate-200 outline-none placeholder:text-slate-600 lg:min-h-0"
-      />
+      {/* Milkdown editor */}
+      <div className="flex-1 overflow-auto px-6 py-4">
+        <div ref={editorRoot} />
+      </div>
 
       {error && (
-        <p className="mt-4 shrink-0 text-xs text-red-400">{error}</p>
+        <p className="px-6 pb-4 text-xs text-red-400">{error}</p>
       )}
     </div>
   );

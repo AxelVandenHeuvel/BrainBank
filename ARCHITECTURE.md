@@ -15,6 +15,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
+| Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) + KaTeX | Obsidian-like live markdown + LaTeX |
 | LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
 
 ## Data Model
@@ -67,16 +68,12 @@ frontend/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
       Graph3D.tsx            - 3D graph scene, edge selection, and interaction behavior
-      IngestPanel.tsx        - Note input + file upload for ingestion
-      ChatPanel.tsx          - Right-side chat UI for LLM query history
-      Graph3D.tsx            - 3D graph scene and interaction behavior
-      IngestPanel.tsx        - New Note button + file upload
+      IngestPanel.tsx        - New Note button + file upload + Notion import
       NoteEditor.tsx         - Full-page markdown note editor
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
       useChat.ts             - POST /query hook for chat state, retrieval answers, and concept metadata
-      useGraphData.ts        - GET /api/graph with mock fallback
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
@@ -94,20 +91,18 @@ backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
-  api_graph.py              - FastAPI router: /api/graph, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
-  schemas.py                - Shared Pydantic response models (DocumentResponse)
   db/
     lance.py                - LanceDB init + chunks table schema
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
   services/
     embeddings.py           - Sentence-transformer embedding functions
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
+    notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
   ingestion/
-    chunker.py              - Text splitting by paragraphs
-    journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
     chunker.py              - Semantic text splitting by topic shift
+    journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
     query.py                - Query pipeline: search -> expand -> answer
@@ -132,6 +127,8 @@ tests/
     test_processor.py       - Ingestion pipeline tests
   services/
     test_llm.py             - LLM extraction tests
+    test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
+  test_api_notion.py        - Notion import API endpoint tests
   retrieval/
     test_query.py           - Query pipeline tests
 ```
@@ -179,10 +176,12 @@ GLTFLoader -- load human-brain.glb, center the model at the scene origin, derive
 
 The sidebar has a "New Note" button and a file upload option:
 
-1. **New Note** - clicking swaps the main area from the 3D graph to a full-page markdown editor (NoteEditor). The editor has a title field, a large textarea, and a "Save to Brain" button. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
+1. **New Note** - clicking opens a full-page WYSIWYG markdown editor (NoteEditor) that covers the entire viewport. The editor uses Milkdown Crepe (ProseMirror-based) which renders markdown inline as you type — headings appear as headings, bold renders as bold, lists indent, LaTeX math renders via KaTeX (`$inline$` and `$$block$$`). A toolbar provides formatting buttons. Markdown shortcuts work like Obsidian: type `###` for a heading, `**` for bold, `-` for a list. On save it `POST /ingest`s, refreshes the graph, and switches back to the graph view.
 2. **File Upload** - user picks a `.md` or `.txt` file from the sidebar. Contents are read client-side and sent via `POST /ingest`. Success shows extracted concept count.
 
-Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
+3. **Import from Notion** - user clicks "Import from Notion" in the sidebar, enters their Notion integration token and a page/database URL, and clicks Import. The frontend `POST /ingest/notion` sends `{token, url}`. The backend parses the URL to determine page vs database, fetches content via the Notion API, converts blocks to markdown, and runs each page through the standard ingest pipeline. Success shows the number of pages imported.
+
+All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
 The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target and resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
@@ -242,6 +241,39 @@ Kuzu CREATE -- RELATED_TO edges (concept->concept with reason)
 ```
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
+
+## Notion Import Flow (`POST /ingest/notion`)
+
+```
+Input: { token, url }
+  |
+  v
+parse_notion_url(url) -- extract (kind, uuid) from Notion URL or raw ID
+  |                       "page" if no ?v= param, "database" if ?v= present
+  v
+kind == "database"?
+  |          |
+  no         yes -> fetch_database_page_ids(token, uuid) -- query DB for page IDs
+  |          |
+  v          v
+page_ids = [uuid]    page_ids = [id1, id2, ...]
+  |
+  v
+For each page_id:
+  fetch_page_markdown(token, page_id) -- Notion API: retrieve page + all blocks
+    |
+    v
+  blocks_to_markdown(blocks) -- convert Notion blocks to markdown string
+    |                            supports: headings, paragraphs, lists, code,
+    |                            quotes, callouts, equations, to-dos, dividers
+    v
+  ingest_markdown(markdown, title) -- standard ingest pipeline (chunk, embed, store)
+  |
+  v
+Output: { imported: N, pages: [{ title, doc_id, chunks, concepts }] }
+```
+
+The Notion service (`backend/services/notion.py`) handles URL parsing, rich text annotation conversion (bold, italic, code, strikethrough, links), and block-to-markdown translation. It uses the `notion-client` Python SDK. Each imported page goes through the same ingestion pipeline as manually created notes.
 
 ## Journal Parsing Flow
 
@@ -315,6 +347,12 @@ The 1-hop graph expansion is what surfaces "hidden" connections - concepts not i
 - Returns: `[{"doc_id", "name", "full_text"}]`
 - Queries LanceDB only (no Kuzu). Filters chunks by concept tag, deduplicates by doc_id, and joins all chunk texts into one readable document per result.
 - Returns `[]` if no documents are found for the concept.
+
+### `POST /ingest/notion`
+- Body: `{"token": "ntn_...", "url": "https://notion.so/..."}`
+- URL can be a Notion page URL, database URL (with `?v=`), or raw 32-hex ID
+- Returns: `{"imported": N, "pages": [{"title", "doc_id", "chunks", "concepts"}]}`
+- Errors: `400` with `{"error": "..."}` for invalid URLs or Notion API failures
 
 ### `GET /api/stats`
 - Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`

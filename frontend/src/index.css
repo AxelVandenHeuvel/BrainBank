@@ -23,3 +23,28 @@ body {
     radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.14), transparent 28%),
     #020617;
 }
+
+/* Milkdown dark theme overrides */
+.milkdown {
+  --crepe-color-background: transparent !important;
+  --crepe-color-surface: #0f172a !important;
+  --crepe-color-surface-low: #1e293b !important;
+  --crepe-color-on-background: #e2e8f0 !important;
+  --crepe-color-on-surface: #cbd5e1 !important;
+  --crepe-color-on-surface-variant: #94a3b8 !important;
+  --crepe-color-outline: #334155 !important;
+  --crepe-color-primary: #22d3ee !important;
+  --crepe-color-secondary: #1e293b !important;
+  --crepe-color-on-secondary: #e2e8f0 !important;
+  --crepe-color-inline-code: #67e8f9 !important;
+  --crepe-color-hover: #1e293b !important;
+  --crepe-color-selected: #164e63 !important;
+  --crepe-color-inline-area: #1e293b !important;
+  --crepe-font-default: inherit !important;
+  background: transparent !important;
+}
+
+.milkdown .ProseMirror {
+  padding: 16px 0 !important;
+  min-height: 60vh;
+}

@@ -82,4 +82,63 @@ describe('IngestPanel', () => {
 
     expect(onIngestComplete).not.toHaveBeenCalled();
   });
+
+  it('renders Import from Notion button', () => {
+    render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
+    expect(screen.getByRole('button', { name: /import from notion/i })).toBeInTheDocument();
+  });
+
+  it('shows Notion form on click and submits', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ imported: 3, pages: [] }),
+    } as Response);
+
+    render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
+
+    await user.click(screen.getByRole('button', { name: /import from notion/i }));
+    expect(screen.getByPlaceholderText(/token/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/url/i)).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText(/token/i), 'ntn_test');
+    await user.type(screen.getByPlaceholderText(/url/i), 'https://notion.so/abc123def456abc123def456abc123de');
+    await user.click(screen.getByRole('button', { name: /^import$/i }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/ingest/notion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'ntn_test',
+          url: 'https://notion.so/abc123def456abc123def456abc123de',
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/3 pages imported/i)).toBeInTheDocument();
+    });
+
+    expect(onIngestComplete).toHaveBeenCalled();
+  });
+
+  it('shows error on Notion import failure', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      json: () => Promise.resolve({ error: 'Invalid token' }),
+    } as Response);
+
+    render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
+
+    await user.click(screen.getByRole('button', { name: /import from notion/i }));
+    await user.type(screen.getByPlaceholderText(/token/i), 'bad');
+    await user.type(screen.getByPlaceholderText(/url/i), 'https://notion.so/abc123def456abc123def456abc123de');
+    await user.click(screen.getByRole('button', { name: /^import$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/invalid token/i)).toBeInTheDocument();
+    });
+  });
 });

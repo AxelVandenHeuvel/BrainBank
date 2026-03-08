@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=2.0.0",
     "scikit-learn>=1.0.0",
     "sentence-transformers>=3.0.0",
+    "notion-client>=3.0.0",
 ]
 
 [project.optional-dependencies]
