@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. The legacy `POST /query` route still handles both paths end-to-end, while the local path also exposes a staged flow through `POST /query/prepare` plus `POST /query/answer`. That staged local flow lets the frontend start a neuron-firing animation from the actual retrieval traversal plan before the grounded LLM answer finishes. Both routes surface document provenance in the final answer payload: the local path carries cited source/discovery documents, chunks, and supporting relationships from retrieval-time provenance assembly, while the global path maps cited community concepts back to ranked underlying documents so summary-style answers are not missing note links. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Ingest now includes concept consolidation: extraction receives top canonical concept hints, semantically equivalent mentions are mapped onto canonical names, low-density concepts can be merged into broader neighbors, and a strict orphan pass can force-merge sparse concepts into a parent candidate set. Query-time retrieval now supports two GraphRAG paths: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. The legacy `POST /query` route still handles both paths end-to-end, while the local path also exposes a staged flow through `POST /query/prepare` plus `POST /query/answer`. That staged local flow lets the frontend start a neuron-firing animation from the actual retrieval traversal plan before the grounded LLM answer finishes. Both routes surface document provenance in the final answer payload: the local path carries cited source/discovery documents, chunks, and supporting relationships from retrieval-time provenance assembly, while the global path maps cited community concepts back to ranked underlying documents so summary-style answers are not missing note links. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
 
 ## Stack
 
@@ -19,7 +19,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
 | Graph Analytics | NetworkX           | Batch Louvain community detection |
 | Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
-| LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
+| LLM         | Gemini 2.5 Flash + Gemini 3.1 Flash-Lite + Ollama | Gemini extraction/forced orphan merge decisions + grounded answers |
 
 ## Data Model
 
@@ -54,7 +54,7 @@ LanceDB is the sole source of document identity and the concept-to-document link
 | centroid_vector | FLOAT32[384] | Mean embedding vector across chunks tagged with that concept |
 | document_count  | INT32        | Number of distinct documents containing the concept |
 
-This table is rebuilt in batch and becomes the preferred local GraphRAG seed source when present. If it is empty, retrieval falls back to scoring concepts from chunk-seed hits.
+This table is rebuilt in batch and becomes the preferred local GraphRAG seed source when present. It is also used by ingest for two consolidation tasks: passing high-frequency concept names as extraction hints, and semantic canonicalization/nearest-neighbor merge decisions for concept density control. If it is empty, retrieval falls back to scoring concepts from chunk-seed hits.
 
 ### LanceDB: `community_summaries` table
 
@@ -82,7 +82,7 @@ This table powers the global GraphRAG route. It is refreshed only by the batch r
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
+Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path. `backend/db/kuzu.py` also exposes `merge_concepts(conn, source_name, target_name)` to move `RELATED_TO` edges from one concept to another, sum overlapping edge weights, and delete the source node; query workers can reuse an already-open database handle for a path if a lock conflict is encountered.
 
 ## Project Structure
 
@@ -145,7 +145,7 @@ backend/
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
-    llm.py                  - BrainBank prompt workflows and JSON parsing for extraction/answering
+    llm.py                  - BrainBank prompt workflows + JSON parsing + provider-agnostic 429 backoff/retry handling
     llm_providers.py        - Provider registry plus Gemini/Ollama transport adapters
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
@@ -153,7 +153,8 @@ backend/
     heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
-    processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
+    consolidator.py         - Canonical concept mapping + density-control merges with threshold gates, batched LLM decisions, and forced orphan reaper merges
+    processor.py            - Ingest pipeline: chunk -> embed -> hinted extract -> canonicalize -> store -> consolidate
   session/
     memory.py               - In-memory session store with bounded turn window and TTL
     prepared_query_store.py - Short-lived in-memory store for staged local query state between prepare and answer
@@ -176,7 +177,7 @@ scripts/
   print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
   seed_mock_demo_data.py     - Seeds the hackathon demo corpus into local databases
-  rebuild_graphrag_artifacts.py - Recomputes concept centroids and community summaries in batch
+  rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup → heal_graph (semantic bridges) → forced orphan reaper → recomputes concept centroids and community summaries
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
@@ -189,8 +190,10 @@ tests/
   ingestion/
     test_chunker.py         - Chunking logic tests
     test_processor.py       - Ingestion pipeline tests
+    test_consolidator.py    - Concept canonicalization + density-control merge tests
   scripts/
     test_heal_graph.py      - heal_graph: cosine similarity, centroid computation, edge-exists, bridge insertion tests
+    test_rebuild_graphrag_artifacts.py - rebuild script integration test for consolidation cleanup pass
   services/
     test_clustering.py      - Leiden clustering: empty/small-graph handling + community assignment tests
     test_llm.py             - Prompt workflow and extraction tests
@@ -348,7 +351,10 @@ Chat state now persists in browser `localStorage` under explicit `brainbank.chat
 Input: text + title
   |
   v
-llm.extract_concepts() -- Gemini extracts 4-8 balanced concepts (1-2 anchors + 2-6 specific methods/entities) plus concise relationships to improve graph connectivity without concept sprawl
+LanceDB concept_centroids lookup -- fetch top 50 frequent concepts as extraction hints
+  |
+  v
+llm.extract_concepts(existing_concepts=...) -- Gemini extracts 4-8 balanced concepts and prefers mapping to known canonical names
   |
   v
 chunker.semantic_chunk_text() -- split by topic shift using sentence similarity
@@ -357,7 +363,10 @@ chunker.semantic_chunk_text() -- split by topic shift using sentence similarity
 embeddings.embed_texts() -- sentence-transformers -> 384-dim vectors
   |
   v
-LanceDB.add() -- store chunks with doc_name, concepts[], and vectors
+ingestion.consolidator.canonicalize_concepts() -- map semantically equivalent mentions to canonical concept names (cosine > 0.85)
+  |
+  v
+LanceDB.add() -- store chunks with doc_name, canonical concepts[], and vectors
   |              concepts field is the doc<->concept bridge (no Kuzu Document node)
   v
 embeddings.calculate_document_centroid() -- average chunk vectors for this doc_id
@@ -370,11 +379,14 @@ Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
 Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
+  |
+  v
+ingestion.consolidator.consolidate_graph() -- AUTO-MERGE if similarity > 0.92, SKIP if < 0.75, else send batched merge decisions to LLM
 ```
 
 Note: Per-ingest Leiden clustering has been removed. Community detection now runs only via batch rebuild (`scripts/rebuild_graphrag_artifacts.py`) or the `/api/recluster` endpoint.
 
-Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
+Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu and document identity/concept tagging live entirely in LanceDB chunks. Consolidation keeps concept density targeted around 3-10 documents per concept by attempting merges for sparse concepts and logging rename/merge counts during ingest. The API also runs a strict orphan reaper pass (`force_consolidate_orphans`) every 5th manual `POST /ingest` call.
 
 ## GraphRAG Artifact Rebuild Flow
 
@@ -382,7 +394,16 @@ Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never 
 Input: current LanceDB chunks + current Kuzu weighted concept graph
   |
   v
-retrieval.artifacts._build_concept_centroid_records() -- average chunk vectors per concept
+scripts.rebuild_graphrag_artifacts.run_consolidation_cleanup() -- run density-control merges over existing graph/chunk metadata
+  |
+  v
+scripts.heal_graph.heal_graph() -- add SEMANTIC_BRIDGE edges between similar but disconnected concepts
+  |
+  v
+scripts.rebuild_graphrag_artifacts.run_force_orphan_cleanup() -- strict orphan pass: force concepts with <3 docs into top-1 vector neighbor (LLM decision, fallback to nearest if LLM fails)
+  |
+  v
+retrieval.artifacts._build_concept_centroid_records() -- average chunk vectors per canonical concept
   |
   v
 LanceDB replace concept_centroids -- persist concept_name, centroid_vector, document_count
@@ -406,7 +427,7 @@ embeddings.embed_texts() -- embed each summary
 LanceDB replace community_summaries -- persist community summaries for global GraphRAG
 ```
 
-This rebuild is intentionally batch-only. Normal ingest updates `chunks`, `document_centroids`, `Concept` nodes, and weighted `RELATED_TO` edges immediately, but `concept_centroids` and `community_summaries` are refreshed only when `scripts/rebuild_graphrag_artifacts.py` is run.
+This rebuild is batch-oriented and runs in order: density-control merges → semantic bridge healing → forced orphan reaper (with LLM decision + vector-neighbor fallback) → concept centroids → community summaries.
 
 ## Notion Import Flow (`POST /ingest/notion`)
 
@@ -560,6 +581,7 @@ The traversal plan contract is fixed for v1:
 - `steps = [{ node_id, concept, hop, brightness, delay_ms }]`
 
 The plan is built only for LOCAL queries. It starts from the highest-ranked source concept, walks breadth-first across `RELATED_TO` edges, emits only concepts that were already selected as source or discovery concepts, and drops steps once hop depth or brightness would exceed the configured stop conditions.
+
 If LanceDB has zero ingested chunks, `/query` returns a specific empty-database message instead of the generic "No relevant information found." response. That makes it clear the failure is missing ingested data rather than a bad retrieval match.
 
 ## API Endpoints
@@ -567,6 +589,7 @@ If LanceDB has zero ingested chunks, `/query` returns a specific empty-database 
 ### `POST /ingest`
 - Body: `{"text": "...", "title": "..."}`
 - Returns: `{"doc_id": "...", "chunks": N, "concepts": [...]}`
+- Every 5th manual ingest request triggers `force_consolidate_orphans` after ingest completes, using the shared Kuzu engine and a fresh short-lived connection.
 
 ### `POST /ingest/demo/mock`
 - Body: empty
@@ -684,3 +707,7 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
+
+
+
+

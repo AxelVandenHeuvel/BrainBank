@@ -138,9 +138,10 @@ class TestHealGraph:
         return db
 
     def test_adds_bridge_for_similar_unconnected_concepts(self, lance_path, kuzu_path):
+        # Math-Calculus similarity ~0.8 (in sweet spot [0.60, 0.90])
         db = self._seed(lance_path, kuzu_path, {
             "Math": [1.0, 0.0] + [0.0] * 382,
-            "Calculus": [0.99, 0.14] + [0.0] * 382,
+            "Calculus": [0.8, 0.6] + [0.0] * 382,
             "Biology": [0.0, 1.0] + [0.0] * 382,
         })
 
@@ -157,9 +158,10 @@ class TestHealGraph:
         conn.close()
 
     def test_skips_already_connected_concepts(self, lance_path, kuzu_path):
+        # Math-Calculus similarity ~0.8 (in sweet spot) — would be bridged if unconnected
         db = self._seed(lance_path, kuzu_path, {
             "Math": [1.0, 0.0] + [0.0] * 382,
-            "Calculus": [0.99, 0.14] + [0.0] * 382,
+            "Calculus": [0.8, 0.6] + [0.0] * 382,
         })
 
         import kuzu as _kuzu
@@ -190,9 +192,10 @@ class TestHealGraph:
         assert added == 0
 
     def test_bridge_edges_have_correct_properties(self, lance_path, kuzu_path):
+        # Math-Calculus similarity ~0.8 (in sweet spot [0.60, 0.90])
         db = self._seed(lance_path, kuzu_path, {
             "Math": [1.0, 0.0] + [0.0] * 382,
-            "Calculus": [0.99, 0.14] + [0.0] * 382,
+            "Calculus": [0.8, 0.6] + [0.0] * 382,
         })
 
         heal_graph(lance_db_path=lance_path, k_neighbors=1, shared_kuzu_db=db)
@@ -206,6 +209,6 @@ class TestHealGraph:
         assert result.has_next()
         reason, weight, edge_type = result.get_next()
         assert edge_type == "SEMANTIC_BRIDGE"
-        assert reason == "High semantic similarity discovered via embeddings"
+        assert "High semantic similarity discovered via embeddings" in reason
         assert 0.0 < weight <= 1.0
         conn.close()
