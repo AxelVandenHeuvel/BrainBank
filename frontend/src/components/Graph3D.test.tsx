@@ -698,6 +698,44 @@ describe('Graph3D', () => {
     })).toBe('rgba(148, 163, 184, 0.2)');
   });
 
+  it('applies assistant-response graph focus with lit source nodes, gold-outlined discovery nodes, and hidden unrelated labels', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        chatFocus={{
+          sourceConcepts: ['Calculus'],
+          discoveryConcepts: ['Derivatives'],
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+
+    expect(props.nodeColor(graph.nodes[0])).toBe('#3b82f6');
+    expect(props.nodeColor(graph.nodes[1])).toBe('rgba(71, 85, 105, 0.35)');
+    expect(props.nodeColor(graph.nodes[2])).toBe('rgba(71, 85, 105, 0.35)');
+
+    const discoveryObject = props.nodeThreeObject(graph.nodes[1]);
+    const unrelatedObject = props.nodeThreeObject(graph.nodes[2]);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const discoveryOutline = discoveryObject?.getObjectByName('node-outline') as THREE.Mesh | undefined;
+    const unrelatedLabel = unrelatedObject?.children.find((child) => child instanceof THREE.Sprite) as
+      | THREE.Sprite
+      | undefined;
+
+    expect(discoveryOutline).toBeDefined();
+    expect((discoveryOutline?.material as THREE.MeshBasicMaterial).opacity).toBeGreaterThan(0.5);
+    expect(unrelatedLabel?.material.opacity).toBeLessThan(0.01);
+  });
+
   it('renders zoom controls and uses them', () => {
     const { container } = render(
       <Graph3D

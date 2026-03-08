@@ -99,7 +99,7 @@ frontend/
     App.tsx                  - Layout shell with collapsible sidebar, top search bar, permanent Brain tab, fully wired tab system, FileExplorer, TabBar, DocumentEditor, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Right-side chat UI with session list, active conversation, and mock-data warning when chat is not grounded in live backend notes
+      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, in-stream loading status bubble, assistant-response graph focus toggles, and mock-data warning when chat is not grounded in live backend notes
       ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
       DocumentEditor.tsx     - Milkdown Crepe editor with explicit manual saves, lightweight draft creation for new notes, and lightweight PUT updates for existing notes
       EdgeDetailPanel.tsx    - Selected relationship panel with a fixed header, bounded height, and internally scrollable evidence documents
@@ -252,6 +252,7 @@ Graph3D -- react-force-graph-3d scene
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
   |         +-- scroll wheel -> zoom camera in or out around the current focus point
   |         +-- single-click node -> smooth camera fly to that node (same animation as search), pin a translucent card above it, request latent discovery tethers, and call onConceptFocused callback
+  |         +-- selected assistant response -> keep source concepts fully lit, dim all unrelated nodes with hidden labels, and render discovery concepts as dimmed nodes with gold outline + visible labels
   |         +-- double-click concept node -> "dive into" concept: zoom very close, inject document sub-nodes in a ring around the concept with connecting edges, dim all other nodes
   |         +-- double-click doc sub-node -> call onOpenDocument callback to open that document in the editor
   |         +-- clicked concept node -> becomes the active rotation pivot
@@ -301,7 +302,7 @@ When a user clicks any visible edge, the frontend keeps that exact edge selected
 Input: user question in right-side panel
   |
   v
-ChatPanel -- controlled input + session message history
+ChatPanel -- controlled input + active conversation with collapsible session history
   |
   v
 useChat -- load/create/select persisted sessions and expose active messages
@@ -320,10 +321,14 @@ Backend returns { answer, source_concepts, discovery_concepts }
   v
 ChatPanel -- render assistant answer + separate source/discovery concept sections
   |
+  +-- click assistant response -> toggle graph focus selection in App
+  |
+  +-- while waiting -> render an in-stream assistant loading bubble with rotating status phrases
+  |
   +-- when graph source is mock -> show warning that chat only queries live backend notes
 ```
 
-Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. The frontend uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. When the graph view has fallen back to local mock data, `ChatPanel` now renders an explicit warning so users do not assume those mock concepts are queryable through `/query`. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
+Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the overlay is purely a visibility change and does not reset local component state. The frontend uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. `ChatPanel` now treats the active conversation as the default surface and moves the session switcher into a compact dropdown summary that stays collapsed until the user asks for history; each session row also surfaces how many retrieval concepts were captured in that conversation so the history area can later drive graph highlighting without redesigning storage again. While a query is in flight, the panel keeps the header minimal and appends a temporary assistant-style loading bubble inside the message stream, lets the current status phrase fade fully out, swaps to the next phrase, and then fades the new one back in on a slower cadence. Clicking an assistant response now toggles a graph focus mode in `App`: source concepts stay fully lit, discovery concepts stay label-visible with a gold outline over a dimmed body, and every other node follows the existing search-style dimming path with labels hidden until the response is deselected. The overlay itself is wider than before and the active-session summary/history rows wrap long titles and metadata instead of truncating them, so the redesign keeps the compact look without clipping left-side copy. When the graph view has fallen back to local mock data, `ChatPanel` renders an explicit warning so users do not assume those mock concepts are queryable through `/query`. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
 
 ## Ingestion Flow (`POST /ingest`)
 
