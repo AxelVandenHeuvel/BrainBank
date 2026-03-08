@@ -1,0 +1,68 @@
+[
+  {
+    "doc_id": "math-calc1-limits",
+    "title": "Calculus I - Limits and Continuity Review",
+    "file": "calculus-i-limits-and-continuity-review.md",
+    "concepts": ["Calculus", "Limits", "Continuity", "Epsilon-Delta"],
+    "relationships": [
+      {"from": "Calculus", "to": "Limits", "reason": "introduces"},
+      {"from": "Limits", "to": "Continuity", "reason": "defines"},
+      {"from": "Limits", "to": "Epsilon-Delta", "reason": "formalized by"}
+    ]
+  },
+  {
+    "doc_id": "math-calc1-derivatives",
+    "title": "Calculus I - Derivative Rules Study Guide",
+    "file": "calculus-i-derivative-rules-study-guide.md",
+    "concepts": ["Calculus", "Derivatives", "Product Rule", "Chain Rule"],
+    "relationships": [
+      {"from": "Derivatives", "to": "Calculus", "reason": "central tool in"},
+      {"from": "Derivatives", "to": "Product Rule", "reason": "computed with"},
+      {"from": "Derivatives", "to": "Chain Rule", "reason": "computed with"}
+    ]
+  },
+  {
+    "doc_id": "math-calc2-integrals",
+    "title": "Calculus II - Integration Techniques Cheat Sheet",
+    "file": "calculus-ii-integration-techniques-cheat-sheet.md",
+    "concepts": ["Integrals", "Riemann Sums", "u-Substitution", "Fundamental Theorem of Calculus"],
+    "relationships": [
+      {"from": "Integrals", "to": "Riemann Sums", "reason": "approximated by"},
+      {"from": "Integrals", "to": "u-Substitution", "reason": "simplified by"},
+      {"from": "Integrals", "to": "Fundamental Theorem of Calculus", "reason": "connected by"}
+    ]
+  },
+  {
+    "doc_id": "math-linear-algebra-matrices",
+    "title": "Linear Algebra - Matrix Transformations Notes",
+    "file": "linear-algebra-matrix-transformations-notes.md",
+    "concepts": ["Matrices", "Linear Transformations", "Eigenvalues", "Determinants"],
+    "relationships": [
+      {"from": "Matrices", "to": "Linear Transformations", "reason": "represent"},
+      {"from": "Matrices", "to": "Determinants", "reason": "measured by"},
+      {"from": "Matrices", "to": "Eigenvalues", "reason": "characterized by"}
+    ]
+  },
+  {
+    "doc_id": "math-probability-review",
+    "title": "Probability - Midterm Review Notes",
+    "file": "probability-midterm-review-notes.md",
+    "concepts": ["Probability", "Random Variables", "Expected Value", "Bayes Theorem"],
+    "relationships": [
+      {"from": "Probability", "to": "Random Variables", "reason": "models"},
+      {"from": "Probability", "to": "Expected Value", "reason": "summarized by"},
+      {"from": "Probability", "to": "Bayes Theorem", "reason": "updated by"}
+    ]
+  },
+  {
+    "doc_id": "math-diffeq-separable",
+    "title": "Differential Equations - Separable Models Notes",
+    "file": "differential-equations-separable-models-notes.md",
+    "concepts": ["Differential Equations", "Separation of Variables", "Exponential Growth", "Logistic Model"],
+    "relationships": [
+      {"from": "Differential Equations", "to": "Separation of Variables", "reason": "solved with"},
+      {"from": "Differential Equations", "to": "Exponential Growth", "reason": "models"},
+      {"from": "Differential Equations", "to": "Logistic Model", "reason": "extends to"}
+    ]
+  }
+]

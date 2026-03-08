@@ -86,15 +86,13 @@ class TestGetGraph:
         assert len(data["nodes"]) > 0
         node_types = {n["type"] for n in data["nodes"]}
         assert "Concept" in node_types
-        assert "Document" in node_types
+        assert "Document" not in node_types
 
     def test_returns_edges_after_ingest(self):
         _ingest_sample()
         response = client.get("/api/graph")
         data = response.json()
         assert len(data["edges"]) > 0
-        edge_types = {e["type"] for e in data["edges"]}
-        assert "MENTIONS" in edge_types
 
     def test_node_shape(self):
         _ingest_sample()

@@ -1,3 +1,6 @@
+import asyncio
+from functools import partial
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -20,14 +23,16 @@ class QueryRequest(BaseModel):
 
 
 @app.post("/ingest")
-def ingest(req: IngestRequest):
-    result = ingest_markdown(req.text, req.title)
+async def ingest(req: IngestRequest):
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, partial(ingest_markdown, req.text, req.title))
     return result
 
 
 @app.post("/query")
-def query(req: QueryRequest):
-    result = query_brainbank(req.question)
+async def query(req: QueryRequest):
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, partial(query_brainbank, req.question))
     return {
         "answer": result["answer"],
         "discovery_concepts": result["discovery_concepts"],
@@ -35,9 +40,11 @@ def query(req: QueryRequest):
 
 
 @app.post("/query/test-llm")
-def query_test_llm(req: QueryRequest):
+async def query_test_llm(req: QueryRequest):
+    loop = asyncio.get_event_loop()
+    answer = await loop.run_in_executor(None, partial(generate_test_answer, req.question))
     return {
-        "answer": generate_test_answer(req.question),
+        "answer": answer,
         "discovery_concepts": [],
         "mode": "llm_test",
     }

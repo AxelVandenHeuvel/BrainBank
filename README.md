@@ -50,6 +50,14 @@ curl -X POST http://localhost:8000/ingest \
 
 Refresh the frontend to see your knowledge graph populate.
 
+### Seed sample college math notes
+
+```bash
+uv run python scripts/seed_college_math_notes.py
+```
+
+This loads six college-student math note documents directly into LanceDB and Kuzu so the graph and document-opening flows have realistic sample content without calling Gemini.
+
 ### Run tests
 
 ```bash

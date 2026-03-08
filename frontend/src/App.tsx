@@ -3,6 +3,7 @@ import { startTransition, useDeferredValue, useState } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
+import { NoteEditor } from './components/NoteEditor';
 import { SearchBar } from './components/SearchBar';
 import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
 import { useGraphData } from './hooks/useGraphData';
@@ -29,6 +30,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [view, setView] = useState<'graph' | 'editor'>('graph');
   const [isChatOpen, setIsChatOpen] = useState(true);
   const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
 
@@ -36,6 +38,11 @@ export default function App() {
     startTransition(() => {
       setQuery(nextQuery);
     });
+  }
+
+  function handleNoteSaved() {
+    refetch();
+    setView('graph');
   }
 
   return (
@@ -66,7 +73,10 @@ export default function App() {
             onQueryChange={handleQueryChange}
           />
 
-          <IngestPanel onIngestComplete={refetch} />
+          <IngestPanel
+            onIngestComplete={refetch}
+            onNewNote={() => setView('editor')}
+          />
 
           <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-4">
             <div className="flex items-center justify-between">
@@ -136,21 +146,48 @@ export default function App() {
             hoveredNode={hoveredNode}
             onHoverNode={setHoveredNode}
           />
+          {view === 'editor' ? (
+            <NoteEditor
+              onSave={handleNoteSaved}
+              onCancel={() => setView('graph')}
+            />
+          ) : (
+            <Graph3D
+              data={data}
+              query={deferredQuery}
+              hoveredNode={hoveredNode}
+              onHoverNode={setHoveredNode}
+            />
+          )}
         </section>
 
-        {isChatOpen ? (
-          <aside className="relative flex min-h-[70vh]">
-            <button
-              type="button"
-              aria-label={getChatToggleLabel(true)}
-              onClick={() => setIsChatOpen(false)}
-              className="absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl]"
-            >
-              Chat
-            </button>
+        <aside
+          className={`relative min-h-[70vh] ${isChatOpen ? 'flex' : 'hidden lg:flex'}`}
+          aria-hidden={!isChatOpen}
+        >
+          <button
+            type="button"
+            aria-label={getChatToggleLabel(true)}
+            onClick={() => setIsChatOpen(false)}
+            className={`absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-2xl rounded-r-none border border-cyan-300/20 border-r-0 bg-slate-900/95 px-3 py-5 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200 shadow-2xl shadow-cyan-950/30 transition hover:border-cyan-300/40 hover:bg-slate-900 [writing-mode:vertical-rl] ${
+              isChatOpen ? '' : 'pointer-events-none opacity-0'
+            }`}
+          >
+            Chat
+          </button>
+          <div
+            hidden={!isChatOpen}
+            className={`flex w-full transition ${
+              isChatOpen
+                ? 'visible translate-x-0 opacity-100'
+                : 'invisible translate-x-8 opacity-0'
+            }`}
+          >
             <ChatPanel />
-          </aside>
-        ) : (
+          </div>
+        </aside>
+
+        {!isChatOpen ? (
           <button
             type="button"
             aria-label={getChatToggleLabel(false)}
@@ -159,7 +196,7 @@ export default function App() {
           >
             Chat
           </button>
-        )}
+        ) : null}
       </div>
     </main>
   );
