@@ -25,6 +25,15 @@ import {
   centerObject3DAtOrigin,
   rotateObjectFromPointerDelta,
 } from '../lib/brainScene';
+import { mockRelationshipDetailsByEdge } from '../mock/mockGraph';
+import type {
+  GraphData,
+  GraphLink,
+  GraphNode,
+  GraphSource,
+  RelationshipDetails,
+} from '../types/graph';
+import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { getMockDocumentsForConcept } from '../mock/mockGraph';
 import type { GraphData, GraphLink, GraphNode } from '../types/graph';
 import { NodeTooltip } from './NodeTooltip';
@@ -79,9 +88,16 @@ interface BrainHomeView {
 
 interface Graph3DProps {
   data: GraphData;
+  source: GraphSource;
   query: string;
   hoveredNode: GraphNode | null;
   onHoverNode: (node: GraphNode | null) => void;
+}
+
+interface SelectedRelationshipEdge {
+  sourceId: string;
+  targetId: string;
+  reason: string;
 }
 
 const BRAIN_MODEL_URL = '/assets/human-brain.glb';
@@ -102,9 +118,14 @@ const MAX_SCENE_TILT = Math.PI / 3;
 const CONTAINER_SPHERE_RADIUS = 22;
 // Distance from concept center at which doc nodes are pinned
 const DOC_ORBIT_RADIUS = 15;
+// Brain home view camera positioning
+const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.8;
+const MIN_BRAIN_HOME_VIEW_DISTANCE = 300;
+const BRAIN_HOME_VIEW_VERTICAL_BIAS = 0.15;
 
 export function Graph3D({
   data,
+  source: graphSource,
   query,
   hoveredNode,
   onHoverNode,
@@ -134,6 +155,15 @@ export function Graph3D({
     null,
   );
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(
+    null,
+  );
+  const [relationshipDetails, setRelationshipDetails] =
+    useState<RelationshipDetails | null>(null);
+  const [relationshipError, setRelationshipError] = useState<string | null>(null);
+  const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
+  const adjacency = buildAdjacencyMap(data);
+  const matchedNodeIds = findMatchingNodeIds(data.nodes, query);
 
   // Merge base graph with injected document leaf nodes.
   // useMemo prevents ForceGraph3D from treating a new object reference as a
@@ -152,6 +182,35 @@ export function Graph3D({
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
+  const selectedNodeIds = selectedEdge
+    ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
+    : new Set<string>();
+
+  function getConceptName(nodeId: string): string | null {
+    if (!nodeId.startsWith('concept:')) {
+      return null;
+    }
+
+    return nodeId.slice('concept:'.length);
+  }
+
+  function isSelectedLink(link: GraphLink): boolean {
+    if (!selectedEdge) {
+      return false;
+    }
+
+    const source = typeof link.source === 'string' ? link.source : link.source.id;
+    const target = typeof link.target === 'string' ? link.target : link.target.id;
+
+    return source === selectedEdge.sourceId && target === selectedEdge.targetId;
+  }
+
+  function clearSelectedEdge() {
+    setSelectedEdge(null);
+    setRelationshipDetails(null);
+    setRelationshipError(null);
+    setIsRelationshipLoading(false);
+  }
 
   // Build the transparent container sphere rendered in place of the expanded concept.
   function getNodeThreeObject(node: GraphNode): THREE.Object3D | null {
@@ -514,6 +573,80 @@ export function Graph3D({
     void handleConceptExpansion(node);
   }
 
+  async function handleLinkClick(link: GraphLink) {
+    if (link.type !== 'RELATED_TO') {
+      return;
+    }
+
+    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+    const sourceConcept = getConceptName(sourceId);
+    const targetConcept = getConceptName(targetId);
+
+    if (!sourceConcept || !targetConcept) {
+      return;
+    }
+
+    const mockDetailsKey = `${sourceId}->${targetId}`;
+    const mockDetails = mockRelationshipDetailsByEdge[mockDetailsKey];
+
+    setSelectedEdge({
+      sourceId,
+      targetId,
+      reason: link.reason ?? '',
+    });
+    setRelationshipDetails({
+      source: sourceConcept,
+      target: targetConcept,
+      type: 'RELATED_TO',
+      reason: link.reason ?? 'Related concepts',
+      source_documents: [],
+      target_documents: [],
+      shared_document_ids: [],
+    });
+    setRelationshipError(null);
+    setIsRelationshipLoading(true);
+
+    if (graphSource === 'mock') {
+      setRelationshipDetails(
+        mockDetails ?? {
+          source: sourceConcept,
+          target: targetConcept,
+          type: 'RELATED_TO',
+          reason: link.reason ?? 'Related concepts',
+          source_documents: [],
+          target_documents: [],
+          shared_document_ids: [],
+        },
+      );
+      setIsRelationshipLoading(false);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        source: sourceConcept,
+        target: targetConcept,
+      });
+      const response = await fetch(`/api/relationships/details?${params.toString()}`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as RelationshipDetails;
+      setRelationshipDetails(payload);
+    } catch (error) {
+      setRelationshipError(
+        error instanceof Error ? error.message : 'Failed to load relationship details',
+      );
+    } finally {
+      setIsRelationshipLoading(false);
+    }
+  }
+
   useEffect(() => {
     scheduleIdleRotation();
 
@@ -721,6 +854,12 @@ export function Graph3D({
   }, [hoveredNode]);
 
   function getNodeColor(node: GraphNode): string {
+    if (selectedEdge) {
+      return selectedNodeIds.has(node.id)
+        ? NODE_TYPE_COLORS[node.type]
+        : DIMMED_NODE_COLOR;
+    }
+
     if (hoveredNode) {
       return focusedNodeIds.has(node.id)
         ? NODE_TYPE_COLORS[node.type]
@@ -737,6 +876,10 @@ export function Graph3D({
   }
 
   function getLinkColor(link: GraphLink): string {
+    if (isSelectedLink(link)) {
+      return ACTIVE_LINK_COLOR;
+    }
+
     if (hoveredNode) {
       return isDirectHoverLink(link, hoveredNode)
         ? ACTIVE_LINK_COLOR
@@ -747,6 +890,10 @@ export function Graph3D({
   }
 
   function getLinkWidth(link: GraphLink): number {
+    if (isSelectedLink(link)) {
+      return 3.2;
+    }
+
     return isDirectHoverLink(link, hoveredNode) ? 2.8 : 0.7;
   }
 
@@ -759,6 +906,14 @@ export function Graph3D({
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseEnd}
       onMouseLeave={handleMouseEnd}
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)]"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          clearSelectedEdge();
+        }
+      }}
+      onMouseMove={handleInteraction}
+      onMouseDown={handleInteraction}
       onWheel={handleInteraction}
       onTouchStart={handleInteraction}
     >
@@ -781,6 +936,7 @@ export function Graph3D({
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
+        linkHoverPrecision={10}
         linkOpacity={0.7}
         nodeRelSize={5}
         linkDirectionalParticles={hoveredNode ? 2 : 0}
@@ -789,6 +945,7 @@ export function Graph3D({
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}
         onEngineTick={() => clampNodesWithinBrain()}
+        onLinkClick={(link) => void handleLinkClick(link as GraphLink)}
         onNodeClick={(node) => handleNodeClick(node as GraphNode)}
         onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
         enableNodeDrag={false}
@@ -824,6 +981,14 @@ export function Graph3D({
           connectionCount={getConnectionCount(hoveredNode.id, adjacency)}
           x={tooltipPosition.x}
           y={tooltipPosition.y}
+        />
+      ) : null}
+      {selectedEdge ? (
+        <EdgeDetailPanel
+          relationship={relationshipDetails}
+          isLoading={isRelationshipLoading}
+          error={relationshipError}
+          onClose={clearSelectedEdge}
         />
       ) : null}
     </div>

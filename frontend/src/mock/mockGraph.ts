@@ -1,4 +1,4 @@
-import type { GraphApiResponse } from '../types/graph';
+import type { GraphApiResponse, RelationshipDetails } from '../types/graph';
 
 export const mockGraphApiResponse: GraphApiResponse = {
   nodes: [
@@ -90,6 +90,10 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
         'A neural network is a stack of linear layers separated by non-linear activations. Backpropagation computes gradients; gradient descent updates weights.',
     },
     {
+      source: 'concept:Calculus',
+      target: 'concept:Derivatives',
+      type: 'RELATED_TO',
+      reason: 'Derivatives are a core tool within calculus',
       doc_id: 'nn-2',
       name: 'Activation Functions.md',
       full_text:
@@ -142,6 +146,47 @@ const MOCK_CONCEPT_DOCUMENTS: Record<string, MockDocument[]> = {
   ],
   Python: [
     {
+      source: 'task:impl-graph',
+      target: 'concept:Derivatives',
+      type: 'RELATED_TO',
+      reason: 'Implementation work reinforces derivative concepts',
+    },
+  ],
+};
+
+export const mockRelationshipDetailsByEdge: Record<string, RelationshipDetails> = {
+  'concept:Calculus->concept:Derivatives': {
+    source: 'Calculus',
+    target: 'Derivatives',
+    type: 'RELATED_TO',
+    reason: 'Derivatives are a core tool within calculus',
+    source_documents: [
+      {
+        doc_id: 'doc-math-notes',
+        name: 'Math Notes',
+        full_text: 'Calculus introduces derivatives as a way to measure change.',
+      },
+      {
+        doc_id: 'doc-calculus-guide',
+        name: 'Calculus Guide',
+        full_text: 'Limits and derivatives are foundational topics in calculus.',
+      },
+    ],
+    target_documents: [
+      {
+        doc_id: 'doc-math-notes',
+        name: 'Math Notes',
+        full_text: 'Calculus introduces derivatives as a way to measure change.',
+      },
+      {
+        doc_id: 'doc-derivative-rules',
+        name: 'Derivative Rules',
+        full_text: 'Power, product, and chain rules are core derivative tools.',
+      },
+    ],
+    shared_document_ids: ['doc-math-notes'],
+  },
+};
       doc_id: 'py-1',
       name: 'Python for ML.md',
       full_text:

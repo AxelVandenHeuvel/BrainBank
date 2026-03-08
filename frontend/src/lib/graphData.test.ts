@@ -9,6 +9,12 @@ const apiGraph: GraphApiResponse = {
     { id: 'doc:abc-123', type: 'Document', name: 'Math Notes' },
   ],
   edges: [
+    {
+      source: 'concept:Calculus',
+      target: 'concept:Derivatives',
+      type: 'RELATED_TO',
+      reason: 'Derivatives are a core tool within calculus',
+    },
     { source: 'doc:abc-123', target: 'concept:Calculus', type: 'MENTIONS' },
   ],
 };
@@ -18,6 +24,12 @@ describe('graphData helpers', () => {
     expect(normalizeGraphData(apiGraph)).toEqual({
       nodes: apiGraph.nodes,
       links: [
+        {
+          source: 'concept:Calculus',
+          target: 'concept:Derivatives',
+          type: 'RELATED_TO',
+          reason: 'Derivatives are a core tool within calculus',
+        },
         { source: 'doc:abc-123', target: 'concept:Calculus', type: 'MENTIONS' },
       ],
     });
@@ -29,5 +41,20 @@ describe('graphData helpers', () => {
 
   it('rejects malformed payloads', () => {
     expect(validateGraphApiResponse({ nodes: 'bad', edges: [] })).toBe(false);
+  });
+
+  it('rejects related edges that omit their reason', () => {
+    expect(
+      validateGraphApiResponse({
+        nodes: apiGraph.nodes,
+        edges: [
+          {
+            source: 'concept:Calculus',
+            target: 'concept:Derivatives',
+            type: 'RELATED_TO',
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 });
