@@ -151,22 +151,19 @@ export function ChatPanel({
       data-testid="chat-panel-shell"
       className="flex min-h-[24rem] flex-1 flex-col border-l border-white/[0.06] bg-black p-4 lg:h-full lg:min-h-0"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-sm font-medium text-neutral-200">Chat</h2>
-        </div>
+      <div className="flex items-start justify-end gap-4">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={handleCreateSession}
-            className="rounded-full border border-white/[0.08] bg-neutral-950 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-pink-500/30"
+            className="border border-white/[0.08] bg-neutral-950 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-pink-500/30"
           >
             New chat
           </button>
         </div>
       </div>
 
-      <div className="relative mt-4 rounded-3xl border border-white/[0.06] bg-neutral-950/60 p-4">
+      <div className="relative mt-4 border border-white/[0.06] bg-neutral-950/60 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-neutral-500">
@@ -184,14 +181,14 @@ export function ChatPanel({
             aria-label="Toggle chat history"
             aria-expanded={isHistoryOpen}
             onClick={() => setIsHistoryOpen((previous) => !previous)}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium transition ${
+            className={`inline-flex items-center gap-2 border px-3 py-2 text-xs font-medium transition ${
               isHistoryOpen
                 ? 'border-pink-500/40 bg-pink-500/10 text-pink-200'
                 : 'border-white/[0.08] bg-black/40 text-neutral-300 hover:border-pink-500/30'
             }`}
           >
             History
-            <span className="rounded-full border border-current/20 px-1.5 py-0.5 text-[10px]">
+            <span className="border border-current/20 px-1.5 py-0.5 text-[10px]">
               {sessions.length}
             </span>
           </button>
@@ -212,7 +209,7 @@ export function ChatPanel({
                 return (
                   <div
                     key={session.id}
-                    className={`flex items-start gap-2 rounded-2xl border p-2 transition ${
+                    className={`flex items-start gap-2 border p-2 transition ${
                       session.id === activeSessionId
                         ? 'border-pink-500/30 bg-pink-500/10'
                         : 'border-white/[0.06] bg-black/30'
@@ -223,7 +220,7 @@ export function ChatPanel({
                       aria-label={session.title}
                       aria-pressed={session.id === activeSessionId}
                       onClick={() => handleSelectSession(session.id)}
-                      className={`flex min-w-0 flex-1 flex-col rounded-[0.9rem] px-3 py-2 text-left text-sm transition ${
+                      className={`flex min-w-0 flex-1 flex-col px-3 py-2 text-left text-sm transition ${
                         session.id === activeSessionId
                           ? 'text-pink-200'
                           : 'text-neutral-300 hover:bg-white/[0.03]'
@@ -238,7 +235,7 @@ export function ChatPanel({
                       type="button"
                       aria-label={`Delete ${session.title}`}
                       onClick={() => handleDeleteSession(session.id)}
-                      className="shrink-0 rounded-full border border-white/[0.08] bg-black/40 px-2.5 py-2 text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 transition hover:border-rose-500/30 hover:text-rose-300"
+                      className="shrink-0 border border-white/[0.08] bg-black/40 px-2.5 py-2 text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 transition hover:border-rose-500/30 hover:text-rose-300"
                     >
                       Del
                     </button>
@@ -256,7 +253,7 @@ export function ChatPanel({
       >
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {graphSource === 'mock' ? (
-            <div className="mb-3 shrink-0 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
+            <div className="mb-3 shrink-0 border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
               Graph is showing mock data. Chat only queries live ingested notes from the backend.
             </div>
           ) : null}
@@ -509,7 +506,7 @@ function InlineDocumentLinks({
   const hasAnyDocuments = sourceDocuments.length > 0 || discoveryDocuments.length > 0;
 
   return (
-    <section className="mt-3 rounded-2xl border border-white/[0.04] bg-black/20 px-3 py-2.5">
+    <section className="mt-3 border border-white/[0.04] bg-black/20 px-3 py-2.5">
       <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
         Linked documents
       </p>
