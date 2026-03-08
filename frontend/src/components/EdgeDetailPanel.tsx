@@ -91,7 +91,10 @@ export function EdgeDetailPanel({
 
       <div
         data-testid="edge-detail-scroll-content"
-        className="mt-4 min-h-0 overflow-y-auto pr-1"
+        className="mt-4 min-h-0 overflow-y-auto overscroll-contain pr-1"
+        onWheel={(event) => {
+          event.stopPropagation();
+        }}
       >
         {isLoading ? (
           <p className="text-sm text-neutral-400">Loading relationship details...</p>

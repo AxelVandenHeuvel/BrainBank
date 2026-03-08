@@ -28,14 +28,25 @@ vi.mock('./hooks/useGraphData', () => ({
 }));
 
 vi.mock('./components/Graph3D', () => ({
-  Graph3D: (props: { chatFocus?: { sourceConcepts: string[]; discoveryConcepts: string[] } | null }) => {
+  Graph3D: (props: {
+    chatFocus?: { sourceConcepts: string[]; discoveryConcepts: string[] } | null;
+    onOpenDocument?: (docId: string, name: string, content: string) => void;
+  }) => {
     graph3DSpy(props);
 
     return (
-      <div
-        data-testid="graph-scene"
-        data-chat-focus={props.chatFocus ? JSON.stringify(props.chatFocus) : 'none'}
-      />
+      <div>
+        <div
+          data-testid="graph-scene"
+          data-chat-focus={props.chatFocus ? JSON.stringify(props.chatFocus) : 'none'}
+        />
+        <button
+          type="button"
+          onClick={() => props.onOpenDocument?.('doc-1', 'Architecture Notes', '# Graph content')}
+        >
+          Open graph doc
+        </button>
+      </div>
     );
   },
 }));
@@ -43,13 +54,16 @@ vi.mock('./components/Graph3D', () => ({
 vi.mock('./components/DocumentEditor', () => ({
   DocumentEditor: ({
     docId,
+    initialContent,
     onSaved,
   }: {
     docId: string;
+    initialContent: string;
     onSaved?: (docId: string, newDocId?: string, currentContent?: string) => void;
   }) => (
     <div data-testid="document-editor">
       <div>{docId}</div>
+      <div>{initialContent || 'Empty content'}</div>
       <button
         type="button"
         onClick={() => onSaved?.(docId, docId.startsWith('new-note-') ? 'saved-doc-1' : undefined, 'Saved content')}
@@ -281,5 +295,41 @@ describe('App', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/documents/doc-1');
     expect(await screen.findByTestId('document-editor')).toBeInTheDocument();
     expect(screen.getByText('doc-1')).toBeInTheDocument();
+  });
+
+  it('shows a loading state until async document content arrives on first open', async () => {
+    const user = userEvent.setup();
+    let resolveFetch: ((value: {
+      ok: boolean;
+      json: () => Promise<{ doc_id: string; name: string; full_text: string }>;
+    }) => void) | null = null;
+    const fetchPromise = new Promise<{
+      ok: boolean;
+      json: () => Promise<{ doc_id: string; name: string; full_text: string }>;
+    }>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockReturnValue(fetchPromise);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
+    await user.click(screen.getByRole('button', { name: 'Open cited doc' }));
+
+    expect(screen.getByText('Loading note...')).toBeInTheDocument();
+    expect(screen.queryByTestId('document-editor')).not.toBeInTheDocument();
+
+    resolveFetch?.({
+      ok: true,
+      json: async () => ({
+        doc_id: 'doc-1',
+        name: 'Architecture Notes',
+        full_text: '# Loaded document',
+      }),
+    });
+
+    expect(await screen.findByTestId('document-editor')).toBeInTheDocument();
+    expect(screen.getByText('# Loaded document')).toBeInTheDocument();
   });
 });
