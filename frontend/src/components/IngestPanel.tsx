@@ -20,6 +20,7 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
   const [result, setResult] = useState<IngestResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showNotion, setShowNotion] = useState(false);
+  const [showNotionHelp, setShowNotionHelp] = useState(false);
   const [notionToken, setNotionToken] = useState('');
   const [notionUrl, setNotionUrl] = useState('');
 
@@ -179,6 +180,28 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
               onChange={(e) => setNotionUrl(e.target.value)}
               className="w-full border border-white/[0.06] bg-transparent px-3 py-2 text-xs text-neutral-200 outline-none placeholder:text-neutral-600 focus:border-pink-500/40"
             />
+            <button
+              type="button"
+              onClick={() => setShowNotionHelp(!showNotionHelp)}
+              className="text-left text-[10px] text-neutral-500 transition hover:text-neutral-300"
+            >
+              {showNotionHelp ? '▾ Setup guide' : '▸ Setup guide'}
+            </button>
+            {showNotionHelp && (
+              <div className="space-y-2 border-t border-white/[0.06] pt-2 text-[10px] leading-relaxed text-neutral-400">
+                <p><span className="font-semibold text-neutral-300">1. Create an integration</span><br />
+                  Go to notion.so/profile/integrations and click &quot;New integration&quot;. Copy the token (starts with <code className="text-pink-400">ntn_</code>).</p>
+                <p><span className="font-semibold text-neutral-300">2. Share your page</span><br />
+                  Open the Notion page or database you want to import. Click &quot;...&quot; → &quot;Connections&quot; → share the page with your integration.</p>
+                <p><span className="font-semibold text-neutral-300">3. Paste the URL</span><br />
+                  Copy the page or database URL from your browser. Both single pages and full databases work.</p>
+                <p><span className="font-semibold text-neutral-300">What happens</span><br />
+                  Pages are imported as markdown into BrainBank. Headings, lists, code blocks, and equations are preserved. Imported content appears in the graph as new concepts and documents.</p>
+                <p className="text-neutral-500">
+                  <span className="font-semibold">Common issues:</span> &quot;Invalid token&quot; means the token is wrong or expired. &quot;Not found&quot; means the page isn&apos;t shared with the integration.
+                </p>
+              </div>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={handleNotionImport}
@@ -188,7 +211,7 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
                 {uploadProgress ? 'Importing...' : 'Import'}
               </button>
               <button
-                onClick={() => { setShowNotion(false); setNotionToken(''); setNotionUrl(''); }}
+                onClick={() => { setShowNotion(false); setShowNotionHelp(false); setNotionToken(''); setNotionUrl(''); }}
                 className="px-3 py-1.5 text-xs text-neutral-500 transition hover:text-neutral-300"
               >
                 Cancel
