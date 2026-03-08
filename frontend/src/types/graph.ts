@@ -24,6 +24,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   type: string;
+  reason?: string;
 }
 
 export interface GraphApiResponse {
@@ -35,6 +36,7 @@ export interface GraphLink {
   source: string | GraphNode;
   target: string | GraphNode;
   type: string;
+  reason?: string;
 }
 
 export interface GraphData {
@@ -43,3 +45,19 @@ export interface GraphData {
 }
 
 export type GraphSource = 'api' | 'mock';
+
+export interface RelationshipDocument {
+  doc_id: string;
+  name: string;
+  full_text: string;
+}
+
+export interface RelationshipDetails {
+  source: string;
+  target: string;
+  type: 'RELATED_TO';
+  reason: string;
+  source_documents: RelationshipDocument[];
+  target_documents: RelationshipDocument[];
+  shared_document_ids: string[];
+}

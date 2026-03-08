@@ -1,16 +1,66 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
-from backend.schemas import DocumentResponse
+from backend.schemas import (
+    DocumentResponse,
+    GraphEdgeResponse,
+    RelationshipDetailsResponse,
+)
 
 graph_router = APIRouter(prefix="/api")
 
-db, conn = init_kuzu()
+
+def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse]:
+    """Return full documents whose chunks mention the given concept."""
+    _, table = init_lancedb()
+    df = table.to_pandas()
+
+    if df.empty:
+        return []
+
+    exploded = df[["doc_id", "doc_name", "text", "concepts"]].explode("concepts")
+    matching_doc_ids = exploded[exploded["concepts"] == concept_name]["doc_id"].unique()
+    matching = df[df["doc_id"].isin(matching_doc_ids)]
+    if matching.empty:
+        return []
+
+    documents = []
+    for doc_id, group in matching.groupby("doc_id", sort=False):
+        documents.append(
+            DocumentResponse(
+                doc_id=doc_id,
+                name=group["doc_name"].iloc[0],
+                full_text="\n\n".join(group["text"].tolist()),
+            )
+        )
+
+    return documents
+
+
+def get_related_to_edges(conn) -> list[GraphEdgeResponse]:
+    result = conn.execute(
+        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
+    )
+    edges = []
+    while result.has_next():
+        source, target, reason = result.get_next()
+        edges.append(
+            GraphEdgeResponse(
+                source=f"concept:{source}",
+                target=f"concept:{target}",
+                type="RELATED_TO",
+                reason=reason,
+            )
+        )
+
+    return edges
+
 
 @graph_router.get("/graph")
 def get_graph():
     """Return all nodes and edges for frontend visualization."""
+    kuzu_db, conn = init_kuzu()
     try:
         _, table = init_lancedb()
         df = table.to_pandas()
@@ -18,49 +68,76 @@ def get_graph():
         nodes = []
         edges = []
 
-        # Concept nodes from Kuzu
         result = conn.execute("MATCH (c:Concept) RETURN c.name")
         while result.has_next():
             name = result.get_next()[0]
             nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
 
-        # Document nodes from LanceDB (distinct docs)
         if not df.empty:
             for _, row in df.drop_duplicates("doc_id")[["doc_id", "doc_name"]].iterrows():
                 nodes.append(
                     {"id": f"doc:{row['doc_id']}", "type": "Document", "name": row["doc_name"]}
                 )
 
-            # MENTIONS edges from LanceDB (one edge per unique doc→concept pair)
             for _, row in df[["doc_id", "concepts"]].explode("concepts").drop_duplicates().iterrows():
                 if row["concepts"]:
                     edges.append(
-                        {
-                            "source": f"doc:{row['doc_id']}",
-                            "target": f"concept:{row['concepts']}",
-                            "type": "MENTIONS",
-                        }
+                        GraphEdgeResponse(
+                            source=f"doc:{row['doc_id']}",
+                            target=f"concept:{row['concepts']}",
+                            type="MENTIONS",
+                        ).model_dump()
                     )
 
-        # RELATED_TO edges from Kuzu
-        result = conn.execute(
-            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
-        )
-        while result.has_next():
-            row = result.get_next()
-            edges.append(
-                {"source": f"concept:{row[0]}", "target": f"concept:{row[1]}", "type": row[2]}
-            )
+        edges.extend(edge.model_dump() for edge in get_related_to_edges(conn))
 
         return {"nodes": nodes, "edges": edges}
     finally:
         conn.close()
-        db.close()
+        kuzu_db.close()
+
+
+@graph_router.get("/relationships/details", response_model=RelationshipDetailsResponse)
+def get_relationship_details(source: str, target: str):
+    """Return stored evidence for one concept-to-concept relationship."""
+    kuzu_db, conn = init_kuzu()
+    try:
+        result = conn.execute(
+            "MATCH (a:Concept {name: $source})-[r:RELATED_TO]->(b:Concept {name: $target}) "
+            "RETURN r.reason",
+            parameters={"source": source, "target": target},
+        )
+
+        if not result.has_next():
+            raise HTTPException(status_code=404, detail="Relationship not found")
+
+        reason = result.get_next()[0]
+        source_documents = get_concept_documents_from_table(source)
+        target_documents = get_concept_documents_from_table(target)
+        shared_document_ids = sorted(
+            {document.doc_id for document in source_documents}.intersection(
+                document.doc_id for document in target_documents
+            )
+        )
+
+        return RelationshipDetailsResponse(
+            source=source,
+            target=target,
+            type="RELATED_TO",
+            reason=reason,
+            source_documents=source_documents,
+            target_documents=target_documents,
+            shared_document_ids=shared_document_ids,
+        )
+    finally:
+        conn.close()
+        kuzu_db.close()
 
 
 @graph_router.get("/concepts")
 def get_concepts():
     """Return all concepts with document counts and related concepts."""
+    kuzu_db, conn = init_kuzu()
     try:
         _, table = init_lancedb()
         df = table.to_pandas()
@@ -70,16 +147,12 @@ def get_concepts():
         while result.has_next():
             name = result.get_next()[0]
 
-            # Count distinct documents that have chunks tagged with this concept
             if df.empty:
                 doc_count = 0
             else:
                 exploded = df[["doc_id", "concepts"]].explode("concepts")
-                doc_count = int(
-                    exploded[exploded["concepts"] == name]["doc_id"].nunique()
-                )
+                doc_count = int(exploded[exploded["concepts"] == name]["doc_id"].nunique())
 
-            # Related concepts from Kuzu
             rel_result = conn.execute(
                 "MATCH (c:Concept {name: $name})-[:RELATED_TO]-(other:Concept) "
                 "RETURN other.name",
@@ -96,7 +169,7 @@ def get_concepts():
         return {"concepts": concepts}
     finally:
         conn.close()
-        db.close()
+        kuzu_db.close()
 
 
 @graph_router.get("/documents")
@@ -112,7 +185,6 @@ def get_documents():
     for doc_id, group in df.groupby("doc_id", sort=False):
         doc_name = group["doc_name"].iloc[0]
         chunk_count = len(group)
-        # Union of all concepts across chunks, deduplicated
         all_concepts = group["concepts"].explode().dropna().unique().tolist()
         documents.append(
             {"doc_id": doc_id, "name": doc_name, "chunk_count": chunk_count, "concepts": all_concepts}
@@ -124,32 +196,13 @@ def get_documents():
 @graph_router.get("/concepts/{concept_name}/documents", response_model=list[DocumentResponse])
 def get_concept_documents(concept_name: str):
     """Return full text of every document whose chunks are tagged with concept_name."""
-    _, table = init_lancedb()
-    df = table.to_pandas()
-
-    if df.empty:
-        return []
-
-    # Filter to chunks that mention this concept
-    exploded = df[["doc_id", "doc_name", "text", "concepts"]].explode("concepts")
-    matching_doc_ids = exploded[exploded["concepts"] == concept_name]["doc_id"].unique()
-    matching = df[df["doc_id"].isin(matching_doc_ids)]
-    if matching.empty:
-        return []
-
-    # Group chunks by document, join text to form the full readable document
-    documents = []
-    for doc_id, group in matching.groupby("doc_id", sort=False):
-        full_text = "\n\n".join(group["text"].tolist())
-        name = group["doc_name"].iloc[0]
-        documents.append(DocumentResponse(doc_id=doc_id, name=name, full_text=full_text))
-
-    return documents
+    return get_concept_documents_from_table(concept_name)
 
 
 @graph_router.get("/stats")
 def get_stats():
     """Return aggregate counts across the knowledge graph."""
+    kuzu_db, conn = init_kuzu()
     try:
         _, table = init_lancedb()
         df = table.to_pandas()
@@ -167,4 +220,4 @@ def get_stats():
         }
     finally:
         conn.close()
-        db.close()
+        kuzu_db.close()

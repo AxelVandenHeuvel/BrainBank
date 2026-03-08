@@ -131,6 +131,7 @@ export default function App() {
         <section className="min-h-[70vh]">
           <Graph3D
             data={data}
+            source={source}
             query={deferredQuery}
             hoveredNode={hoveredNode}
             onHoverNode={setHoveredNode}
