@@ -266,19 +266,15 @@ describe('App', () => {
 
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
     expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-graph-source', 'mock');
-    expect(screen.getByTestId('chat-overlay')).toHaveClass(
-      'lg:absolute',
-      'lg:inset-y-3',
-      'lg:right-3',
-      'lg:w-[30rem]',
-    );
+    expect(screen.getByTestId('chat-sidebar')).toHaveClass('border-l', 'border-white/[0.06]');
     expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-has-bottom-composer', 'true');
-    expect(screen.getByTestId('chat-panel')).not.toBeVisible();
+    // Chat starts collapsed
+    expect(screen.getByTestId('chat-sidebar')).toHaveClass('w-[3rem]');
     expect(screen.getByRole('button', { name: 'Open chat panel' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Open chat panel' }));
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
-    expect(screen.getByTestId('chat-panel')).toBeVisible();
+    expect(screen.getByTestId('chat-sidebar')).toHaveClass('w-[24rem]');
 
     // Type in chat
     await user.type(screen.getByLabelText('Draft'), 'Persist me');
@@ -286,7 +282,7 @@ describe('App', () => {
 
     // Close chat
     await user.click(screen.getByRole('button', { name: 'Close chat panel' }));
-    expect(screen.getByTestId('chat-panel')).not.toBeVisible();
+    expect(screen.getByTestId('chat-sidebar')).toHaveClass('w-[3rem]');
 
     // Open chat
     await user.click(screen.getByRole('button', { name: 'Open chat panel' }));

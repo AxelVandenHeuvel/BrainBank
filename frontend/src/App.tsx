@@ -359,30 +359,45 @@ export default function App() {
           )}
         </div>
 
-        {/* Chat overlay */}
+        {/* Chat sidebar */}
         <aside
-          data-testid="chat-overlay"
-          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[30rem] lg:min-h-0 ${
-            isChatOpen ? 'flex lg:pointer-events-auto' : 'hidden lg:flex lg:pointer-events-none'
+          data-testid="chat-sidebar"
+          className={`flex shrink-0 flex-col border-l border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${
+            isChatOpen ? 'w-[24rem]' : 'w-[3rem]'
           }`}
-          aria-hidden={!isChatOpen}
         >
-          <button
-            type="button"
-            aria-label={getChatToggleLabel(true)}
-            onClick={() => setIsChatOpen(false)}
-            className={`absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-md rounded-r-none border border-pink-500/20 border-r-0 bg-black px-2.5 py-4 text-[10px] font-semibold uppercase tracking-widest text-pink-400 transition hover:border-pink-500/40 hover:text-pink-300 [writing-mode:vertical-rl] ${
-              isChatOpen ? '' : 'pointer-events-none opacity-0'
-            }`}
-          >
-            Chat
-          </button>
+          {/* Chat header with toggle */}
+          <div className={`flex items-center ${isChatOpen ? 'justify-between px-4' : 'justify-center'} py-3`}>
+            {isChatOpen && (
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-pink-400">Chat</span>
+            )}
+            <button
+              type="button"
+              aria-label={getChatToggleLabel(isChatOpen)}
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className="text-neutral-500 transition hover:text-pink-400"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className={`h-4 w-4 transition-transform duration-300 ${
+                  isChatOpen ? '' : 'rotate-180'
+                }`}
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+
+          {/* Chat content */}
           <div
-            hidden={!isChatOpen}
-            className={`flex w-full transition lg:h-full ${
-              isChatOpen
-                ? 'visible translate-x-0 opacity-100'
-                : 'invisible translate-x-8 opacity-0'
+            className={`flex min-h-0 flex-1 flex-col overflow-hidden transition-opacity duration-300 ${
+              isChatOpen ? 'opacity-100' : 'pointer-events-none h-0 opacity-0'
             }`}
           >
             <ChatPanel
@@ -393,17 +408,6 @@ export default function App() {
             />
           </div>
         </aside>
-
-        {!isChatOpen ? (
-          <button
-            type="button"
-            aria-label={getChatToggleLabel(false)}
-            onClick={() => setIsChatOpen(true)}
-            className="fixed right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-md rounded-r-none border border-pink-500/20 border-r-0 bg-black px-2.5 py-4 text-[10px] font-semibold uppercase tracking-widest text-pink-400 transition hover:border-pink-500/40 hover:text-pink-300 [writing-mode:vertical-rl]"
-          >
-            Chat
-          </button>
-        ) : null}
       </div>
     </main>
   );
