@@ -30,11 +30,11 @@ vi.mock('./components/Graph3D', () => ({
 }));
 
 vi.mock('./components/ChatPanel', () => ({
-  ChatPanel: () => {
+  ChatPanel: ({ graphSource }: { graphSource: 'api' | 'mock' }) => {
     const [draft, setDraft] = useState('');
 
     return (
-      <div data-testid="chat-panel">
+      <div data-testid="chat-panel" data-graph-source={graphSource}>
         <label htmlFor="chat-draft">Draft</label>
         <input
           id="chat-draft"
@@ -130,6 +130,14 @@ describe('App', () => {
     render(<App />);
 
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-graph-source', 'mock');
+    expect(screen.getByTestId('chat-overlay')).toHaveClass(
+      'lg:absolute',
+      'lg:inset-y-3',
+      'lg:right-3',
+      'lg:w-[24rem]',
+    );
+    expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
 
     // Type in chat
     await user.type(screen.getByLabelText('Draft'), 'Persist me');

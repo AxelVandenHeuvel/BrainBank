@@ -1,8 +1,13 @@
 import { useState } from 'react';
 
 import { useChat } from '../hooks/useChat';
+import type { GraphSource } from '../types/graph';
 
-export function ChatPanel() {
+interface ChatPanelProps {
+  graphSource: GraphSource;
+}
+
+export function ChatPanel({ graphSource }: ChatPanelProps) {
   const {
     messages,
     sessions,
@@ -77,6 +82,11 @@ export function ChatPanel() {
         </div>
 
         <div className="flex flex-col overflow-hidden">
+          {graphSource === 'mock' ? (
+            <div className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
+              Graph is showing mock data. Chat only queries live ingested notes from the backend.
+            </div>
+          ) : null}
           <div
             data-testid="chat-panel-messages"
             className="flex-1 space-y-3 overflow-y-auto pr-1 lg:min-h-0"

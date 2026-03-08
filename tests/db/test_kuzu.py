@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 import backend.db.kuzu as kuzu_module
 from backend.db.kuzu import init_kuzu
+from backend.db.lance import init_lancedb
 
 
 class TestInitKuzu:
@@ -198,3 +201,64 @@ class TestInitKuzu:
         assert r1.get_next()[0] == 0
         assert r2.get_next()[0] == 1
 
+    def test_get_kuzu_engine_repairs_broken_catalog_and_rebuilds_from_lancedb(
+        self,
+        monkeypatch,
+        lance_path,
+        kuzu_path,
+    ):
+        _db, table = init_lancedb(lance_path)
+        table.add(
+            [
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "doc-1",
+                    "doc_name": "Math Notes",
+                    "text": "Calculus and derivatives.",
+                    "concepts": ["Calculus", "Derivatives"],
+                    "vector": [0.0] * 384,
+                },
+                {
+                    "chunk_id": "chunk-2",
+                    "doc_id": "doc-1",
+                    "doc_name": "Math Notes",
+                    "text": "Calculus and limits.",
+                    "concepts": ["Calculus", "Limits"],
+                    "vector": [0.0] * 384,
+                },
+            ]
+        )
+        Path(kuzu_path).write_text("not a valid kuzu catalog")
+        monkeypatch.setattr(kuzu_module, "_db_instance", None)
+
+        repaired_db = kuzu_module.get_kuzu_engine(kuzu_path, lance_path)
+        conn = kuzu_module.kuzu.Connection(repaired_db)
+
+        try:
+            result = conn.execute(
+                "MATCH (c:Concept) RETURN c.name, c.colorScore, c.community_id"
+            )
+            nodes = []
+            while result.has_next():
+                nodes.append(result.get_next())
+
+            assert sorted(name for name, _, _ in nodes) == [
+                "Calculus",
+                "Derivatives",
+                "Limits",
+            ]
+            assert all(color_score == 0.5 for _, color_score, _ in nodes)
+            assert all(community_id is not None for _, _, community_id in nodes)
+
+            edge_result = conn.execute(
+                "MATCH (a:Concept {name: 'Calculus'})-[r:RELATED_TO]->"
+                "(b:Concept {name: 'Derivatives'}) RETURN r.weight, r.reason"
+            )
+            assert edge_result.has_next()
+            assert edge_result.get_next() == [1.0, "shared_document"]
+        finally:
+            conn.close()
+            repaired_db.close()
+
+        backups = list(Path(kuzu_path).parent.glob(f"{Path(kuzu_path).name}.invalid.*"))
+        assert backups

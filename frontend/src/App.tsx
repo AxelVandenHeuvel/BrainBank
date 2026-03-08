@@ -262,7 +262,7 @@ export default function App() {
                 : 'invisible translate-x-8 opacity-0'
             }`}
           >
-            <ChatPanel />
+            <ChatPanel graphSource={source} />
           </div>
         </aside>
 
