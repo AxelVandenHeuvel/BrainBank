@@ -214,13 +214,14 @@ describe('Graph3D', () => {
     );
 
     vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(1300);
 
     // Camera should be positioned to frame the scaled brain geometry.
     // The SphereGeometry(50) mock with mesh at (40,-20,10) gives:
     //   centeredBrain.sphere.radius ≈ 130, distance = max(130 * 2.6, 240) = 338
     //   orbitTarget ≈ {x:0, y:0, z:0} after centering
     //   camera.y = target.y + distance * 0.08 ≈ 27.04
-    expect(cameraPosition).toHaveBeenCalledWith(
+    expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
         y: expect.closeTo(27.04, 2),
@@ -231,7 +232,6 @@ describe('Graph3D', () => {
         y: 0,
         z: 0,
       }),
-      1200,
     );
     expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
       enableNavigationControls: boolean;
@@ -256,6 +256,8 @@ describe('Graph3D', () => {
       resizeObserverCallback?.([{ contentRect: { width: 1260, height: 820 } }]);
     });
 
+    vi.advanceTimersByTime(1300);
+
     expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
       width: number;
       height: number;
@@ -275,11 +277,10 @@ describe('Graph3D', () => {
         y: 0,
         z: 0,
       }),
-      1200,
     );
   });
 
-  it('zooms the camera to the first matching search result', () => {
+  it('smoothly flies the camera to the first matching search result without snapping the scene', () => {
     render(
       <Graph3D
         data={graph}
@@ -290,10 +291,17 @@ describe('Graph3D', () => {
       />,
     );
 
-    expect(cameraPosition).toHaveBeenLastCalledWith(
-      expect.objectContaining({ x: 0, y: expect.closeTo(11.2, 2), z: 140 }),
-      expect.objectContaining({ x: 0, y: 0, z: 0 }),
-      1200,
+    // Advance time so the self-managed rAF animation completes
+    vi.advanceTimersByTime(1300);
+
+    // Camera should have been animated to the node's world position
+    const lastCall = cameraPosition.mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    // No duration arg — we manage our own animation via rAF
+    expect(lastCall!.length).toBeLessThanOrEqual(2);
+    // The lookAt target should be the node position (world coords)
+    expect(lastCall![1]).toEqual(
+      expect.objectContaining({ y: expect.any(Number), z: expect.any(Number) }),
     );
   });
 
@@ -309,6 +317,7 @@ describe('Graph3D', () => {
     );
 
     vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(1300);
 
     const callCountBeforeIdle = cameraPosition.mock.calls.length;
     vi.advanceTimersByTime(5000);
@@ -340,6 +349,9 @@ describe('Graph3D', () => {
     await act(async () => {
       await getLatestGraphProps().onNodeClick(graph.nodes[0]);
     });
+
+    // Let the rAF camera animation finish before checking idle rotation
+    vi.advanceTimersByTime(1300);
 
     sceneObject.rotation.set(0, 0, 0);
     sceneObject.position.set(0, 0, 0);
@@ -524,11 +536,14 @@ describe('Graph3D', () => {
       resizeObserverCallback?.([{ contentRect: { width: 1200, height: 760 } }]);
     });
 
+    vi.advanceTimersByTime(1300);
     const callsAfterFirstResize = cameraPosition.mock.calls.length;
 
     act(() => {
       resizeObserverCallback?.([{ contentRect: { width: 900, height: 760 } }]);
     });
+
+    vi.advanceTimersByTime(1300);
 
     expect(callsAfterFirstResize).toBeGreaterThan(0);
     expect((graphPropsSpy.mock.calls.at(-1)?.[0] as {
@@ -551,7 +566,6 @@ describe('Graph3D', () => {
         y: 0,
         z: 0,
       }),
-      1200,
     );
   });
 
@@ -591,8 +605,11 @@ describe('Graph3D', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '+' }));
+    vi.advanceTimersByTime(1300);
     fireEvent.click(screen.getByRole('button', { name: '−' }));
+    vi.advanceTimersByTime(1300);
     fireEvent.click(screen.getByRole('button', { name: '⟳' }));
+    vi.advanceTimersByTime(1300);
 
     expect(container.querySelector('.absolute.top-4.right-4.flex.flex-col.gap-2')).not.toBeNull();
     expect(cameraPosition).toHaveBeenCalled();
@@ -608,7 +625,6 @@ describe('Graph3D', () => {
         y: 0,
         z: 0,
       }),
-      1200,
     );
   });
 
@@ -630,6 +646,7 @@ describe('Graph3D', () => {
     const root = container.firstChild as HTMLElement;
 
     fireEvent.wheel(root, { deltaY: -120 });
+    vi.advanceTimersByTime(500);
 
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -638,10 +655,10 @@ describe('Graph3D', () => {
         z: expect.closeTo(304.2, 3),
       }),
       expect.objectContaining({ x: 0, y: 0, z: 0 }),
-      400,
     );
 
     fireEvent.wheel(root, { deltaY: 120 });
+    vi.advanceTimersByTime(500);
 
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -650,7 +667,6 @@ describe('Graph3D', () => {
         z: expect.closeTo(365.04, 3),
       }),
       expect.objectContaining({ x: 0, y: 0, z: 0 }),
-      400,
     );
   });
 
@@ -668,10 +684,15 @@ describe('Graph3D', () => {
     vi.advanceTimersByTime(200);
     cameraPosition.mockClear();
 
+    const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onNodeClick: (node: GraphNode) => void;
+    };
+
     await act(async () => {
-      (graphPropsSpy.mock.calls.at(-1)?.[0] as {
-        onNodeClick: (node: GraphNode) => void;
-      }).onNodeClick(graph.nodes[0]);
+      onNodeClick(graph.nodes[0]); // first click
+      vi.advanceTimersByTime(100);
+      onNodeClick(graph.nodes[0]); // double click — opens overlay
+      await Promise.resolve();
     });
 
     cameraPosition.mockClear();
@@ -751,14 +772,19 @@ describe('Graph3D', () => {
       await Promise.resolve();
     });
 
-    expect(cameraPosition).toHaveBeenLastCalledWith(
-      expect.objectContaining({ x: 0, y: 8, z: 100 }),
-      expect.objectContaining({ x: 0, y: 0, z: 0 }),
-      1200,
+    // Advance time so the self-managed rAF animation completes
+    vi.advanceTimersByTime(1300);
+
+    // Camera should have been animated to the node's world position
+    const lastCall = cameraPosition.mock.calls.at(-1)!;
+    expect(lastCall.length).toBeLessThanOrEqual(2);
+    // lookAt should be at the node's world position
+    expect(lastCall[1]).toEqual(
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number), z: expect.any(Number) }),
     );
   });
 
-  it('clicking a node centers that node at the screen pivot', async () => {
+  it('clicking a node smoothly flies the camera to that node', async () => {
     render(
       <Graph3D
         data={graph}
@@ -776,26 +802,20 @@ describe('Graph3D', () => {
       getLatestGraphProps().onNodeClick(graph.nodes[1]);
     });
 
-    const centeredPoint = sceneObject.localToWorld(
-      new THREE.Vector3(
-        graph.nodes[1].x ?? 0,
-        graph.nodes[1].y ?? 0,
-        graph.nodes[1].z ?? 0,
-      ),
-    );
+    // Advance time so the self-managed rAF animation completes
+    vi.advanceTimersByTime(1300);
 
-    expect(centeredPoint.x).toBeCloseTo(0, 4);
-    expect(centeredPoint.y).toBeCloseTo(0, 4);
-    expect(centeredPoint.z).toBeCloseTo(0, 4);
-    expect(cameraPosition).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        x: 0,
-        y: expect.any(Number),
-        z: expect.any(Number),
-      }),
-      expect.objectContaining({ x: 0, y: 0, z: 0 }),
-      1200,
+    // Camera should have been animated to the node's world-space position
+    const lastCall = cameraPosition.mock.calls.at(-1)!;
+    expect(lastCall.length).toBeLessThanOrEqual(2);
+    // The lookAt target should be the node's world-space position
+    const nodePos = graph.nodes[1];
+    const worldPos = sceneObject.localToWorld(
+      new THREE.Vector3(nodePos.x ?? 0, nodePos.y ?? 0, nodePos.z ?? 0),
     );
+    expect(lastCall[1].x).toBeCloseTo(worldPos.x, 2);
+    expect(lastCall[1].y).toBeCloseTo(worldPos.y, 2);
+    expect(lastCall[1].z).toBeCloseTo(worldPos.z, 2);
   });
 
   it('double-clicking empty space resets node-focused rotation back to the home view', async () => {
@@ -824,6 +844,8 @@ describe('Graph3D', () => {
 
     fireEvent.doubleClick(screen.getByTestId('force-graph'));
 
+    vi.advanceTimersByTime(1300);
+
     expect(sceneObject.rotation.x).toBeCloseTo(0, 6);
     expect(sceneObject.rotation.y).toBeCloseTo(0, 6);
     expect(sceneObject.position.length()).toBeCloseTo(0, 6);
@@ -838,7 +860,6 @@ describe('Graph3D', () => {
         y: 0,
         z: 0,
       }),
-      1200,
     );
   });
 
@@ -908,7 +929,7 @@ describe('Graph3D', () => {
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
-    it('clicking a Concept node fetches its documents from the API', async () => {
+    it('double-clicking a Concept node fetches its documents from the API', async () => {
       render(
         <Graph3D
           data={graph}
@@ -923,7 +944,10 @@ describe('Graph3D', () => {
       };
 
       await act(async () => {
-        onNodeClick(graph.nodes[0]); // Calculus
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click
+        await Promise.resolve();
       });
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -931,7 +955,7 @@ describe('Graph3D', () => {
       );
     });
 
-    it('clicking a Concept node opens the expansion overlay', async () => {
+    it('double-clicking a Concept node opens the expansion overlay', async () => {
       render(
         <Graph3D
           data={graph}
@@ -946,10 +970,34 @@ describe('Graph3D', () => {
       };
 
       await act(async () => {
-        onNodeClick(graph.nodes[0]); // Calculus
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click
+        await Promise.resolve();
       });
 
       expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
+    });
+
+    it('single-clicking a Concept node does not open the expansion overlay', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // single click only
+      });
+
+      expect(screen.queryByRole('heading', { name: 'Calculus' })).toBeNull();
     });
 
     it('expansion overlay shows document cards after fetch resolves', async () => {
@@ -975,7 +1023,10 @@ describe('Graph3D', () => {
       };
 
       await act(async () => {
-        onNodeClick(graph.nodes[0]); // Calculus
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click — Calculus
+        await Promise.resolve();
       });
 
       expect(screen.getByText('Math Notes')).toBeTruthy();
@@ -996,7 +1047,10 @@ describe('Graph3D', () => {
       };
 
       await act(async () => {
-        onNodeClick(graph.nodes[0]); // Calculus
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click — Calculus
+        await Promise.resolve();
       });
       expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
 
@@ -1022,12 +1076,15 @@ describe('Graph3D', () => {
       };
 
       await act(async () => {
-        onNodeClick(graph.nodes[0]); // Calculus
+        onNodeClick(graph.nodes[0]); // first click
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]); // double click — Calculus
+        await Promise.resolve();
       });
       expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
 
       await act(async () => {
-        onNodeClick(graph.nodes[1]); // Derivatives — should be ignored
+        onNodeClick(graph.nodes[1]); // Derivatives — single click, should be ignored
       });
 
       expect(screen.getByRole('heading', { name: 'Calculus' })).toBeTruthy();
@@ -1283,6 +1340,8 @@ describe('Graph3D', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' });
 
+    vi.advanceTimersByTime(1300);
+
     expect(sceneObject.rotation.x).toBeCloseTo(0, 6);
     expect(sceneObject.rotation.y).toBeCloseTo(0, 6);
     expect(sceneObject.position.length()).toBeCloseTo(0, 6);
@@ -1297,7 +1356,6 @@ describe('Graph3D', () => {
         y: 0,
         z: 0,
       }),
-      1200,
     );
   });
 
