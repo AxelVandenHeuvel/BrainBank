@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import lancedb
 import pyarrow as pa
@@ -111,6 +112,37 @@ def delete_document_chunks(db_path: str, doc_id: str) -> int:
     return deleted_count
 
 
+def create_document_text(
+    db_path: str,
+    doc_name: str,
+    text: str,
+    doc_id: str | None = None,
+) -> str:
+    """Create a lightweight document row in LanceDB for draft-style saves."""
+    db, table = init_lancedb(db_path)
+    centroids_table = db.open_table("document_centroids")
+
+    real_doc_id = doc_id or str(uuid.uuid4())
+    zero_vector = [0.0] * VECTOR_DIM
+
+    table.add([{
+        "chunk_id": str(uuid.uuid4()),
+        "doc_id": real_doc_id,
+        "doc_name": doc_name,
+        "text": text,
+        "concepts": [],
+        "vector": zero_vector,
+    }])
+
+    centroids_table.add([{
+        "doc_id": real_doc_id,
+        "doc_name": doc_name,
+        "centroid_vector": zero_vector,
+    }])
+
+    return real_doc_id
+
+
 def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str) -> bool:
     """Quick-update a document's text in LanceDB without re-embedding or re-ingesting.
     Replaces chunk texts with a single merged chunk. Returns True if doc existed."""
@@ -139,6 +171,17 @@ def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str
         "concepts": all_concepts,
         "vector": first_vector,
     }])
+
+    try:
+        centroids_table = db.open_table("document_centroids")
+        centroids_table.delete(f'doc_id = "{doc_id}"')
+        centroids_table.add([{
+            "doc_id": doc_id,
+            "doc_name": doc_name,
+            "centroid_vector": first_vector,
+        }])
+    except Exception:
+        pass
     return True
 
 

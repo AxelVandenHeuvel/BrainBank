@@ -33,6 +33,43 @@ describe('useGraphData', () => {
     expect(result.current.data.nodes.find((n) => n.name === 'Calculus')).toBeTruthy();
   });
 
+  it('does not keep mock-only edges once api graph data loads', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          nodes: [
+            { id: 'concept:Calculus', type: 'Concept', name: 'Calculus' },
+            { id: 'concept:Derivatives', type: 'Concept', name: 'Derivatives' },
+          ],
+          edges: [
+            {
+              source: 'concept:Calculus',
+              target: 'concept:Derivatives',
+              type: 'RELATED_TO',
+              weight: 2,
+            },
+          ],
+        }),
+      }),
+    );
+
+    const { result } = renderHook(() => useGraphData());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const edgePairs = result.current.data.links.map((link) => {
+      const source = typeof link.source === 'string' ? link.source : link.source.id;
+      const target = typeof link.target === 'string' ? link.target : link.target.id;
+      return `${source}->${target}`;
+    });
+
+    expect(edgePairs).toContain('concept:Calculus->concept:Derivatives');
+    expect(edgePairs).not.toContain('concept:Study Habits->concept:Time Management');
+    expect(edgePairs).not.toContain('concept:Entropy->concept:Determinism');
+  });
+
   it('falls back to mock data when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 
@@ -200,4 +237,3 @@ describe('useGraphData', () => {
     expect(apiLink).toBeTruthy();
   });
 });
-

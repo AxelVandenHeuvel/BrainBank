@@ -60,8 +60,11 @@ export function EdgeDetailPanel({
     : [];
 
   return (
-    <aside className="absolute bottom-4 left-4 z-10 w-[24rem] max-w-[calc(100%-2rem)] border border-white/[0.08] bg-black/95 p-4 shadow-xl backdrop-blur">
-      <div className="flex items-start justify-between gap-4">
+    <aside
+      data-testid="edge-detail-panel"
+      className="absolute bottom-4 left-4 z-10 flex max-h-[calc(100%-2rem)] w-[24rem] max-w-[calc(100%-2rem)] flex-col border border-white/[0.08] bg-black/95 p-4 shadow-xl backdrop-blur"
+    >
+      <div className="flex shrink-0 items-start justify-between gap-4">
         <div>
           <p className="text-[10px] uppercase tracking-widest text-neutral-500">
             Relationship
@@ -86,39 +89,44 @@ export function EdgeDetailPanel({
         </button>
       </div>
 
-      {isLoading ? (
-        <p className="mt-4 text-sm text-neutral-400">Loading relationship details...</p>
-      ) : null}
+      <div
+        data-testid="edge-detail-scroll-content"
+        className="mt-4 min-h-0 overflow-y-auto pr-1"
+      >
+        {isLoading ? (
+          <p className="text-sm text-neutral-400">Loading relationship details...</p>
+        ) : null}
 
-      {!isLoading && error ? (
-        <p className="mt-4 border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-          {error}
-        </p>
-      ) : null}
+        {!isLoading && error ? (
+          <p className="border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+            {error}
+          </p>
+        ) : null}
 
-      {!isLoading && relationship ? (
-        <div className="mt-4 space-y-4">
-          <div className="flex items-center gap-3">
-            <span className="border border-pink-500/30 bg-pink-500/10 px-2.5 py-1 text-xs font-medium text-pink-300">
-              {relationship.type}
-            </span>
-            <p className="text-sm text-neutral-300">{relationship.reason}</p>
+        {!isLoading && relationship ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="border border-pink-500/30 bg-pink-500/10 px-2.5 py-1 text-xs font-medium text-pink-300">
+                {relationship.type}
+              </span>
+              <p className="text-sm text-neutral-300">{relationship.reason}</p>
+            </div>
+            {!error ? (
+              <>
+                <DocumentList title="Shared documents" documents={sharedDocuments} />
+                <DocumentList
+                  title="Source-only documents"
+                  documents={sourceOnlyDocuments}
+                />
+                <DocumentList
+                  title="Target-only documents"
+                  documents={targetOnlyDocuments}
+                />
+              </>
+            ) : null}
           </div>
-          {!error ? (
-            <>
-              <DocumentList title="Shared documents" documents={sharedDocuments} />
-              <DocumentList
-                title="Source-only documents"
-                documents={sourceOnlyDocuments}
-              />
-              <DocumentList
-                title="Target-only documents"
-                documents={targetOnlyDocuments}
-              />
-            </>
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </aside>
   );
 }

@@ -40,6 +40,26 @@ vi.mock('./components/Graph3D', () => ({
   },
 }));
 
+vi.mock('./components/DocumentEditor', () => ({
+  DocumentEditor: ({
+    docId,
+    onSaved,
+  }: {
+    docId: string;
+    onSaved?: (docId: string, newDocId?: string, currentContent?: string) => void;
+  }) => (
+    <div data-testid="document-editor">
+      <div>{docId}</div>
+      <button
+        type="button"
+        onClick={() => onSaved?.(docId, docId.startsWith('new-note-') ? 'saved-doc-1' : undefined, 'Saved content')}
+      >
+        Trigger save
+      </button>
+    </div>
+  ),
+}));
+
 vi.mock('./components/ChatPanel', () => ({
   ChatPanel: ({
     graphSource,
@@ -209,5 +229,19 @@ describe('App', () => {
     // The old NoteEditor full-page overlay should not be rendered
     // There should be no "Back to graph" button from NoteEditor
     expect(screen.queryByText('Back to graph')).not.toBeInTheDocument();
+  });
+
+  it('closes the new note editor after saving a new note', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /new note/i }));
+
+    expect(screen.getByTestId('document-editor')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Trigger save' }));
+
+    expect(screen.queryByTestId('document-editor')).not.toBeInTheDocument();
+    expect(screen.getByTestId('graph-scene')).toBeVisible();
   });
 });

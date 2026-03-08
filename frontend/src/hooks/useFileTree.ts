@@ -13,6 +13,8 @@ export interface FileTreeConcept {
   documents: FileTreeDocument[];
 }
 
+const NOTES_SECTION_NAME = 'Notes';
+
 interface UseFileTreeResult {
   tree: FileTreeConcept[];
   isLoading: boolean;
@@ -114,7 +116,14 @@ export function useFileTree(graphData?: GraphData): UseFileTreeResult {
           conceptDocMap.set(concept.name, []);
         }
 
+        const notesDocuments: FileTreeDocument[] = [];
+
         for (const doc of documentsData.documents) {
+          if (doc.concepts.length === 0) {
+            notesDocuments.push({ docId: doc.doc_id, name: doc.name });
+            continue;
+          }
+
           for (const conceptName of doc.concepts) {
             const docs = conceptDocMap.get(conceptName);
             if (docs) {
@@ -127,7 +136,11 @@ export function useFileTree(graphData?: GraphData): UseFileTreeResult {
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([name, documents]) => ({ name, documents }));
 
-        setApiTree(result);
+        if (notesDocuments.length > 0) {
+          result.push({ name: NOTES_SECTION_NAME, documents: notesDocuments });
+        }
+
+        setApiTree(result.sort((a, b) => a.name.localeCompare(b.name)));
       } catch (error) {
         if (controller.signal.aborted) return;
         // API failed — will fall back to graph-derived tree
