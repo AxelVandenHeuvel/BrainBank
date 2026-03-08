@@ -189,10 +189,10 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
             </button>
             {showNotionHelp && (
               <div className="space-y-2 border-t border-white/[0.06] pt-2 text-[10px] leading-relaxed text-neutral-400">
-                <p><span className="font-semibold text-neutral-300">1. Create an integration</span><br />
-                  Go to notion.so/profile/integrations and click &quot;New integration&quot;. Copy the token (starts with <code className="text-pink-400">ntn_</code>).</p>
+                <p><span className="font-semibold text-neutral-300">1. Create an internal integration</span><br />
+                  Go to notion.so/profile/integrations and click &quot;New integration&quot;. Select <span className="text-neutral-300">Internal</span> as the type. Copy the token (starts with <code className="text-pink-400">ntn_</code>).</p>
                 <p><span className="font-semibold text-neutral-300">2. Share your page</span><br />
-                  Open the Notion page or database you want to import. Click &quot;...&quot; → &quot;Connections&quot; → share the page with your integration.</p>
+                  Open the Notion page or database you want to import. Click &quot;...&quot; → &quot;Connections&quot; → share the page with your integration. The integration can only access pages you explicitly share with it.</p>
                 <p><span className="font-semibold text-neutral-300">3. Paste the URL</span><br />
                   Copy the page or database URL from your browser. Both single pages and full databases work.</p>
                 <p><span className="font-semibold text-neutral-300">What happens</span><br />
