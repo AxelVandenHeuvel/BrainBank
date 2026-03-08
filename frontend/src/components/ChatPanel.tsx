@@ -80,7 +80,6 @@ export function ChatPanel() {
           <div
             data-testid="chat-panel-messages"
             className="flex-1 space-y-3 overflow-y-auto pr-1 lg:min-h-0"
-            className="flex-1 space-y-3 overflow-y-auto pr-1"
           >
             {messages.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-cyan-300/15 bg-slate-950/60 p-4 text-sm leading-6 text-slate-400">

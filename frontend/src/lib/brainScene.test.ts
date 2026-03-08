@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
-import { centerObject3DAtOrigin, rotateObjectFromPointerDelta } from './brainScene';
+import {
+  centerObject3DAtOrigin,
+  keepLocalPointAtWorldOrigin,
+  rotateObjectFromPointerDelta,
+} from './brainScene';
 
 describe('brainScene helpers', () => {
   it('centers a model around the origin and resets the pivot position', () => {
@@ -37,5 +41,23 @@ describe('brainScene helpers', () => {
     expect(target.rotation.x).toBeCloseTo(-0.1, 4);
     expect(target.rotation.y).toBeCloseTo(0.2, 4);
     expect(target.rotation.z).toBe(0);
+  });
+
+  it('repositions a rotated object so a local focus point stays at world origin', () => {
+    const target = new THREE.Group();
+    const focusPoint = new THREE.Vector3(12, 0, -4);
+
+    target.rotation.y = Math.PI / 3;
+    target.rotation.x = -Math.PI / 8;
+    target.updateMatrixWorld(true);
+
+    keepLocalPointAtWorldOrigin(target, focusPoint);
+    target.updateMatrixWorld(true);
+
+    const centeredPoint = target.localToWorld(focusPoint.clone());
+
+    expect(centeredPoint.x).toBeCloseTo(0, 4);
+    expect(centeredPoint.y).toBeCloseTo(0, 4);
+    expect(centeredPoint.z).toBeCloseTo(0, 4);
   });
 });

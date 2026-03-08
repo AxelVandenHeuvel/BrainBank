@@ -139,12 +139,18 @@ describe('Graph3D', () => {
     currentCameraPosition = { x: 200, y: 60, z: 200 };
     controls.target.set.mockClear();
     controls.update.mockClear();
+    vi.stubGlobal('ResizeObserver', MockResizeObserver);
     vi.stubGlobal(
       'fetch',
       vi.fn().mockImplementation((input: RequestInfo | URL) => {
-        const url = String(input);
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
 
-        if (url.startsWith('/api/relationships/details')) {
+        if (url.includes('/api/relationships/details')) {
           return Promise.resolve({
             ok: true,
             json: async () => relationshipDetails,
@@ -181,12 +187,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(51.64, 2),
-        z: 364,
+        y: expect.closeTo(27.04, 2),
+        z: 338,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(22.52, 2),
+        y: 0,
         z: 0,
       }),
       1200,
@@ -200,6 +206,7 @@ describe('Graph3D', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -224,12 +231,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(51.64, 2),
-        z: 364,
+        y: expect.closeTo(27.04, 2),
+        z: 338,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(22.52, 2),
+        y: 0,
         z: 0,
       }),
       1200,
@@ -247,9 +254,9 @@ describe('Graph3D', () => {
       />,
     );
 
-    expect(cameraPosition).toHaveBeenCalledWith(
-      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number), z: expect.any(Number) }),
-      expect.objectContaining({ x: 10, y: 0, z: 0 }),
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({ x: 0, y: expect.closeTo(11.2, 2), z: 140 }),
+      expect.objectContaining({ x: 0, y: 0, z: 0 }),
       1200,
     );
   });
@@ -319,6 +326,7 @@ describe('Graph3D', () => {
     const { container } = render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -350,6 +358,7 @@ describe('Graph3D', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -382,12 +391,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(51.64, 2),
-        z: 364,
+        y: expect.closeTo(27.04, 2),
+        z: 338,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(22.52, 2),
+        y: 0,
         z: 0,
       }),
       1200,
@@ -438,12 +447,12 @@ describe('Graph3D', () => {
     expect(cameraPosition).toHaveBeenLastCalledWith(
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(51.64, 2),
-        z: 364,
+        y: expect.closeTo(27.04, 2),
+        z: 338,
       }),
       expect.objectContaining({
         x: 0,
-        y: expect.closeTo(22.52, 2),
+        y: 0,
         z: 0,
       }),
       1200,
@@ -483,21 +492,118 @@ describe('Graph3D', () => {
       onNodeClick: (node: GraphNode) => void;
     };
 
-    props.onNodeClick(graph.nodes[1]);
-    vi.advanceTimersByTime(100);
-    props.onNodeClick(graph.nodes[1]);
+    act(() => {
+      props.onNodeClick(graph.nodes[1]);
+      vi.advanceTimersByTime(100);
+      props.onNodeClick(graph.nodes[1]);
+    });
 
-    expect(cameraPosition).toHaveBeenCalledWith(
-      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number), z: expect.any(Number) }),
-      expect.objectContaining({ x: -10, y: 0, z: 0 }),
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({ x: 0, y: 8, z: 100 }),
+      expect.objectContaining({ x: 0, y: 0, z: 0 }),
       1200,
     );
+  });
+
+  it('clicking a node centers that node at the screen pivot', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+    cameraPosition.mockClear();
+
+    await act(async () => {
+      (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      }).onNodeClick(graph.nodes[1]);
+    });
+
+    const centeredPoint = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[1].x ?? 0,
+        graph.nodes[1].y ?? 0,
+        graph.nodes[1].z ?? 0,
+      ),
+    );
+
+    expect(centeredPoint.x).toBeCloseTo(0, 4);
+    expect(centeredPoint.y).toBeCloseTo(0, 4);
+    expect(centeredPoint.z).toBeCloseTo(0, 4);
+    expect(cameraPosition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        x: 0,
+        y: expect.any(Number),
+        z: expect.any(Number),
+      }),
+      expect.objectContaining({ x: 0, y: 0, z: 0 }),
+      1200,
+    );
+  });
+
+  it('keeps the clicked node centered while rotating the scene', async () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      }).onNodeClick(graph.nodes[0]);
+    });
+
+    const root = container.firstChild as HTMLElement;
+
+    fireEvent.mouseDown(root, {
+      button: 2,
+      buttons: 2,
+      clientX: 100,
+      clientY: 120,
+    });
+    fireEvent.mouseMove(root, {
+      buttons: 2,
+      clientX: 140,
+      clientY: 90,
+    });
+    fireEvent.mouseUp(root, { button: 2 });
+
+    const centeredPoint = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[0].x ?? 0,
+        graph.nodes[0].y ?? 0,
+        graph.nodes[0].z ?? 0,
+      ),
+    );
+
+    expect(centeredPoint.x).toBeCloseTo(0, 4);
+    expect(centeredPoint.y).toBeCloseTo(0, 4);
+    expect(centeredPoint.z).toBeCloseTo(0, 4);
   });
 
   describe('Concept node document expansion', () => {
     it('clicking a Document node is a no-op and does not fetch', async () => {
       render(
-        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
       );
       const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
         onNodeClick: (n: GraphNode) => void;
@@ -512,7 +618,13 @@ describe('Graph3D', () => {
 
     it('clicking a Concept node fetches its documents from the API', async () => {
       render(
-        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
       );
       const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
         onNodeClick: (n: GraphNode) => void;
@@ -537,7 +649,13 @@ describe('Graph3D', () => {
       });
 
       render(
-        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
       );
       const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
         onNodeClick: (n: GraphNode) => void;
@@ -567,7 +685,13 @@ describe('Graph3D', () => {
       });
 
       render(
-        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
       );
 
       // First click — expand
@@ -606,7 +730,13 @@ describe('Graph3D', () => {
       );
 
       render(
-        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
       );
 
       // Click Calculus

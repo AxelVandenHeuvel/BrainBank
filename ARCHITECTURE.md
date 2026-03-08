@@ -80,7 +80,7 @@ frontend/
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
       brainModel.ts          - Brain mesh containment math for node bounds
-      brainScene.ts          - Brain model centering and scene-rotation helpers
+      brainScene.ts          - Brain model centering plus scene-focus and rotation helpers
       chatStorage.ts         - localStorage helpers for persisted chat sessions
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
@@ -160,11 +160,12 @@ Graph3D -- react-force-graph-3d scene
   |         +-- hover -> highlight node + neighbors, tooltip
   |         +-- click RELATED_TO edge -> fetch /api/relationships/details
   |         +-- selected RELATED_TO edge -> persistent highlight + EdgeDetailPanel
-  |         +-- search -> highlight matches, zoom camera
+  |         +-- search -> highlight matches, center the first match in the viewport
   |         +-- load -> zoomToFit for default framing
   |         +-- idle (5s) -> slow in-place scene rotation around the brain center
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
-  |         +-- double-click node -> focus camera on that node
+  |         +-- click node -> move that node to screen center and expand its documents
+  |         +-- double-click node -> center that node more tightly
   |         +-- right-button drag -> rotate the scene object instead of orbiting the camera
   |         +-- panel resize -> recenter the home view for chat-open/chat-closed layouts
   v
@@ -180,7 +181,7 @@ The sidebar has a "New Note" button and a file upload option:
 
 Both modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, and reserves left-click for node interactions such as focus and document expansion. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks a `RELATED_TO` edge, the frontend keeps that exact edge selected, dims unrelated nodes, fetches `/api/relationships/details?source=...&target=...`, and renders `EdgeDetailPanel` with the stored reason plus shared, source-only, and target-only supporting documents. `MENTIONS` edges remain non-interactive.
 
