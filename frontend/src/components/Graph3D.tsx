@@ -131,8 +131,8 @@ const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 500;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
-const EXPANDED_DOC_RADIUS = 12;
-const EXPANDED_DIVE_DISTANCE = 40;
+const EXPANDED_DOC_RADIUS = 30;
+const EXPANDED_DIVE_DISTANCE = 120;
 const NODE_LABEL_Y_OFFSET = 16;
 /** Seed initial position from a deterministic hash so the force simulation starts
  *  with nodes spread out instead of all at the origin. */
@@ -237,6 +237,7 @@ export function Graph3D({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
+  const brainGroupRef = useRef<THREE.Group | null>(null);
   const brainHomeViewRef = useRef<BrainHomeView | null>(null);
   const idleTimeoutRef = useRef<number | null>(null);
   const idleRotationIntervalRef = useRef<number | null>(null);
@@ -1123,6 +1124,7 @@ export function Graph3D({
         n.fz = n.z;
       });
 
+      brainGroupRef.current = brainGroup;
       scene.add(brainGroup);
       // Reheat the simulation so it re-runs with brain containment clamping active
       (graphRef.current as any)?.d3ReheatSimulation?.();
@@ -1132,6 +1134,7 @@ export function Graph3D({
     return () => {
       cancelled = true;
       brainContainmentRef.current = null;
+      brainGroupRef.current = null;
       brainHomeViewRef.current = null;
 
       if (brainGroup) {
@@ -1144,6 +1147,13 @@ export function Graph3D({
   useEffect(() => {
     clampNodesWithinBrain(true);
   }, [displayData.nodes]);
+
+  // Hide brain wireframe when in expanded concept view
+  useEffect(() => {
+    const brain = brainGroupRef.current;
+    if (!brain) return;
+    brain.visible = expandedConcept === null;
+  }, [expandedConcept]);
 
   useEffect(() => {
     if (!data.nodes.length) {
@@ -1607,7 +1617,7 @@ export function Graph3D({
           ⟳
         </button>
       </div>
-      {activeCardNode && tooltipPosition ? (
+      {activeCardNode && tooltipPosition && !expandedConcept ? (
         <NodeTooltip
           node={activeCardNode}
           connectionCount={getConnectionCount(activeCardNode.id, adjacency)}
