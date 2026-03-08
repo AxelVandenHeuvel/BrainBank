@@ -1,4 +1,10 @@
-from backend.db.lance import init_lancedb, find_existing_document, delete_document_chunks
+from backend.db.lance import (
+    init_lancedb,
+    find_existing_document,
+    delete_document_chunks,
+    create_document_text,
+    update_document_text,
+)
 from tests.conftest import mock_embed_texts
 
 
@@ -162,3 +168,76 @@ class TestDeleteDocumentChunks:
         centroid_df = fresh_centroids.to_pandas()
         assert len(centroid_df) == 1
         assert centroid_df.iloc[0]["doc_id"] == "doc-2"
+
+
+class TestCreateDocumentText:
+    def test_creates_document_visible_to_subsequent_read(self, lance_path):
+        """A newly created document must be visible via init_lancedb immediately."""
+        doc_id = create_document_text(lance_path, "My Draft", "Some content")
+
+        _, table = init_lancedb(lance_path)
+        df = table.to_pandas()
+        matching = df[df["doc_id"] == doc_id]
+        assert len(matching) == 1
+        assert matching.iloc[0]["doc_name"] == "My Draft"
+        assert matching.iloc[0]["text"] == "Some content"
+
+    def test_creates_document_with_empty_concepts(self, lance_path):
+        doc_id = create_document_text(lance_path, "Draft", "text")
+
+        _, table = init_lancedb(lance_path)
+        df = table.to_pandas()
+        row = df[df["doc_id"] == doc_id].iloc[0]
+        assert list(row["concepts"]) == []
+
+
+class TestUpdateDocumentText:
+    def test_updates_text_and_preserves_concepts(self, lance_path):
+        db, table = init_lancedb(lance_path)
+        vec = [0.1] * 384
+        table.add([{
+            "chunk_id": "c1",
+            "doc_id": "doc-1",
+            "doc_name": "Old Title",
+            "text": "old text",
+            "concepts": ["Math", "Physics"],
+            "vector": vec,
+        }])
+
+        updated = update_document_text(lance_path, "doc-1", "New Title", "new text")
+        assert updated is True
+
+        _, fresh = init_lancedb(lance_path)
+        df = fresh.to_pandas()
+        row = df[df["doc_id"] == "doc-1"].iloc[0]
+        assert row["doc_name"] == "New Title"
+        assert row["text"] == "new text"
+        assert set(row["concepts"]) == {"Math", "Physics"}
+
+    def test_updates_document_centroids(self, lance_path):
+        """Centroid row must be refreshed on update (caught NameError bug)."""
+        db, table = init_lancedb(lance_path)
+        vec = [0.1] * 384
+        table.add([{
+            "chunk_id": "c1",
+            "doc_id": "doc-1",
+            "doc_name": "Title",
+            "text": "text",
+            "concepts": [],
+            "vector": vec,
+        }])
+        centroids = db.open_table("document_centroids")
+        centroids.add([{"doc_id": "doc-1", "doc_name": "Title", "centroid_vector": vec}])
+
+        update_document_text(lance_path, "doc-1", "Updated Title", "updated")
+
+        fresh_db, _ = init_lancedb(lance_path)
+        fresh_centroids = fresh_db.open_table("document_centroids")
+        cdf = fresh_centroids.to_pandas()
+        matching = cdf[cdf["doc_id"] == "doc-1"]
+        assert len(matching) == 1
+        assert matching.iloc[0]["doc_name"] == "Updated Title"
+
+    def test_returns_false_for_nonexistent_doc(self, lance_path):
+        init_lancedb(lance_path)
+        assert update_document_text(lance_path, "nope", "T", "t") is False

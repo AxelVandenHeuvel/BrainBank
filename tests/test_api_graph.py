@@ -586,6 +586,30 @@ class TestUpdateDocument:
         assert matching[0]["name"] == "Short draft"
         assert matching[0]["concepts"] == []
 
+    def test_create_document_with_text_runs_full_ingest(self):
+        """POST /api/documents with non-empty text should extract concepts and embed."""
+        with (
+            patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts),
+            patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts),
+            patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
+        ):
+            resp = client.post(
+                "/api/documents",
+                json={"text": "Calculus is about Derivatives and Integrals.", "title": "Math Notes"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "doc_id" in data
+        assert data.get("concepts") is not None
+        assert len(data["concepts"]) > 0
+
+        listing = client.get("/api/documents")
+        docs = listing.json()["documents"]
+        matching = [d for d in docs if d["doc_id"] == data["doc_id"]]
+        assert len(matching) == 1
+        assert len(matching[0]["concepts"]) > 0
+
     def test_get_document_returns_full_text_for_lightweight_created_note(self):
         create = client.post(
             "/api/documents",
