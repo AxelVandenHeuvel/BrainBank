@@ -160,6 +160,7 @@ class ConceptConsolidator:
 
             top_target, top_similarity = broader_candidates[0]
             if top_similarity > AUTO_MERGE_SIMILARITY_THRESHOLD:
+                print(f"    Auto-merging '{source_name}' -> '{top_target}' (similarity: {top_similarity:.4f})")
                 if self._apply_merge(conn, source_name, top_target):
                     merged_count += 1
                     auto_merged_count += 1
@@ -176,13 +177,18 @@ class ConceptConsolidator:
                 }
             )
 
-        for batch in _batched(llm_candidates, LLM_BATCH_SIZE):
+        if llm_candidates:
+            print(f"    Evaluating {len(llm_candidates)} fuzzy merges via LLM...")
+
+        for batch_index, batch in enumerate(_batched(llm_candidates, LLM_BATCH_SIZE), start=1):
+            print(f"      Batch {batch_index} ({len(batch)} items)...")
             decisions = self._decide_merges_batch(batch)
             for candidate in batch:
                 source_name = candidate["source"]
                 target_name = decisions.get(source_name)
                 if not target_name:
                     continue
+                print(f"      - Merging '{source_name}' -> '{target_name}' (LLM decision)")
                 if self._apply_merge(conn, source_name, target_name):
                     merged_count += 1
                     llm_merged_count += 1
@@ -222,7 +228,11 @@ class ConceptConsolidator:
         forced_merges = 0
         llm_calls = 0
 
-        for orphan_name in orphans:
+        print(f"    Processing {len(orphans)} orphans for forced consolidation...")
+        for index, orphan_name in enumerate(orphans, start=1):
+            if index % 5 == 0 or index == 1:
+                print(f"      Orphan {index}/{len(orphans)}: '{orphan_name}'...")
+                
             nearest = self._nearest_concepts_with_scores(
                 orphan_name,
                 concept_centroids,

@@ -8,7 +8,7 @@ from google import genai
 load_dotenv()
 
 DEFAULT_LLM_PROVIDER = "gemini"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 

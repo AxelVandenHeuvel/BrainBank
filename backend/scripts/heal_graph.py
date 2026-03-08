@@ -90,7 +90,11 @@ def heal_graph(
         concept_names = list(centroids.keys())
         bridges_added = 0
 
-        for concept in concept_names:
+        num_concepts = len(concept_names)
+        for index, concept in enumerate(concept_names, start=1):
+            if index % 20 == 0 or index == 1:
+                print(f"    Scanning concept {index}/{num_concepts}: '{concept}'...")
+            
             centroid = centroids[concept]
 
             # Calculate similarities for ALL other concepts
@@ -115,6 +119,7 @@ def heal_graph(
                 if _edge_exists(conn, concept, neighbor):
                     continue
 
+                print(f"      - Creating bridge: '{concept}' <-> '{neighbor}' (Similarity: {similarity:.4f})")
                 conn.execute(
                     "MATCH (a:Concept {name: $a}), (b:Concept {name: $b}) "
                     "CREATE (a)-[:RELATED_TO {reason: $reason, weight: $weight, edge_type: $edge_type}]->(b)",

@@ -55,18 +55,30 @@ def run_force_orphan_cleanup(
 
 
 def main() -> int:
+    print("Starting GraphRAG artifact rebuild...")
+    
+    print("Step 1/4: Running consolidation cleanup...")
     cleanup = run_consolidation_cleanup()
+    print(f"  - Merged {cleanup.get('merged_count', 0)} concepts")
+    print(f"  - Renamed {cleanup.get('renamed_count', 0)} canonical concepts")
+    
+    print("Step 2/4: Healing graph (adding semantic bridges)...")
     bridges = heal_graph()
+    print(f"  - Added {bridges} semantic bridges")
+    
+    print("Step 3/4: Forcing orphan cleanup...")
     orphan_cleanup = run_force_orphan_cleanup()
+    print(f"  - Forced {orphan_cleanup.get('forced_merges', 0)} orphan merges")
+    
+    print("Step 4/4: Rebuilding community artifacts...")
     summary = rebuild_graphrag_artifacts()
+    
+    print("\nRebuild Complete!")
     print(
-        "Rebuilt GraphRAG artifacts: "
-        f"{summary['concept_centroids']} concept centroids, "
-        f"{summary['communities']} communities, "
-        f"concept merges={cleanup.get('merged_count', 0)}, "
-        f"canonical renames={cleanup.get('renamed_count', 0)}, "
-        f"semantic bridges={bridges}, "
-        f"forced orphan merges={orphan_cleanup.get('forced_merges', 0)}"
+        f"  - {summary['concept_centroids']} concept centroids registered"
+    )
+    print(
+        f"  - {summary['communities']} communities summarized"
     )
     return 0
 

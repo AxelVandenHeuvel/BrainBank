@@ -82,8 +82,10 @@ def _build_community_records(graph: nx.Graph, chunks_df) -> list[dict]:
     )
 
     records = []
+    total = len(ordered_communities)
     for index, member_concepts in enumerate(ordered_communities, start=1):
         community_id = f"community:{index:04d}"
+        print(f"    Summarizing {community_id} ({index}/{total}): {', '.join(member_concepts[:3])}...")
         representative_evidence = _select_representative_evidence(chunks_df, member_concepts)
         summary = generate_community_summary(
             community_id,
