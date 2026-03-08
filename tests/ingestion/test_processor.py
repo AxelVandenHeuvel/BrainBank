@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
@@ -152,3 +152,67 @@ class TestIngestMarkdown:
         centroid_vector = matching.iloc[0]["centroid_vector"]
         assert len(centroid_vector) == 384
 
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    def test_passes_top_existing_concepts_as_hints(self, _mock_emb, _mock_score, lance_path, kuzu_path):
+        db, _ = init_lancedb(lance_path)
+        concept_centroids = db.open_table("concept_centroids")
+        concept_centroids.add([
+            {
+                "concept_name": "Calculus",
+                "centroid_vector": [0.0] * 384,
+                "document_count": 12,
+            },
+            {
+                "concept_name": "Integrals",
+                "centroid_vector": [0.0] * 384,
+                "document_count": 8,
+            },
+            {
+                "concept_name": "Limits",
+                "centroid_vector": [0.0] * 384,
+                "document_count": 2,
+            },
+        ])
+
+        captured_hints = {}
+
+        def _fake_extract(_text: str, _doc_name: str, existing_concepts=None):
+            captured_hints["value"] = existing_concepts
+            return {"concepts": ["Calculus", "Integrals"], "relationships": []}
+
+        class _NoopConsolidator:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def canonicalize_concepts(self, concepts):
+                return concepts
+
+            def consolidate_graph(self, _conn):
+                return {"merged_count": 0, "renamed_count": 0}
+
+        with patch("backend.ingestion.processor.extract_concepts", side_effect=_fake_extract):
+            with patch("backend.ingestion.processor.ConceptConsolidator", _NoopConsolidator):
+                ingest_markdown("Calculus and integrals", "Doc", lance_path, kuzu_path)
+
+        assert captured_hints["value"] == ["Calculus", "Integrals", "Limits"]
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch(
+        "backend.ingestion.processor.extract_concepts",
+        return_value={"concepts": ["Definite Integrals", "Derivatives"], "relationships": []},
+    )
+    def test_ingest_uses_consolidator_output_for_canonical_concepts(
+        self, _mock_extract, _mock_emb, _mock_score, lance_path, kuzu_path
+    ):
+        consolidator = Mock()
+        consolidator.canonicalize_concepts.return_value = ["Integrals", "Derivatives"]
+        consolidator.consolidate_graph.return_value = {"merged_count": 1, "renamed_count": 1}
+
+        with patch("backend.ingestion.processor.ConceptConsolidator", return_value=consolidator):
+            result = ingest_markdown("Definite integrals and derivatives", "Doc", lance_path, kuzu_path)
+
+        assert result["concepts"] == ["Integrals", "Derivatives"]
+        consolidator.canonicalize_concepts.assert_called_once_with(["Definite Integrals", "Derivatives"])
+        consolidator.consolidate_graph.assert_called_once()

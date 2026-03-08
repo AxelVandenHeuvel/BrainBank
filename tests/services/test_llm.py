@@ -1,5 +1,6 @@
 from unittest.mock import Mock, patch
 
+import backend.services.llm as llm_module
 from backend.services.llm import (
     extract_concepts,
     generate_answer,
@@ -103,6 +104,28 @@ class TestExtractConcepts:
         assert '"relationships"' in prompt
 
 
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_prompt_includes_existing_concept_mapping_guidance(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = """
+            {
+              "concepts": ["Integrals"],
+              "relationships": []
+            }
+            """
+        mock_get_provider.return_value = provider
+
+        extract_concepts(
+            "Definite integrals build on antiderivatives.",
+            "Calc II",
+            existing_concepts=["Integrals", "Derivatives"],
+        )
+
+        prompt = provider.generate_text.call_args.args[0]
+        assert "Prioritize mapping extracted ideas to the provided list of existing concepts" in prompt
+        assert "Only create a new concept name if the idea is genuinely novel" in prompt
+        assert "Integrals, Derivatives" in prompt
+
 class TestModelSelection:
     @patch.dict("backend.services.llm.os.environ", {}, clear=True)
     @patch("backend.services.llm.get_provider")
@@ -190,3 +213,46 @@ class TestModelSelection:
         prompt = provider.generate_text.call_args.args[0]
         assert "You are a test route for BrainBank." in prompt
         assert "Question: Say hello" in prompt
+
+
+
+class TestRateLimitBackoff:
+    @patch("backend.services.llm.time.sleep")
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_retries_with_retry_delay_on_429(self, mock_get_provider, mock_sleep):
+        provider = Mock()
+        provider.generate_text.side_effect = [
+            RuntimeError(
+                '429 RESOURCE_EXHAUSTED {"error":{"details":[{"retryDelay":"3s"}]}}'
+            ),
+            '{"concepts": ["Integrals"], "relationships": []}',
+        ]
+        mock_get_provider.return_value = provider
+
+        result = llm_module.extract_concepts("Text", "Doc")
+
+        assert result == {"concepts": ["Integrals"], "relationships": []}
+        assert provider.generate_text.call_count == 2
+        mock_sleep.assert_called_once_with(3.0)
+
+    @patch("backend.services.llm.logger")
+    @patch("backend.services.llm.time.sleep")
+    @patch("backend.services.llm.get_provider")
+    def test_logs_when_waiting_for_rate_limit_reset(
+        self, mock_get_provider, mock_sleep, mock_logger
+    ):
+        provider = Mock()
+        provider.generate_text.side_effect = [
+            RuntimeError("429 RESOURCE_EXHAUSTED"),
+            '{"concepts": [], "relationships": []}',
+        ]
+        mock_get_provider.return_value = provider
+
+        llm_module.extract_concepts("Text", "Doc")
+
+        assert mock_logger.warning.call_count >= 1
+        log_message = mock_logger.warning.call_args.args[0]
+        assert "rate limit" in log_message.lower()
+        assert "waiting" in log_message.lower()
+        mock_sleep.assert_called_once()
+
