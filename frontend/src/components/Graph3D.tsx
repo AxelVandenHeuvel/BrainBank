@@ -146,7 +146,6 @@ function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite
   sprite.renderOrder = 999;
   return sprite;
 }
-
 export function Graph3D({
   data,
   source: graphSource,
@@ -161,6 +160,8 @@ export function Graph3D({
   const idleTimeoutRef = useRef<number | null>(null);
   const idleRotationIntervalRef = useRef<number | null>(null);
   const lastNodeClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
+  const activeRotationNodeIdRef = useRef<string | null>(null);
+  const suppressBackgroundDoubleClickUntilRef = useRef(0);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const sceneFocusPointRef = useRef({ x: 0, y: 0, z: 0 });
   const isRightDragRotatingRef = useRef(false);
@@ -176,6 +177,7 @@ export function Graph3D({
   const [relationshipDetails, setRelationshipDetails] = useState<RelationshipDetails | null>(null);
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isRelationshipLoading, setIsRelationshipLoading] = useState(false);
+  const [hasFocusedRotationPivot, setHasFocusedRotationPivot] = useState(false);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = data;
@@ -340,6 +342,31 @@ export function Graph3D({
     rotationRoot.updateMatrixWorld(true);
   }
 
+  function getActiveRotationPivot() {
+    const activeNodeId = activeRotationNodeIdRef.current;
+
+    if (!activeNodeId) {
+      return null;
+    }
+
+    const activeNode = displayData.nodes.find((node) => node.id === activeNodeId);
+
+    if (!activeNode) {
+      return null;
+    }
+
+    return new THREE.Vector3(
+      activeNode.x ?? 0,
+      activeNode.y ?? 0,
+      activeNode.z ?? 0,
+    );
+  }
+
+  function setRotationPivotNode(nodeId: string | null) {
+    activeRotationNodeIdRef.current = nodeId;
+    setHasFocusedRotationPivot(nodeId !== null);
+  }
+
   function toWorldPoint(point: { x: number; y: number; z: number }) {
     const worldPoint = new THREE.Vector3(point.x, point.y, point.z);
     const rotationRoot = getRotationRoot();
@@ -359,7 +386,19 @@ export function Graph3D({
       return;
     }
 
-    keepLocalPointAtWorldOrigin(rotationRoot, sceneFocusPointRef.current);
+    const activePivot = getActiveRotationPivot();
+    const focusPoint = activePivot ?? new THREE.Vector3(
+      sceneFocusPointRef.current.x,
+      sceneFocusPointRef.current.y,
+      sceneFocusPointRef.current.z,
+    );
+
+    keepLocalPointAtWorldOrigin(rotationRoot, focusPoint);
+    sceneFocusPointRef.current = {
+      x: focusPoint.x,
+      y: focusPoint.y,
+      z: focusPoint.z,
+    };
     rotationRoot.updateMatrixWorld(true);
     lookAtTargetRef.current = { x: 0, y: 0, z: 0 };
   }
@@ -409,6 +448,8 @@ export function Graph3D({
   }
 
   function handleReset() {
+    setRotationPivotNode(null);
+
     const brainHomeView = brainHomeViewRef.current;
 
     if (brainHomeView) {
@@ -560,25 +601,27 @@ export function Graph3D({
     }
 
     const now = Date.now();
+    const nodePoint = {
+      x: node.x ?? 0,
+      y: node.y ?? 0,
+      z: node.z ?? 0,
+    };
+
+    setRotationPivotNode(node.id);
+    suppressBackgroundDoubleClickUntilRef.current = now + DOUBLE_CLICK_THRESHOLD_MS;
 
     if (
       lastNodeClickRef.current &&
       lastNodeClickRef.current.nodeId === node.id &&
       now - lastNodeClickRef.current.timestamp <= DOUBLE_CLICK_THRESHOLD_MS
     ) {
-      focusPoint(
-        { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
-        100,
-      );
+      focusPoint(nodePoint, 100);
       lastNodeClickRef.current = null;
       return;
     }
 
     lastNodeClickRef.current = { nodeId: node.id, timestamp: now };
-    focusPoint(
-      { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
-      160,
-    );
+    focusPoint(nodePoint, 160);
     void handleConceptExpansion(node);
   }
 
@@ -748,7 +791,9 @@ export function Graph3D({
     }
 
     const timeoutId = window.setTimeout(() => {
-      handleReset();
+      if (!activeRotationNodeIdRef.current) {
+        handleReset();
+      }
     }, 150);
 
     return () => {
@@ -777,7 +822,9 @@ export function Graph3D({
       ) {
         containerSizeRef.current = nextSize;
         setViewportSize(nextSize);
-        handleReset();
+        if (!activeRotationNodeIdRef.current) {
+          handleReset();
+        }
       }
 
       return;
@@ -801,7 +848,9 @@ export function Graph3D({
 
       containerSizeRef.current = nextSize;
       setViewportSize(nextSize);
-      handleReset();
+      if (!activeRotationNodeIdRef.current) {
+        handleReset();
+      }
     });
 
     observer.observe(container);
@@ -856,13 +905,16 @@ export function Graph3D({
   }, [expandedConcept]);
 
   useEffect(() => {
-    if (!selectedEdge) {
+    if (!selectedEdge && !hasFocusedRotationPivot) {
       return;
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         clearSelectedEdge();
+        if (activeRotationNodeIdRef.current) {
+          handleReset();
+        }
       }
     }
 
@@ -871,7 +923,7 @@ export function Graph3D({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedEdge]);
+  }, [hasFocusedRotationPivot, selectedEdge]);
 
   useEffect(() => {
     if (!hoveredNode) {
@@ -951,6 +1003,22 @@ export function Graph3D({
       ref={containerRef}
       className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
       onContextMenu={(event) => event.preventDefault()}
+      onDoubleClick={(event) => {
+        if (
+          event.target instanceof HTMLElement &&
+          event.target.closest('button')
+        ) {
+          return;
+        }
+
+        if (Date.now() <= suppressBackgroundDoubleClickUntilRef.current) {
+          return;
+        }
+
+        if (activeRotationNodeIdRef.current) {
+          handleReset();
+        }
+      }}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           clearSelectedEdge();
@@ -987,7 +1055,12 @@ export function Graph3D({
         cooldownTicks={120}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.15}
-        onEngineTick={() => clampNodesWithinBrain()}
+        onEngineTick={() => {
+          clampNodesWithinBrain();
+          if (activeRotationNodeIdRef.current) {
+            applySceneFocusPoint();
+          }
+        }}
         onLinkClick={(link) => void handleLinkClick(link as GraphLink)}
         onNodeClick={(node) => handleNodeClick(node as GraphNode)}
         onNodeHover={(node) => onHoverNode((node as GraphNode | null) ?? null)}
