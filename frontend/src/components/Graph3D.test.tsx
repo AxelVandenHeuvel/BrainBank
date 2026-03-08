@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
 import { createBrainContainment, isNodeInsideContainment } from '../lib/brainModel';
-import type { GraphData, GraphNode } from '../types/graph';
+import type { GraphData, GraphLink, GraphNode, RelationshipDetails } from '../types/graph';
 import { Graph3D } from './Graph3D';
 
 const graphPropsSpy = vi.fn();
@@ -78,6 +78,7 @@ const graph: GraphData = {
       source: 'concept:Calculus',
       target: 'concept:Derivatives',
       type: 'RELATED_TO',
+      reason: 'Derivatives are a core tool within calculus',
     },
     {
       source: 'doc:abc-123',
@@ -85,6 +86,21 @@ const graph: GraphData = {
       type: 'MENTIONS',
     },
   ],
+};
+
+const relationshipDetails: RelationshipDetails = {
+  source: 'Calculus',
+  target: 'Derivatives',
+  type: 'RELATED_TO',
+  reason: 'Derivatives are a core tool within calculus',
+  source_documents: [
+    { doc_id: 'shared-1', name: 'Math Notes', full_text: 'Calculus and derivatives appear together.' },
+  ],
+  target_documents: [
+    { doc_id: 'shared-1', name: 'Math Notes', full_text: 'Calculus and derivatives appear together.' },
+    { doc_id: 'target-1', name: 'Derivative Rules', full_text: 'Derivative rules live here.' },
+  ],
+  shared_document_ids: ['shared-1'],
 };
 
 const hoveredNode: GraphNode = {
@@ -100,6 +116,13 @@ describe('Graph3D', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     currentCameraPosition = { x: 200, y: 60, z: 200 };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => relationshipDetails,
+      }),
+    );
     // Default: fetch returns empty doc list so existing tests don't crash
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -109,6 +132,7 @@ describe('Graph3D', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -116,6 +140,7 @@ describe('Graph3D', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -143,6 +168,7 @@ describe('Graph3D', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query="calc"
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -160,6 +186,7 @@ describe('Graph3D', () => {
     const { container } = render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -183,6 +210,7 @@ describe('Graph3D', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={hoveredNode}
         onHoverNode={vi.fn()}
@@ -206,6 +234,7 @@ describe('Graph3D', () => {
     const { container } = render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -233,10 +262,29 @@ describe('Graph3D', () => {
     );
   });
 
+  it('increases link hover precision so edges are easier to click', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      linkHoverPrecision: number;
+    };
+
+    expect(props.linkHoverPrecision).toBeGreaterThanOrEqual(8);
+  });
+
   it('double-clicking a node focuses it', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -401,6 +449,7 @@ describe('Graph3D', () => {
     render(
       <Graph3D
         data={graph}
+        source="api"
         query=""
         hoveredNode={null}
         onHoverNode={vi.fn()}
@@ -428,5 +477,141 @@ describe('Graph3D', () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it('clicking a RELATED_TO edge opens the detail panel', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+    };
+
+    await act(async () => {
+      await props.onLinkClick(graph.links[0]);
+    });
+
+    expect(screen.getByText('Derivatives are a core tool within calculus')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/relationships/details?source=Calculus&target=Derivatives',
+      expect.any(Object),
+    );
+  });
+
+  it('selected edge styling takes precedence over hover styling', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={graph.nodes[2]}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const initialProps = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+      linkColor: (link: GraphLink) => string;
+      linkWidth: (link: GraphLink) => number;
+    };
+
+    await act(async () => {
+      await initialProps.onLinkClick(graph.links[0]);
+    });
+    expect(screen.getByText('Derivative Rules')).toBeInTheDocument();
+
+    const selectedProps = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      linkColor: (link: GraphLink) => string;
+      linkWidth: (link: GraphLink) => number;
+    };
+
+    expect(selectedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
+    expect(selectedProps.linkWidth(graph.links[0])).toBeGreaterThan(selectedProps.linkWidth(graph.links[1]));
+  });
+
+  it('clicking a MENTIONS edge does not open the panel', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+    };
+
+    props.onLinkClick(graph.links[1]);
+
+    expect(screen.queryByText('Derivative Rules')).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('closing the panel clears selected edge state', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+    };
+
+    await act(async () => {
+      await props.onLinkClick(graph.links[0]);
+    });
+    expect(screen.getByText('Derivative Rules')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close relationship details' }));
+
+    expect(screen.queryByText('Derivative Rules')).not.toBeInTheDocument();
+
+    const clearedProps = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      linkWidth: (link: GraphLink) => number;
+    };
+
+    expect(clearedProps.linkWidth(graph.links[0])).toBe(0.7);
+  });
+
+  it('uses bundled relationship details when the graph is in mock mode', async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    render(
+      <Graph3D
+        data={graph}
+        source="mock"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+      onLinkClick: (link: GraphLink) => Promise<void> | void;
+    };
+
+    await act(async () => {
+      await props.onLinkClick(graph.links[0]);
+    });
+
+    expect(screen.getByText('Derivatives are a core tool within calculus')).toBeInTheDocument();
+    expect(screen.getByText('Math Notes')).toBeInTheDocument();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,11 @@
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import app
+from backend.db.kuzu import init_kuzu as real_init_kuzu
+from backend.db.lance import init_lancedb as real_init_lancedb
 from tests.conftest import (
     mock_embed_query,
     mock_embed_texts,
@@ -11,6 +14,26 @@ from tests.conftest import (
 )
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_api_data(monkeypatch, lance_path, kuzu_path):
+    monkeypatch.setattr(
+        "backend.ingestion.processor.init_lancedb",
+        lambda path="./data/lancedb": real_init_lancedb(lance_path),
+    )
+    monkeypatch.setattr(
+        "backend.ingestion.processor.init_kuzu",
+        lambda path="./data/kuzu": real_init_kuzu(kuzu_path),
+    )
+    monkeypatch.setattr(
+        "backend.retrieval.query.init_lancedb",
+        lambda path="./data/lancedb": real_init_lancedb(lance_path),
+    )
+    monkeypatch.setattr(
+        "backend.retrieval.query.init_kuzu",
+        lambda path="./data/kuzu": real_init_kuzu(kuzu_path),
+    )
 
 
 class TestIngestEndpoint:

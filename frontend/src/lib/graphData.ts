@@ -33,7 +33,10 @@ function isGraphEdge(value: unknown): value is GraphEdge {
   return (
     typeof edge.source === 'string' &&
     typeof edge.target === 'string' &&
-    typeof edge.type === 'string'
+    typeof edge.type === 'string' &&
+    (edge.type !== 'RELATED_TO' ||
+      (typeof edge.reason === 'string' && edge.reason.length > 0)) &&
+    (edge.reason === undefined || typeof edge.reason === 'string')
   );
 }
 
@@ -58,4 +61,3 @@ export function normalizeGraphData(response: GraphApiResponse): GraphData {
     links: response.edges.map((edge) => ({ ...edge })),
   };
 }
-

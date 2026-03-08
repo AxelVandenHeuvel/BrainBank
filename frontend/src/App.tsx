@@ -139,6 +139,13 @@ export default function App() {
         </aside>
 
         <section className="min-h-[70vh]">
+          <Graph3D
+            data={data}
+            source={source}
+            query={deferredQuery}
+            hoveredNode={hoveredNode}
+            onHoverNode={setHoveredNode}
+          />
           {view === 'editor' ? (
             <NoteEditor
               onSave={handleNoteSaved}
