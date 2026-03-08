@@ -64,8 +64,6 @@ def get_concepts():
         )
 
         return {"concepts": concepts}
-    finally:
-        print("Finished get_concepts, leaving connection open to avoid write locks")
 
 
 @graph_router.get("/documents")
