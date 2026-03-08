@@ -28,7 +28,6 @@ export function DocumentEditor({
   const crepeRef = useRef<Crepe | null>(null);
   const contentRef = useRef(initialContent);
   const titleRef = useRef(initialTitle);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMounted = useRef(true);
   const isSaving = useRef(false);
 
@@ -77,13 +76,6 @@ export function DocumentEditor({
     }
   }, [docId, isNew, onSaved]);
 
-  const scheduleSave = useCallback(() => {
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
-      save();
-    }, 1500);
-  }, [save]);
-
   // Milkdown Crepe setup
   useEffect(() => {
     if (!editorRoot.current || crepeRef.current) return;
@@ -111,7 +103,7 @@ export function DocumentEditor({
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         contentRef.current = markdown;
-        scheduleSave();
+        setStatus((current) => (current === 'saving' ? current : 'idle'));
       });
     });
 
@@ -130,26 +122,20 @@ export function DocumentEditor({
       crepe.destroy().catch(() => {});
       crepeRef.current = null;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Flush pending save on unmount
   useEffect(() => {
     isMounted.current = true;
     return () => {
       isMounted.current = false;
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-        // Fire save immediately on unmount
-        save();
-      }
     };
-  }, [save]);
+  }, []);
 
   function handleTitleChange(newTitle: string) {
     setTitle(newTitle);
     titleRef.current = newTitle;
     onTitleChange?.(docId, newTitle);
-    scheduleSave();
+    setStatus((current) => (current === 'saving' ? current : 'idle'));
   }
 
   const statusLabel: Record<SaveStatus, string> = {
