@@ -1,7 +1,7 @@
 import type { ChatMessage, ChatSession } from '../types/chat';
 
-export const CHAT_SESSIONS_KEY = 'brainbank.chat.sessions';
-export const CHAT_ACTIVE_SESSION_KEY = 'brainbank.chat.activeSessionId';
+const CHAT_SESSIONS_KEY = 'brainbank.chat.sessions';
+const CHAT_ACTIVE_SESSION_KEY = 'brainbank.chat.activeSessionId';
 
 function isChatMessage(value: unknown): value is ChatMessage {
   if (!value || typeof value !== 'object') {

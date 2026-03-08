@@ -9,7 +9,7 @@ class TestInitLanceDB:
         assert table is not None
 
     def test_table_has_correct_columns(self, lance_path):
-        db, table = init_lancedb(lance_path)
+        _, table = init_lancedb(lance_path)
         schema = table.schema
         field_names = [f.name for f in schema]
         assert "chunk_id" in field_names
@@ -19,8 +19,8 @@ class TestInitLanceDB:
 
     def test_idempotent_init(self, lance_path):
         """Calling init twice should not error or duplicate tables."""
-        db1, table1 = init_lancedb(lance_path)
-        db2, table2 = init_lancedb(lance_path)
+        _, _table1 = init_lancedb(lance_path)
+        _, table2 = init_lancedb(lance_path)
         assert table2 is not None
 
 
@@ -32,7 +32,7 @@ class TestFindExistingDocument:
 
     def test_returns_doc_info_when_match_exists(self, lance_path):
         """Should return doc_id and doc_name when a matching document exists."""
-        db, table = init_lancedb(lance_path)
+        _, table = init_lancedb(lance_path)
         vec = mock_embed_texts(["test chunk"])[0]
         table.add([{
             "chunk_id": "chunk-1",
@@ -50,7 +50,7 @@ class TestFindExistingDocument:
 
     def test_returns_none_for_different_title(self, lance_path):
         """Should not match documents with different titles."""
-        db, table = init_lancedb(lance_path)
+        _, table = init_lancedb(lance_path)
         vec = mock_embed_texts(["test chunk"])[0]
         table.add([{
             "chunk_id": "chunk-1",

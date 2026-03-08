@@ -16,7 +16,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
-| Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) + KaTeX | Obsidian-like live markdown + LaTeX |
+| Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
 | LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
 
 ## Data Model
@@ -106,7 +106,6 @@ backend/
     pdf.py                  - PDF text extraction using PyMuPDF
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
-    journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   retrieval/
     query.py                - Query pipeline: search -> expand -> answer
@@ -127,7 +126,6 @@ tests/
     test_kuzu.py            - Kuzu init tests
   ingestion/
     test_chunker.py         - Chunking logic tests
-    test_journal_parser.py  - Journal parsing tests
     test_processor.py       - Ingestion pipeline tests
   services/
     test_llm.py             - LLM extraction tests
@@ -283,24 +281,6 @@ Output: { imported: N, pages: [{ title, doc_id, chunks, concepts }] }
 
 The Notion service (`backend/services/notion.py`) handles URL parsing, rich text annotation conversion (bold, italic, code, strikethrough, links), and block-to-markdown translation. It uses the `notion-client` Python SDK. Each imported page goes through the same ingestion pipeline as manually created notes.
 
-## Journal Parsing Flow
-
-```
-Input: raw journal text
-  |
-  v
-journal_parser.parse_journal_entry()
-  |
-  +-- sections         -- extracted from `##` headings
-  +-- raw_tasks        -- extracted from `- [ ]` and `- TODO`
-  +-- raw_reflections  -- extracted from `Today I learned` and `Insight:`
-  |
-  v
-full_text             -- cleaned text passed to later extraction steps
-```
-
-This parser is intentionally shallow. It provides structure hints only. Semantic extraction remains the LLM's responsibility.
-
 ## Query Flow (`POST /query`)
 
 ```
@@ -388,10 +368,14 @@ Database paths default to `./data/lancedb` and `./data/kuzu`.
 
 ## Testing
 
-Tests mock both the LLM (`extract_concepts`, `extract_knowledge`, `generate_answer`) and embeddings (`embed_texts`, `embed_query`) so they run without API keys or model downloads. Mock embeddings use deterministic SHA-256 hashes padded to 384 dimensions.
+Tests mock both the LLM (`extract_concepts`, `generate_answer`) and embeddings (`embed_texts`, `embed_query`) so they run without API keys or model downloads. Mock embeddings use deterministic SHA-256 hashes padded to 384 dimensions.
 
 Run: `uv run pytest tests/ -v`
 
 Frontend tests use Vitest and Testing Library to cover payload normalization, helper logic, brain containment math, mock fallback behavior, and the graph shell UI.
+
+Frontend utility modules keep only runtime-facing exports; tests avoid depending on private helper-only camera/orbit utilities, and `graphView` is limited to the helpers the UI still calls at runtime.
+
+Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`

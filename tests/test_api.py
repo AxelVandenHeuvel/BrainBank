@@ -44,7 +44,7 @@ def isolate_api_data(monkeypatch, lance_path, kuzu_path):
 class TestIngestEndpoint:
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_ingest_success(self, mock_llm, mock_emb):
+    def test_ingest_success(self, _mock_llm, _mock_emb):
         response = client.post(
             "/ingest",
             json={"text": "Calculus is about derivatives.", "title": "Math"},
@@ -65,7 +65,7 @@ class TestQueryEndpoint:
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_query_success(self, mock_ext, mock_emb_t, mock_emb_q, mock_gen):
+    def test_query_success(self, _mock_ext, _mock_emb_t, _mock_emb_q, _mock_gen):
         client.post(
             "/ingest",
             json={"text": "Calculus is about derivatives.", "title": "Math"},

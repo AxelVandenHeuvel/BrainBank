@@ -11,13 +11,13 @@ class TestInitKuzu:
         assert conn is not None
 
     def test_concept_table_exists(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         result = conn.execute("MATCH (c:Concept) RETURN count(c)")
         assert result.has_next()
         assert result.get_next()[0] == 0
 
     def test_concept_stores_color_score(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Concept {name: 'Calculus', colorScore: 0.15})")
         result = conn.execute("MATCH (c:Concept {name: 'Calculus'}) RETURN c.colorScore")
         assert result.has_next()
@@ -28,7 +28,7 @@ class TestInitKuzu:
         db1, conn1 = init_kuzu(kuzu_path)
         conn1.close()
         db1.close()
-        db2, conn2 = init_kuzu(kuzu_path)
+        _, conn2 = init_kuzu(kuzu_path)
         assert conn2 is not None
 
     def test_surfaces_a_clear_error_when_kuzu_open_fails_with_binding_index_error(
@@ -47,39 +47,39 @@ class TestInitKuzu:
     # --- Node table tests ---
 
     def test_project_table_exists(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         result = conn.execute("MATCH (p:Project) RETURN count(p)")
         assert result.has_next()
         assert result.get_next()[0] == 0
 
     def test_project_insert_and_query(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Project {name: 'BrainBank', status: 'active'})")
         result = conn.execute("MATCH (p:Project {name: 'BrainBank'}) RETURN p.name")
         assert result.has_next()
         assert result.get_next()[0] == "BrainBank"
 
     def test_task_table_exists(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         result = conn.execute("MATCH (t:Task) RETURN count(t)")
         assert result.has_next()
         assert result.get_next()[0] == 0
 
     def test_task_insert_and_query(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Task {task_id: 't1', name: 'Write tests', status: 'open'})")
         result = conn.execute("MATCH (t:Task {task_id: 't1'}) RETURN t.name")
         assert result.has_next()
         assert result.get_next()[0] == "Write tests"
 
     def test_reflection_table_exists(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         result = conn.execute("MATCH (r:Reflection) RETURN count(r)")
         assert result.has_next()
         assert result.get_next()[0] == 0
 
     def test_reflection_insert_and_query(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Reflection {reflection_id: 'r1', text: 'I learned something'})")
         result = conn.execute("MATCH (r:Reflection {reflection_id: 'r1'}) RETURN r.text")
         assert result.has_next()
@@ -88,7 +88,7 @@ class TestInitKuzu:
     # --- Relationship table tests ---
 
     def test_related_to_relationship(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Concept {name: 'Calculus'})")
         conn.execute("CREATE (:Concept {name: 'Mathematics'})")
         conn.execute(
@@ -105,7 +105,7 @@ class TestInitKuzu:
         assert row[2] == "subfield"
 
     def test_has_task_relationship(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Project {name: 'BrainBank', status: 'active'})")
         conn.execute("CREATE (:Task {task_id: 't2', name: 'Add schema', status: 'open'})")
         conn.execute(
@@ -117,7 +117,7 @@ class TestInitKuzu:
         assert result.get_next()[0] == "Add schema"
 
     def test_applied_to_project_relationship(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Concept {name: 'RAG'})")
         conn.execute("CREATE (:Project {name: 'BrainBank', status: 'active'})")
         conn.execute(
@@ -131,7 +131,7 @@ class TestInitKuzu:
         assert result.get_next()[0] == "BrainBank"
 
     def test_generated_task_relationship(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Concept {name: 'TDD'})")
         conn.execute("CREATE (:Task {task_id: 't3', name: 'Write failing test', status: 'open'})")
         conn.execute(
@@ -145,7 +145,7 @@ class TestInitKuzu:
         assert result.get_next()[0] == "Write failing test"
 
     def test_sparked_reflection_relationship(self, kuzu_path):
-        db, conn = init_kuzu(kuzu_path)
+        _, conn = init_kuzu(kuzu_path)
         conn.execute("CREATE (:Concept {name: 'Recursion'})")
         conn.execute("CREATE (:Reflection {reflection_id: 'r2', text: 'Recursion clicked today'})")
         conn.execute(

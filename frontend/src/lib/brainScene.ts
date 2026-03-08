@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export interface CenteredObject3D {
+interface CenteredObject3D {
   pivot: THREE.Group;
   bounds: THREE.Box3;
   sphere: THREE.Sphere;
@@ -74,12 +74,4 @@ export function keepLocalPointAtWorldOrigin(
   );
 
   target.position.copy(rotatedPoint.multiplyScalar(-1));
-}
-
-export function applyObjectOrbitPosition(
-  target: THREE.Object3D,
-  pivot: THREE.Vector3,
-): void {
-  const rotatedPivot = pivot.clone().applyEuler(target.rotation);
-  target.position.copy(pivot).sub(rotatedPivot);
 }
