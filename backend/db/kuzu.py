@@ -6,6 +6,21 @@ import kuzu
 _db_instance = None
 
 
+def _open_database(db_path: str) -> kuzu.Database:
+    try:
+        return kuzu.Database(db_path)
+    except IndexError as error:
+        message = str(error)
+        if "unordered_map::at: key not found" not in message:
+            raise
+
+        raise RuntimeError(
+            "Failed to open the Kuzu database at "
+            f"{db_path!r}. Another process may already be using it. "
+            "Stop the running backend or use a different Kuzu path before retrying."
+        ) from error
+
+
 def _init_schema(conn: kuzu.Connection) -> None:
     conn.execute(
         "CREATE NODE TABLE IF NOT EXISTS Concept(name STRING, colorScore DOUBLE, PRIMARY KEY (name))"
@@ -35,7 +50,7 @@ def get_kuzu_engine(db_path: str = "./data/kuzu") -> kuzu.Database:
         parent_dir = os.path.dirname(db_path)
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
-        _db_instance = kuzu.Database(db_path)
+        _db_instance = _open_database(db_path)
         conn = kuzu.Connection(_db_instance)
         _init_schema(conn)
         conn.close()
@@ -62,7 +77,7 @@ def init_kuzu(db_path: str = "./data/kuzu"):
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
-    db = kuzu.Database(db_path)
+    db = _open_database(db_path)
     conn = kuzu.Connection(db)
     _init_schema(conn)
     return db, conn
