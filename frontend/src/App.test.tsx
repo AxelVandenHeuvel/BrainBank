@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+const graph3DSpy = vi.fn();
+
 vi.mock('./hooks/useGraphData', () => ({
   useGraphData: () => ({
     data: {
@@ -26,11 +28,29 @@ vi.mock('./hooks/useGraphData', () => ({
 }));
 
 vi.mock('./components/Graph3D', () => ({
-  Graph3D: () => <div data-testid="graph-scene" />,
+  Graph3D: (props: { chatFocus?: { sourceConcepts: string[]; discoveryConcepts: string[] } | null }) => {
+    graph3DSpy(props);
+
+    return (
+      <div
+        data-testid="graph-scene"
+        data-chat-focus={props.chatFocus ? JSON.stringify(props.chatFocus) : 'none'}
+      />
+    );
+  },
 }));
 
 vi.mock('./components/ChatPanel', () => ({
-  ChatPanel: ({ graphSource }: { graphSource: 'api' | 'mock' }) => {
+  ChatPanel: ({
+    graphSource,
+    onAssistantMessageSelect,
+  }: {
+    graphSource: 'api' | 'mock';
+    onAssistantMessageSelect?: (selection: {
+      sourceConcepts: string[];
+      discoveryConcepts: string[];
+    } | null) => void;
+  }) => {
     const [draft, setDraft] = useState('');
 
     return (
@@ -42,6 +62,19 @@ vi.mock('./components/ChatPanel', () => ({
           onChange={(event) => setDraft(event.target.value)}
         />
         <div>{draft || 'Empty draft'}</div>
+        <button
+          type="button"
+          onClick={() =>
+            onAssistantMessageSelect?.({
+              sourceConcepts: ['Calculus'],
+              discoveryConcepts: ['Derivatives'],
+            })}
+        >
+          Select response
+        </button>
+        <button type="button" onClick={() => onAssistantMessageSelect?.(null)}>
+          Clear response
+        </button>
       </div>
     );
   },
@@ -50,6 +83,23 @@ vi.mock('./components/ChatPanel', () => ({
 import App from './App';
 
 describe('App', () => {
+  it('passes selected assistant response concepts into the graph highlight state', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Select response' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute(
+      'data-chat-focus',
+      JSON.stringify({
+        sourceConcepts: ['Calculus'],
+        discoveryConcepts: ['Derivatives'],
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Clear response' }));
+    expect(screen.getByTestId('graph-scene')).toHaveAttribute('data-chat-focus', 'none');
+  });
+
   it('renders the shell with search bar in the top bar area', () => {
     render(<App />);
 
@@ -135,7 +185,7 @@ describe('App', () => {
       'lg:absolute',
       'lg:inset-y-3',
       'lg:right-3',
-      'lg:w-[24rem]',
+      'lg:w-[30rem]',
     );
     expect(screen.getByRole('button', { name: 'Close chat panel' })).toBeInTheDocument();
 

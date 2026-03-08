@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { ChatMessage } from '../types/chat';
 
 const sendMessage = vi.fn();
 const createSession = vi.fn();
@@ -48,6 +50,10 @@ vi.mock('../hooks/useChat', () => ({
 import { ChatPanel } from './ChatPanel';
 
 describe('ChatPanel', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('renders message history, retrieval concept sections, and loading state', () => {
     isLoading = true;
     render(<ChatPanel graphSource="api" />);
@@ -55,17 +61,42 @@ describe('ChatPanel', () => {
     expect(screen.getByTestId('chat-panel-shell')).toHaveClass('lg:h-full', 'lg:min-h-0');
     expect(screen.getByTestId('chat-panel-messages')).toHaveClass('flex-1', 'overflow-y-auto');
     expect(screen.getByTestId('chat-panel-form')).toHaveClass('shrink-0');
+    expect(screen.queryByRole('button', { name: 'Earlier chat' })).not.toBeInTheDocument();
     expect(screen.getByText('What am I building?')).toBeInTheDocument();
     expect(screen.getByText('You are building BrainBank.')).toBeInTheDocument();
     expect(screen.getByText('Source concepts')).toBeInTheDocument();
     expect(screen.getByText('Discovery concepts')).toBeInTheDocument();
     expect(screen.getAllByText('BrainBank')).toHaveLength(2);
     expect(screen.getByText('Knowledge Graph')).toBeInTheDocument();
-    expect(screen.getByText('Thinking...')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Current chat' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
+    expect(screen.queryByText('GraphRAG')).not.toBeInTheDocument();
+    expect(screen.queryByText('Thinking...')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chat-panel-loading')).toBeInTheDocument();
+    expect(screen.getByText('Traversing graph')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Toggle chat history' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
     );
+  });
+
+  it('rotates loading phrases while the assistant is generating a response', () => {
+    vi.useFakeTimers();
+    isLoading = true;
+    render(<ChatPanel graphSource="api" />);
+
+    expect(screen.getByText('Traversing graph')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(2600);
+    });
+
+    expect(screen.getByText('Traversing graph')).not.toHaveClass('is-visible');
+
+    act(() => {
+      vi.advanceTimersByTime(520);
+    });
+
+    expect(screen.getByText('Harnessing concepts')).toBeInTheDocument();
+    expect(screen.getByText('Harnessing concepts')).toHaveClass('is-visible');
   });
 
   it('submits the current question and clears the input', async () => {
@@ -92,8 +123,32 @@ describe('ChatPanel', () => {
     await user.click(screen.getByRole('button', { name: 'New chat' }));
     expect(createSession).toHaveBeenCalled();
 
+    await user.click(screen.getByRole('button', { name: 'Toggle chat history' }));
+    expect(screen.getByRole('button', { name: 'Current chat' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
     await user.click(screen.getByRole('button', { name: 'Earlier chat' }));
     expect(selectSession).toHaveBeenCalledWith('session-1');
+  });
+
+  it('shows chat history only after the history toggle is opened', async () => {
+    isLoading = false;
+    const user = userEvent.setup();
+
+    render(<ChatPanel graphSource="api" />);
+
+    expect(screen.queryByText('Recent chats')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Earlier chat' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Toggle chat history' }));
+
+    expect(screen.getByText('Recent chats')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Earlier chat' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Toggle chat history' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
   });
 
   it('warns when the graph is mock data because chat only queries live ingested notes', () => {
@@ -102,5 +157,27 @@ describe('ChatPanel', () => {
     expect(
       screen.getByText('Graph is showing mock data. Chat only queries live ingested notes from the backend.'),
     ).toBeInTheDocument();
+  });
+
+  it('toggles graph focus when users click the same assistant response twice', async () => {
+    const user = userEvent.setup();
+    const onAssistantMessageSelect = vi.fn();
+
+    render(
+      <ChatPanel
+        graphSource="api"
+        onAssistantMessageSelect={onAssistantMessageSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Select response 1' }));
+    expect(onAssistantMessageSelect).toHaveBeenNthCalledWith(1, {
+      sourceConcepts: ['BrainBank'],
+      discoveryConcepts: ['BrainBank', 'Knowledge Graph'],
+      message: messages[1] as ChatMessage,
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Select response 1' }));
+    expect(onAssistantMessageSelect).toHaveBeenNthCalledWith(2, null);
   });
 });

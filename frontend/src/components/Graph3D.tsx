@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
+// @ts-expect-error - no types available
 import { forceCollide } from 'd3-force-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -96,6 +97,10 @@ interface Graph3DProps {
   data: GraphData;
   source: GraphSource;
   query: string;
+  chatFocus?: {
+    sourceConcepts: string[];
+    discoveryConcepts: string[];
+  } | null;
   hoveredNode?: GraphNode | null;
   onHoverNode?: (node: GraphNode | null) => void;
   onOpenDocument?: (docId: string, name: string, content: string) => void;
@@ -134,6 +139,7 @@ const NEURON_MODEL_TARGET_DIAGONAL = 10;
 const EXPANDED_DOC_RADIUS = 12;
 const EXPANDED_DIVE_DISTANCE = 40;
 const NODE_LABEL_Y_OFFSET = 16;
+const DISCOVERY_OUTLINE_COLOR = '#fbbf24';
 /** Seed initial position from a deterministic hash so the force simulation starts
  *  with nodes spread out instead of all at the origin. */
 function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
@@ -225,6 +231,7 @@ export function Graph3D({
   data,
   source: graphSource,
   query,
+  chatFocus = null,
   hoveredNode: hoveredNodeProp,
   onHoverNode: onHoverNodeProp,
   onOpenDocument,
@@ -385,11 +392,45 @@ export function Graph3D({
 
   const adjacency = buildAdjacencyMap(displayData);
   const matchedNodeIds = findMatchingNodeIds(displayData.nodes, query);
+  const chatFocusNodeIds = useMemo(() => {
+    if (!chatFocus) {
+      return {
+        sourceNodeIds: new Set<string>(),
+        discoveryNodeIds: new Set<string>(),
+        highlightedNodeIds: new Set<string>(),
+      };
+    }
+
+    const sourceNames = new Set(chatFocus.sourceConcepts);
+    const discoveryNames = new Set(chatFocus.discoveryConcepts);
+    const sourceNodeIds = new Set<string>();
+    const discoveryNodeIds = new Set<string>();
+
+    displayData.nodes.forEach((node) => {
+      if (node.type !== 'Concept') {
+        return;
+      }
+
+      if (sourceNames.has(node.name)) {
+        sourceNodeIds.add(node.id);
+      }
+      if (discoveryNames.has(node.name) && !sourceNames.has(node.name)) {
+        discoveryNodeIds.add(node.id);
+      }
+    });
+
+    return {
+      sourceNodeIds,
+      discoveryNodeIds,
+      highlightedNodeIds: new Set([...sourceNodeIds, ...discoveryNodeIds]),
+    };
+  }, [chatFocus, displayData.nodes]);
   const focusedNodeIds = createFocusSet(hoveredNode, adjacency);
   const activeCardNode = selectedNode ?? hoveredNode;
   const selectedNodeIds = selectedEdge
     ? new Set([selectedEdge.sourceId, selectedEdge.targetId])
     : new Set<string>();
+  const hasChatFocus = chatFocusNodeIds.highlightedNodeIds.size > 0;
 
   function getConceptName(nodeId: string): string | null {
     if (!nodeId.startsWith('concept:')) {
@@ -459,9 +500,24 @@ export function Graph3D({
     mesh.receiveShadow = false;
     group.add(mesh);
 
+    const outline = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(radius * 1.18, 0),
+      new THREE.MeshBasicMaterial({
+        color: DISCOVERY_OUTLINE_COLOR,
+        wireframe: true,
+        transparent: true,
+        opacity: 0,
+      }),
+    );
+    outline.name = 'node-outline';
+    outline.visible = false;
+    group.add(outline);
+
     const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
     labelSprite.position.set(0, NODE_LABEL_Y_OFFSET, 0);
     group.add(labelSprite);
+    group.userData.baseColor = nodeColor.clone();
+    (node as GraphNode & { __threeObj?: THREE.Object3D }).__threeObj = group;
 
     return group;
   }, []);
@@ -1269,9 +1325,14 @@ export function Graph3D({
 
   useEffect(() => {
     let frameId: number;
+    let lastTime = performance.now();
     const hasQuery = query.trim().length > 0;
     const animate = () => {
       const time = performance.now();
+      const dt = time - lastTime;
+      lastTime = time;
+
+      const lerpFactor = 1 - Math.exp(-dt * 0.008);
 
       displayData.nodes.forEach((node) => {
         const obj = (node as any).__threeObj as THREE.Object3D | undefined;
@@ -1281,19 +1342,61 @@ export function Graph3D({
           obj.userData.update(time);
         }
 
-        // Dim non-matching nodes during search; hide everything except doc sub-nodes in expanded view
+        // Dim non-matching nodes during search or assistant-response focus.
         const isSearchDimmed = hasQuery && !matchedNodeIds.has(node.id);
+        const isChatSource = chatFocusNodeIds.sourceNodeIds.has(node.id);
+        const isChatDiscovery = chatFocusNodeIds.discoveryNodeIds.has(node.id);
+        const isChatDimmed = hasChatFocus && !isChatSource && !isChatDiscovery;
         const isExpandHidden = expandedNodeIds !== null && !expandedNodeIds.has(node.id);
         const dimOpacity = isExpandHidden ? 0 : 0.08;
-        const isDimmed = isSearchDimmed || isExpandHidden;
+        const isDimmed = isSearchDimmed || isChatDimmed || isExpandHidden;
+
+        const baseColor =
+          ((obj.userData.baseColor as THREE.Color | undefined) ?? new THREE.Color(getBaseNodeColor(node)))
+            .clone();
+
+        const targetColor =
+          isChatDiscovery || isChatDimmed ? new THREE.Color(DIMMED_SEARCH_COLOR) : baseColor;
+        const targetEmissive =
+          isChatSource
+            ? baseColor.clone().multiplyScalar(0.2)
+            : targetColor.clone().multiplyScalar(0.08);
+        const targetOpacity = isDimmed ? dimOpacity : 0.9;
+        const targetOutlineOpacity = isChatDiscovery && !isExpandHidden ? 0.95 : 0;
+        const targetSpriteOpacity = isExpandHidden || isSearchDimmed || isChatDimmed ? 0 : 1;
+
+        if (obj.userData.currentOpacity === undefined) {
+          obj.userData.currentColor = baseColor.clone();
+          obj.userData.currentEmissive = baseColor.clone().multiplyScalar(0.15);
+          obj.userData.currentOpacity = 0.9;
+          obj.userData.currentOutlineOpacity = 0;
+          obj.userData.currentSpriteOpacity = 1;
+        }
+
+        obj.userData.currentColor.lerp(targetColor, lerpFactor);
+        obj.userData.currentEmissive.lerp(targetEmissive, lerpFactor);
+        obj.userData.currentOpacity += (targetOpacity - obj.userData.currentOpacity) * lerpFactor;
+        obj.userData.currentOutlineOpacity += (targetOutlineOpacity - obj.userData.currentOutlineOpacity) * lerpFactor;
+        obj.userData.currentSpriteOpacity += (targetSpriteOpacity - obj.userData.currentSpriteOpacity) * lerpFactor;
+
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh && child.material) {
-            const mat = child.material as THREE.MeshStandardMaterial;
-            mat.opacity = isDimmed ? dimOpacity : 0.9;
-            mat.transparent = true;
+            if (child.name === 'node-shape') {
+              const mat = child.material as THREE.MeshStandardMaterial;
+              mat.color.copy(obj.userData.currentColor);
+              mat.emissive.copy(obj.userData.currentEmissive);
+              mat.opacity = obj.userData.currentOpacity;
+              mat.transparent = true;
+            }
+
+            if (child.name === 'node-outline') {
+              const outlineMat = child.material as THREE.MeshBasicMaterial;
+              child.visible = obj.userData.currentOutlineOpacity > 0.01 || targetOutlineOpacity > 0;
+              outlineMat.opacity = obj.userData.currentOutlineOpacity;
+            }
           }
           if (child instanceof THREE.Sprite && child.material) {
-            child.material.opacity = isDimmed ? dimOpacity : 1;
+            child.material.opacity = obj.userData.currentSpriteOpacity;
           }
         });
       });
@@ -1301,7 +1404,7 @@ export function Graph3D({
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [displayData.nodes, query, matchedNodeIds, expandedNodeIds]);
+  }, [chatFocusNodeIds, displayData.nodes, expandedNodeIds, hasChatFocus, matchedNodeIds, query]);
 
 
   useEffect(() => {
@@ -1370,6 +1473,10 @@ export function Graph3D({
       return selectedNodeIds.has(node.id) ? NODE_TYPE_COLORS[node.type] : DIMMED_NODE_COLOR;
     }
 
+    if (hasChatFocus) {
+      return chatFocusNodeIds.sourceNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_SEARCH_COLOR;
+    }
+
     if (hoveredNode) {
       return focusedNodeIds.has(node.id) ? getBaseNodeColor(node) : DIMMED_NODE_COLOR;
     }
@@ -1408,6 +1515,16 @@ export function Graph3D({
 
     if (isSelectedLink(link)) {
       return ACTIVE_LINK_COLOR;
+    }
+
+    if (hasChatFocus) {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+
+      return chatFocusNodeIds.highlightedNodeIds.has(sourceId) &&
+        chatFocusNodeIds.highlightedNodeIds.has(targetId)
+        ? ACTIVE_LINK_COLOR
+        : DIMMED_LINK_COLOR;
     }
 
     if (focusedEdgeNodeId) {
@@ -1477,7 +1594,7 @@ export function Graph3D({
       return;
     }
     clampNodesWithinBrainRef.current();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onEngineStop = useCallback(() => {
     // Pin all nodes so the simulation never moves them again
@@ -1489,7 +1606,7 @@ export function Graph3D({
       pins.set(node.id, { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 });
     });
     simulationSettledRef.current = true;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const dashedLinkProps = {
     linkLineDash: getLinkLineDash,
