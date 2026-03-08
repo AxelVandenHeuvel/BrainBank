@@ -14,27 +14,14 @@ interface UseGraphDataResult {
 
 const fallbackGraphData = normalizeGraphData(mockGraphApiResponse);
 
-/** Merge API graph data on top of mock data. API nodes/edges override mock by id. */
+/** Merge API nodes on top of mock nodes while keeping API edges authoritative. */
 function mergeWithMock(apiData: GraphData): GraphData {
   const apiNodeIds = new Set(apiData.nodes.map((n) => n.id));
   const mockOnlyNodes = fallbackGraphData.nodes.filter((n) => !apiNodeIds.has(n.id));
 
-  const apiEdgeKeys = new Set(
-    apiData.links.map((l) => {
-      const s = typeof l.source === 'string' ? l.source : l.source.id;
-      const t = typeof l.target === 'string' ? l.target : l.target.id;
-      return `${s}->${t}`;
-    }),
-  );
-  const mockOnlyEdges = fallbackGraphData.links.filter((l) => {
-    const s = typeof l.source === 'string' ? l.source : l.source.id;
-    const t = typeof l.target === 'string' ? l.target : l.target.id;
-    return !apiEdgeKeys.has(`${s}->${t}`);
-  });
-
   return {
     nodes: [...mockOnlyNodes, ...apiData.nodes],
-    links: [...mockOnlyEdges, ...apiData.links],
+    links: apiData.links,
   };
 }
 
@@ -107,4 +94,3 @@ export function useGraphData(): UseGraphDataResult {
 
   return { ...result, refetch };
 }
-

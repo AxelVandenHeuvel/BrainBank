@@ -90,10 +90,208 @@ class TestQueryEndpoint:
         assert "answer" in data
         assert "source_concepts" in data
         assert "discovery_concepts" in data
+        assert "source_documents" in data
+        assert "discovery_documents" in data
+        assert "source_chunks" in data
+        assert "discovery_chunks" in data
+        assert "supporting_relationships" in data
+
+    @patch("backend.retrieval.query.generate_partial_answer", return_value="Partial answer")
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_query_global_prompt_includes_documents(
+        self,
+        _mock_ext,
+        _mock_emb_t,
+        _mock_emb_q,
+        _mock_partial,
+        lance_path,
+    ):
+        client.post(
+            "/ingest",
+            json={"text": "Calculus is about derivatives.", "title": "Math"},
+        )
+        db, _table = real_init_lancedb(lance_path)
+        summaries = db.open_table("community_summaries")
+        summaries.add(
+            [
+                {
+                    "community_id": "community:0001",
+                    "member_concepts": ["Calculus", "Derivatives"],
+                    "summary": "Calculus and derivatives appear together.",
+                    "summary_vector": mock_embed_query("Calculus and derivatives"),
+                }
+            ]
+        )
+
+        response = client.post(
+            "/query",
+            json={"question": "Give me a high level summary of calculus"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["answer"] == "Partial answer"
+        assert len(data["source_documents"]) == 1
+        assert data["source_documents"][0]["name"] == "Math"
+        assert data["discovery_documents"] == []
+        assert data["source_chunks"] == []
+        assert data["discovery_chunks"] == []
+        assert data["supporting_relationships"] == []
 
     def test_query_missing_fields(self):
         response = client.post("/query", json={})
         assert response.status_code == 422
+
+
+class TestPreparedQueryEndpoints:
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_query_prepare_returns_local_traversal_plan(self, _mock_ext, _mock_emb_t, _mock_emb_q):
+        client.post(
+            "/ingest",
+            json={"text": "Calculus is about derivatives.", "title": "Math"},
+        )
+
+        response = client.post("/query/prepare", json={"question": "What is calculus?"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["route"] == "LOCAL"
+        assert data["requires_direct_query"] is False
+        assert isinstance(data["prepared_query_id"], str)
+        assert "Calculus" in data["source_concepts"]
+        assert data["traversal_plan"]["root_node_id"] == "concept:Calculus"
+        assert len(data["traversal_plan"]["steps"]) >= 1
+
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_query_prepare_returns_global_fallback_for_global_queries(
+        self,
+        _mock_ext,
+        _mock_emb_t,
+        _mock_emb_q,
+        lance_path,
+    ):
+        client.post(
+            "/ingest",
+            json={"text": "Calculus is about derivatives.", "title": "Math"},
+        )
+        db, _table = real_init_lancedb(lance_path)
+        summaries = db.open_table("community_summaries")
+        summaries.add(
+            [
+                {
+                    "community_id": "community:0001",
+                    "member_concepts": ["Calculus", "Derivatives"],
+                    "summary": "Calculus and derivatives appear together.",
+                    "summary_vector": mock_embed_query("Calculus and derivatives"),
+                }
+            ]
+        )
+
+        response = client.post(
+            "/query/prepare",
+            json={"question": "Give me a high level summary of calculus"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "route": "GLOBAL",
+            "requires_direct_query": True,
+            "prepared_query_id": None,
+            "source_concepts": [],
+            "discovery_concepts": [],
+            "traversal_plan": None,
+        }
+
+    @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_query_answer_consumes_prepared_local_query(
+        self,
+        _mock_ext,
+        _mock_emb_t,
+        _mock_emb_q,
+        _mock_gen,
+    ):
+        client.post(
+            "/ingest",
+            json={"text": "Calculus is about derivatives.", "title": "Math"},
+        )
+        prepared = client.post("/query/prepare", json={"question": "What is calculus?"}).json()
+
+        response = client.post(
+            "/query/answer",
+            json={"prepared_query_id": prepared["prepared_query_id"]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["answer"].startswith("Mock answer for:")
+        assert "Calculus" in data["source_concepts"]
+        assert "supporting_relationships" in data
+
+    @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    def test_query_answer_returns_no_results_without_hitting_llm(self, _mock_emb_q, mock_gen):
+        prepared = client.post("/query/prepare", json={"question": "What is calculus?"}).json()
+
+        assert prepared["route"] == "LOCAL"
+        assert prepared["prepared_query_id"] is not None
+        assert prepared["traversal_plan"] is None
+
+        response = client.post(
+            "/query/answer",
+            json={"prepared_query_id": prepared["prepared_query_id"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "answer": "No ingested documents found. Upload or import notes before querying BrainBank.",
+            "source_concepts": [],
+            "discovery_concepts": [],
+            "source_documents": [],
+            "discovery_documents": [],
+            "source_chunks": [],
+            "discovery_chunks": [],
+            "supporting_relationships": [],
+        }
+        mock_gen.assert_not_called()
+
+    @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_query_answer_rejects_consumed_prepared_query(
+        self,
+        _mock_ext,
+        _mock_emb_t,
+        _mock_emb_q,
+        _mock_gen,
+    ):
+        client.post(
+            "/ingest",
+            json={"text": "Calculus is about derivatives.", "title": "Math"},
+        )
+        prepared = client.post("/query/prepare", json={"question": "What is calculus?"}).json()
+
+        first = client.post(
+            "/query/answer",
+            json={"prepared_query_id": prepared["prepared_query_id"]},
+        )
+        second = client.post(
+            "/query/answer",
+            json={"prepared_query_id": prepared["prepared_query_id"]},
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 404
+        assert second.json() == {"detail": "Prepared query not found or expired"}
 
 
 class TestLlmTestEndpoint:
@@ -107,7 +305,13 @@ class TestLlmTestEndpoint:
         assert response.status_code == 200
         assert response.json() == {
             "answer": "Direct Gemini response",
+            "source_concepts": [],
             "discovery_concepts": [],
+            "source_documents": [],
+            "discovery_documents": [],
+            "source_chunks": [],
+            "discovery_chunks": [],
+            "supporting_relationships": [],
             "mode": "llm_test",
         }
         mock_generate.assert_called_once_with("Can you hear me?")

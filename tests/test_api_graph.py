@@ -57,6 +57,13 @@ def isolate_graph_data(monkeypatch, lance_path, kuzu_path):
         lambda db_path, doc_id, doc_name, new_text: real_update_text(lance_path, doc_id, doc_name, new_text),
     )
 
+    # Route create_document_text to use the isolated test path.
+    from backend.db.lance import create_document_text as real_create_text
+    monkeypatch.setattr(
+        "backend.api_graph.create_document_text",
+        lambda db_path, doc_name, text, doc_id=None: real_create_text(lance_path, doc_name, text, doc_id),
+    )
+
     # Route ingest_markdown in api_graph to use the isolated test path.
     from backend.ingestion.processor import ingest_markdown as real_ingest
     monkeypatch.setattr(
@@ -552,6 +559,48 @@ class TestGetLatentDiscovery:
 
 
 class TestUpdateDocument:
+    def test_create_document_returns_doc_id(self):
+        resp = client.post(
+            "/api/documents",
+            json={"text": "", "title": "Short draft"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "doc_id" in data
+        assert data["status"] == "saved"
+
+    def test_create_document_allows_empty_text_and_lists_document(self):
+        resp = client.post(
+            "/api/documents",
+            json={"text": "", "title": "Short draft"},
+        )
+        doc_id = resp.json()["doc_id"]
+
+        listing = client.get("/api/documents")
+
+        assert listing.status_code == 200
+        docs = listing.json()["documents"]
+        matching = [doc for doc in docs if doc["doc_id"] == doc_id]
+        assert len(matching) == 1
+        assert matching[0]["name"] == "Short draft"
+        assert matching[0]["concepts"] == []
+
+    def test_get_document_returns_full_text_for_lightweight_created_note(self):
+        create = client.post(
+            "/api/documents",
+            json={"text": "", "title": "Short draft"},
+        )
+        doc_id = create.json()["doc_id"]
+
+        resp = client.get(f"/api/documents/{doc_id}")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["doc_id"] == doc_id
+        assert data["name"] == "Short draft"
+        assert data["full_text"] == ""
+
     def _ingest_and_get_doc_id(self, title="Math Notes", text="Calculus is about Derivatives and Integrals."):
         """Ingest a document and return its doc_id."""
         with (
@@ -624,4 +673,3 @@ class TestUpdateDocument:
         assert data["doc_id"] == doc_id
         assert "Chemistry" in data["concepts"]
         assert "Atoms" in data["concepts"]
-

@@ -8,6 +8,7 @@ import { Graph3D } from './Graph3D';
 
 const graphPropsSpy = vi.fn();
 const gltfLoadSpy = vi.fn();
+const TRAVERSAL_GRAY = new THREE.Color('#64748b');
 let sceneObject = new THREE.Scene();
 let canvasGetContextSpy: { mockRestore: () => void } | null = null;
 let resizeObserverCallback:
@@ -174,7 +175,38 @@ function getLatestGraphProps() {
     height: number;
     enableNavigationControls: boolean;
     linkHoverPrecision: number;
+    nodeLabel?: (node: GraphNode) => string | null;
   };
+}
+
+function getNodeShapeMaterial(
+  nodeObject: THREE.Object3D | null | undefined,
+): THREE.MeshStandardMaterial {
+  const shape = nodeObject?.getObjectByName('node-shape') as THREE.Mesh | undefined;
+  if (!shape || !(shape.material instanceof THREE.MeshStandardMaterial)) {
+    throw new Error('Expected node-shape mesh with MeshStandardMaterial');
+  }
+
+  return shape.material;
+}
+
+function getNodeOutlineMaterial(
+  nodeObject: THREE.Object3D | null | undefined,
+): THREE.MeshBasicMaterial {
+  const outline = nodeObject?.getObjectByName('node-outline') as THREE.Mesh | undefined;
+  if (!outline || !(outline.material instanceof THREE.MeshBasicMaterial)) {
+    throw new Error('Expected node-outline mesh with MeshBasicMaterial');
+  }
+
+  return outline.material;
+}
+
+function getColorDistance(left: THREE.Color, right: THREE.Color): number {
+  return Math.sqrt(
+    ((left.r - right.r) ** 2) +
+      ((left.g - right.g) ** 2) +
+      ((left.b - right.b) ** 2),
+  );
 }
 
 describe('Graph3D', () => {
@@ -273,7 +305,7 @@ describe('Graph3D', () => {
     }).enableNavigationControls).toBe(false);
   });
 
-  it('renders the brain shell with a lighter wireframe opacity', async () => {
+  it('renders the brain shell with a white wireframe color and opacity', async () => {
     render(
       <Graph3D
         data={graph}
@@ -296,8 +328,92 @@ describe('Graph3D', () => {
     });
 
     expect(brainMaterials).not.toHaveLength(0);
+    const expectedBrainColor = new THREE.Color('#FFFFFF');
     brainMaterials.forEach((material) => {
       expect(material.transparent).toBe(true);
+      expect(material.opacity).toBeCloseTo(0.06, 6);
+      expect(material.color.getHex()).toBe(expectedBrainColor.getHex());
+    });
+  });
+
+  it('renders a right-side brain mesh button with the zoom controls and toggles mesh visibility', async () => {
+    const { container } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByLabelText('Discovery mode')).not.toBeInTheDocument();
+
+    const meshButton = screen.getByRole('button', { name: 'Hide brain mesh' });
+    expect(meshButton).toBeInTheDocument();
+    expect(container.querySelector('.absolute.right-4.top-4.flex.flex-col.gap-2.z-10')).not.toBeNull();
+
+    const brainGroup = sceneObject.children[0] as THREE.Group | undefined;
+    expect(brainGroup?.visible).toBe(true);
+    const brainMaterials: THREE.MeshBasicMaterial[] = [];
+    brainGroup?.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial) {
+        brainMaterials.push(child.material);
+      }
+    });
+    expect(brainMaterials).not.toHaveLength(0);
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeCloseTo(0.06, 6);
+    });
+
+    fireEvent.click(meshButton);
+    expect(screen.getByRole('button', { name: 'Show brain mesh' })).toBeInTheDocument();
+    expect(brainGroup?.visible).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+      await Promise.resolve();
+    });
+
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeGreaterThan(0);
+      expect(material.opacity).toBeLessThan(0.06);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+    });
+
+    expect(brainGroup?.visible).toBe(false);
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeCloseTo(0, 6);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show brain mesh' }));
+    expect(screen.getByRole('button', { name: 'Hide brain mesh' })).toBeInTheDocument();
+    expect(brainGroup?.visible).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+      await Promise.resolve();
+    });
+
+    brainMaterials.forEach((material) => {
+      expect(material.opacity).toBeGreaterThan(0);
+      expect(material.opacity).toBeLessThan(0.06);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+      await Promise.resolve();
+    });
+
+    brainMaterials.forEach((material) => {
       expect(material.opacity).toBeCloseTo(0.06, 6);
     });
   });
@@ -589,6 +705,56 @@ describe('Graph3D', () => {
     expect(nodeWorld.z).toBeCloseTo(0, 1);
   });
 
+  it('does not snap the scene to the next node before the node-to-node fly animation completes', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    vi.advanceTimersByTime(200);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[0]);
+    });
+
+    vi.advanceTimersByTime(1300);
+
+    await act(async () => {
+      await getLatestGraphProps().onNodeClick(graph.nodes[1]);
+    });
+
+    sceneObject.updateMatrixWorld(true);
+    const secondNodeWorldBeforeAnimation = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[1].x ?? 0,
+        graph.nodes[1].y ?? 0,
+        graph.nodes[1].z ?? 0,
+      ),
+    );
+
+    expect(secondNodeWorldBeforeAnimation.x).not.toBeCloseTo(0, 1);
+
+    vi.advanceTimersByTime(1300);
+
+    sceneObject.updateMatrixWorld(true);
+    const secondNodeWorldAfterAnimation = sceneObject.localToWorld(
+      new THREE.Vector3(
+        graph.nodes[1].x ?? 0,
+        graph.nodes[1].y ?? 0,
+        graph.nodes[1].z ?? 0,
+      ),
+    );
+
+    expect(secondNodeWorldAfterAnimation.x).toBeCloseTo(0, 1);
+    expect(secondNodeWorldAfterAnimation.y).toBeCloseTo(0, 1);
+    expect(secondNodeWorldAfterAnimation.z).toBeCloseTo(0, 1);
+  });
+
   it('does not rotate the scene on right-button drag', () => {
     const { container } = render(
       <Graph3D
@@ -698,6 +864,410 @@ describe('Graph3D', () => {
     })).toBe('rgba(148, 163, 184, 0.2)');
   });
 
+  it('applies assistant-response graph focus with lit source nodes, gold-outlined discovery nodes, and hidden unrelated labels', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        chatFocus={{
+          sourceConcepts: ['Calculus'],
+          discoveryConcepts: ['Derivatives'],
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+
+    expect(props.nodeColor(graph.nodes[0])).toBe('#3b82f6');
+    expect(props.nodeColor(graph.nodes[1])).toBe('rgba(71, 85, 105, 0.35)');
+    expect(props.nodeColor(graph.nodes[2])).toBe('rgba(71, 85, 105, 0.35)');
+
+    const discoveryObject = props.nodeThreeObject(graph.nodes[1]);
+    const unrelatedObject = props.nodeThreeObject(graph.nodes[2]);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const discoveryOutline = discoveryObject?.getObjectByName('node-outline') as THREE.Mesh | undefined;
+    const unrelatedLabel = unrelatedObject?.children.find((child) => child instanceof THREE.Sprite) as
+      | THREE.Sprite
+      | undefined;
+
+    expect(discoveryOutline).toBeDefined();
+    expect((discoveryOutline?.material as THREE.MeshBasicMaterial).opacity).toBeGreaterThan(0.5);
+    expect(unrelatedLabel?.material.opacity).toBeLessThan(0.01);
+  });
+
+  it('restarts the traversal pulse schedule when the traversal runId changes', () => {
+    const traversal = {
+      runId: 1,
+      plan: {
+        rootNodeId: 'concept:Calculus',
+        stepIntervalMs: 160,
+        pulseDurationMs: 320,
+        brightnessDecay: 0.65,
+        brightnessThreshold: 0.25,
+        steps: [
+          {
+            nodeId: 'concept:Calculus',
+            concept: 'Calculus',
+            hop: 0,
+            brightness: 1,
+            delayMs: 0,
+          },
+        ],
+      },
+    };
+
+    const { rerender } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={traversal}
+      />,
+    );
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[0]);
+
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect(nodeObject?.userData.traversalPulse).toBeGreaterThan(0);
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    const ambientPulse = Number(nodeObject?.userData.traversalPulse ?? 0);
+    expect(ambientPulse).toBeGreaterThan(0);
+
+    rerender(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{ ...traversal, runId: 2 }}
+      />,
+    );
+
+    const restartedSamples: number[] = [];
+    for (let index = 0; index < 15; index += 1) {
+      act(() => {
+        vi.advanceTimersByTime(40);
+      });
+      restartedSamples.push(Number(nodeObject?.userData.traversalPulse ?? 0));
+    }
+
+    expect(Math.max(...restartedSamples)).toBeGreaterThan(0.7);
+    expect(Math.min(...restartedSamples)).toBeLessThan(0.35);
+  });
+
+  it('uses stronger traversal pulses for brighter steps than for later dimmer steps', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Calculus',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Calculus',
+                concept: 'Calculus',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+              {
+                nodeId: 'concept:Derivatives',
+                concept: 'Derivatives',
+                hop: 1,
+                brightness: 0.65,
+                delayMs: 0,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const rootObject = props.nodeThreeObject(graph.nodes[0]);
+    const laterObject = props.nodeThreeObject(graph.nodes[1]);
+
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+
+    expect(rootObject?.userData.traversalPulse).toBeGreaterThan(
+      laterObject?.userData.traversalPulse ?? 0,
+    );
+  });
+
+  it('keeps unrevealed nodes gray until traversal reaches them', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Calculus',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Calculus',
+                concept: 'Calculus',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+              {
+                nodeId: 'concept:Derivatives',
+                concept: 'Derivatives',
+                hop: 1,
+                brightness: 0.65,
+                delayMs: 480,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const rootObject = props.nodeThreeObject(graph.nodes[0]);
+    const laterObject = props.nodeThreeObject(graph.nodes[1]);
+    if (!rootObject || !laterObject) {
+      throw new Error('Expected traversal node objects');
+    }
+    const rootMaterial = getNodeShapeMaterial(rootObject);
+    const laterMaterial = getNodeShapeMaterial(laterObject);
+    const rootBaseColor = (rootObject.userData.baseColor as THREE.Color).clone();
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(getColorDistance(laterMaterial.color, TRAVERSAL_GRAY)).toBeLessThan(0.12);
+    expect(getColorDistance(rootMaterial.color, TRAVERSAL_GRAY)).toBeGreaterThan(0.2);
+  });
+
+  it('keeps traversed nodes slowly pulsing between gray and color while unrevealed nodes remain gray', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Calculus',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Calculus',
+                concept: 'Calculus',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+              {
+                nodeId: 'concept:Derivatives',
+                concept: 'Derivatives',
+                hop: 1,
+                brightness: 0.65,
+                delayMs: 720,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const props = getLatestGraphProps();
+    const rootObject = props.nodeThreeObject(graph.nodes[0]);
+    const laterObject = props.nodeThreeObject(graph.nodes[1]);
+    if (!rootObject || !laterObject) {
+      throw new Error('Expected traversal node objects');
+    }
+    const rootMaterial = getNodeShapeMaterial(rootObject);
+    const laterMaterial = getNodeShapeMaterial(laterObject);
+    const rootOutlineMaterial = getNodeOutlineMaterial(rootObject);
+    const laterOutlineMaterial = getNodeOutlineMaterial(laterObject);
+    const rootBaseColor = (rootObject.userData.baseColor as THREE.Color).clone();
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(Number(laterObject.userData.traversalPulse ?? 0)).toBe(0);
+    expect(getColorDistance(laterMaterial.color, TRAVERSAL_GRAY)).toBeLessThan(0.12);
+    expect(laterOutlineMaterial.opacity).toBeLessThan(0.05);
+    const sampledPulses: number[] = [];
+    const sampledDistances: number[] = [];
+    const sampledEmissiveStrengths: number[] = [];
+    const sampledOutlineOpacities: number[] = [];
+
+    const grayToBaseDistance = getColorDistance(TRAVERSAL_GRAY, rootBaseColor);
+
+    for (let index = 0; index < 12; index += 1) {
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+      sampledPulses.push(Number(rootObject.userData.traversalPulse ?? 0));
+      sampledDistances.push(getColorDistance(rootMaterial.color, rootBaseColor));
+      sampledEmissiveStrengths.push(
+        rootMaterial.emissive.r + rootMaterial.emissive.g + rootMaterial.emissive.b,
+      );
+      sampledOutlineOpacities.push(rootOutlineMaterial.opacity);
+    }
+
+    expect(Math.max(...sampledPulses)).toBeGreaterThan(0.7);
+    expect(Math.max(...sampledPulses) - Math.min(...sampledPulses)).toBeGreaterThan(0.25);
+    expect(Math.max(...sampledEmissiveStrengths)).toBeGreaterThan(0.3);
+    expect(Math.max(...sampledOutlineOpacities)).toBeGreaterThan(0.55);
+    expect(Math.max(...sampledOutlineOpacities) - Math.min(...sampledOutlineOpacities)).toBeGreaterThan(0.2);
+    expect(Math.min(...sampledDistances)).toBeGreaterThan(0.08);
+    expect(Math.min(...sampledDistances)).toBeLessThan(0.35);
+    expect(
+      Math.min(...sampledDistances.map((distance) => Math.abs(distance - grayToBaseDistance))),
+    ).toBeGreaterThan(0.08);
+  });
+
+  it('fades all nodes back to their normal colors after the traversal completes', () => {
+    const traversal = {
+      runId: 1,
+      plan: {
+        rootNodeId: 'concept:Calculus',
+        stepIntervalMs: 160,
+        pulseDurationMs: 320,
+        brightnessDecay: 0.65,
+        brightnessThreshold: 0.25,
+        steps: [
+          {
+            nodeId: 'concept:Calculus',
+            concept: 'Calculus',
+            hop: 0,
+            brightness: 1,
+            delayMs: 0,
+          },
+        ],
+      },
+    };
+
+    const { rerender } = render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={traversal}
+      />,
+    );
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[1]);
+    if (!nodeObject) {
+      throw new Error('Expected traversal node object');
+    }
+    const nodeMaterial = getNodeShapeMaterial(nodeObject);
+    const nodeBaseColor = (nodeObject.userData.baseColor as THREE.Color).clone();
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(getColorDistance(nodeMaterial.color, TRAVERSAL_GRAY)).toBeLessThan(0.12);
+
+    rerender(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={null}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    const earlyFadeDistance = getColorDistance(nodeMaterial.color, nodeBaseColor);
+    expect(earlyFadeDistance).toBeGreaterThan(0.12);
+
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    expect(getColorDistance(nodeMaterial.color, nodeBaseColor)).toBeLessThan(0.12);
+  });
+
+  it('ignores traversal steps whose nodes do not exist in the graph', () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+        activeTraversal={{
+          runId: 1,
+          plan: {
+            rootNodeId: 'concept:Missing',
+            stepIntervalMs: 160,
+            pulseDurationMs: 320,
+            brightnessDecay: 0.65,
+            brightnessThreshold: 0.25,
+            steps: [
+              {
+                nodeId: 'concept:Missing',
+                concept: 'Missing',
+                hop: 0,
+                brightness: 1,
+                delayMs: 0,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    const nodeObject = getLatestGraphProps().nodeThreeObject(graph.nodes[0]);
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(nodeObject?.userData.traversalPulse ?? 0).toBe(0);
+  });
+
   it('renders zoom controls and uses them', () => {
     const { container } = render(
       <Graph3D
@@ -731,6 +1301,26 @@ describe('Graph3D', () => {
         z: 0,
       }),
     );
+  });
+
+  it('locks the graph shell and brain mesh to the chosen default colors without debug controls', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    const graphShell = screen.getByTestId('graph-shell');
+    expect(graphShell).toHaveAttribute('data-background-hex', '#0E0F10');
+    expect(graphShell).toHaveAttribute('data-brain-mesh-hex', '#FFFFFF');
+    expect(screen.queryByTestId('graph-background-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('background-debug-picker')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Background color')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Brain mesh color')).not.toBeInTheDocument();
   });
 
   it('zooms in and out with the scroll wheel', () => {
@@ -993,6 +1583,8 @@ describe('Graph3D', () => {
       getLatestGraphProps().onNodeClick(graph.nodes[0]);
     });
 
+    vi.advanceTimersByTime(1300);
+
     sceneObject.updateMatrixWorld(true);
     const nodeWorld = sceneObject.localToWorld(
       new THREE.Vector3(
@@ -1100,6 +1692,48 @@ describe('Graph3D', () => {
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
     });
 
+    it('frames the expanded visible set instead of zooming all the way into just the clicked node', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      cameraPosition.mockClear();
+      currentCameraPosition = { x: 0, y: 52, z: 650 };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(currentCameraPosition.y).toBeGreaterThan(3);
+      expect(currentCameraPosition.z).toBeGreaterThan(40);
+      expect(currentCameraPosition.z).toBeLessThan(160);
+    });
+
     it('single-clicking a Concept node does not call onOpenDocument', async () => {
       const onOpenDocument = vi.fn();
       render(
@@ -1123,7 +1757,75 @@ describe('Graph3D', () => {
       expect(onOpenDocument).not.toHaveBeenCalled();
     });
 
-    it('single-clicking a Concept node pins a node card without an open docs button', async () => {
+    it('renders the hover tooltip as name plus connection count', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(screen.getByText('Calculus (2)')).toBeInTheDocument();
+      expect(screen.queryByText('Concept')).not.toBeInTheDocument();
+      expect(screen.queryByText('2 connections')).not.toBeInTheDocument();
+    });
+
+    it('disables the force-graph cursor-following node label', () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      const nodeLabel = getLatestGraphProps().nodeLabel;
+
+      expect(nodeLabel).toBeTypeOf('function');
+      expect(nodeLabel?.(graph.nodes[0])).toBeNull();
+    });
+
+    it('hides the hovered node sprite label while keeping other node labels visible', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={hoveredNode}
+          onHoverNode={vi.fn()}
+        />,
+      );
+
+      const props = getLatestGraphProps();
+      const hoveredObject = props.nodeThreeObject(graph.nodes[0]);
+      const relatedObject = props.nodeThreeObject(graph.nodes[1]);
+      const hoveredLabel = hoveredObject?.children.find((child) => child instanceof THREE.Sprite) as
+        | THREE.Sprite
+        | undefined;
+      const relatedLabel = relatedObject?.children.find((child) => child instanceof THREE.Sprite) as
+        | THREE.Sprite
+        | undefined;
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(hoveredLabel).toBeDefined();
+      expect(relatedLabel).toBeDefined();
+      expect((hoveredLabel?.material as THREE.SpriteMaterial).opacity).toBeLessThan(0.01);
+      expect((relatedLabel?.material as THREE.SpriteMaterial).opacity).toBeGreaterThan(0.9);
+    });
+
+    it('single-clicking a Concept node does not pin a node card', async () => {
       render(
         <Graph3D
           data={graph}
@@ -1141,8 +1843,12 @@ describe('Graph3D', () => {
         onNodeClick(graph.nodes[0]);
       });
 
-      expect(screen.getByText('Calculus')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Open docs' })).toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+
+      expect(screen.queryByText('Calculus (2)')).not.toBeInTheDocument();
+      expect(screen.queryByText('Calculus')).not.toBeInTheDocument();
     });
 
     it('falls back to mock documents when the API returns empty and injects doc sub-nodes', async () => {
@@ -1691,9 +2397,6 @@ describe('Graph3D', () => {
       expect(withGhost.linkWidth(ghostLink)).toBeCloseTo(0.55, 6);
     }
 
-    fireEvent.click(screen.getByLabelText('Discovery mode'));
-
-    const withoutGhost = getLatestGraphProps();
-    expect(withoutGhost.graphData.links.some((link) => link.type === 'LATENT_DISCOVERY')).toBe(false);
+    expect(screen.queryByLabelText('Discovery mode')).not.toBeInTheDocument();
   });
 });

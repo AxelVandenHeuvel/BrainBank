@@ -13,6 +13,16 @@ interface FileExplorerProps {
 
 export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal, graphData }: FileExplorerProps) {
   const { tree, isLoading, refetch } = useFileTree(graphData);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollThumbStyle, setScrollThumbStyle] = useState<{
+    height: string;
+    transform: string;
+    opacity: number;
+  }>({
+    height: '0px',
+    transform: 'translateY(0px)',
+    opacity: 0,
+  });
 
   // Re-fetch when parent signals a change (e.g. after save or ingest)
   useEffect(() => {
@@ -41,6 +51,68 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
     }
   }, [highlightedConcept, tree]);
 
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+
+    let frameId: number | null = null;
+
+    const updateScrollThumb = () => {
+      const { clientHeight, scrollHeight, scrollTop } = scrollContainer;
+      const maxScroll = Math.max(scrollHeight - clientHeight, 0);
+
+      if (clientHeight <= 0 || maxScroll <= 0) {
+        setScrollThumbStyle({
+          height: '0px',
+          transform: 'translateY(0px)',
+          opacity: 0,
+        });
+        return;
+      }
+
+      const thumbHeight = Math.max((clientHeight / scrollHeight) * clientHeight, 24);
+      const thumbTravel = Math.max(clientHeight - thumbHeight, 0);
+      const thumbOffset = maxScroll === 0 ? 0 : (scrollTop / maxScroll) * thumbTravel;
+
+      setScrollThumbStyle({
+        height: `${thumbHeight}px`,
+        transform: `translateY(${thumbOffset}px)`,
+        opacity: 1,
+      });
+    };
+
+    const scheduleUpdate = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        updateScrollThumb();
+      });
+    };
+
+    scheduleUpdate();
+    scrollContainer.addEventListener('scroll', scheduleUpdate);
+    window.addEventListener('resize', scheduleUpdate);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(scheduleUpdate);
+      resizeObserver.observe(scrollContainer);
+    }
+
+    return () => {
+      scrollContainer.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
+      resizeObserver?.disconnect();
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, [tree, expandedConcepts, highlightedConcept]);
+
   function toggleConcept(name: string) {
     setExpandedConcepts((prev) => {
       const next = new Set(prev);
@@ -53,42 +125,54 @@ export function FileExplorer({ highlightedConcept, onOpenDocument, refetchSignal
     });
   }
 
-  if (isLoading) {
-    return (
-      <div className="space-y-2 p-2">
-        <p className="text-sm text-neutral-500">Loading...</p>
-        <div className="space-y-1">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-7 animate-pulse bg-neutral-900" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (tree.length === 0) {
-    return (
-      <div className="p-2">
-        <p className="text-sm text-neutral-500">No concepts yet</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-0.5">
-      {tree.map((concept) => (
-        <ConceptFolder
-          key={concept.name}
-          concept={concept}
-          isExpanded={expandedConcepts.has(concept.name)}
-          isHighlighted={highlightedConcept === concept.name}
-          onToggle={() => toggleConcept(concept.name)}
-          onOpenDocument={onOpenDocument}
-          ref={(el) => {
-            conceptRefs.current.set(concept.name, el);
-          }}
+    <div data-testid="file-explorer-scroll-shell" className="relative min-h-0 flex-1 pl-3">
+      <div
+        ref={scrollContainerRef}
+        data-testid="file-explorer-scroll-container"
+        className="sidebar-files-scroll-container h-full overflow-y-auto"
+      >
+        {isLoading ? (
+          <div className="space-y-2 p-2">
+            <p className="text-sm text-neutral-500">Loading...</p>
+            <div className="space-y-1">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-7 animate-pulse bg-neutral-900" />
+              ))}
+            </div>
+          </div>
+        ) : tree.length === 0 ? (
+          <div className="p-2">
+            <p className="text-sm text-neutral-500">No concepts yet</p>
+          </div>
+        ) : (
+          <div data-testid="file-explorer-tree" className="sidebar-files-content space-y-0.5">
+            {tree.map((concept) => (
+              <ConceptFolder
+                key={concept.name}
+                concept={concept}
+                isExpanded={expandedConcepts.has(concept.name)}
+                isHighlighted={highlightedConcept === concept.name}
+                onToggle={() => toggleConcept(concept.name)}
+                onOpenDocument={onOpenDocument}
+                ref={(el) => {
+                  conceptRefs.current.set(concept.name, el);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div
+        data-testid="file-explorer-scroll-rail"
+        className="pointer-events-none absolute bottom-0 left-0 top-0 w-[3px] bg-transparent"
+      >
+        <div
+          data-testid="file-explorer-scroll-thumb"
+          className="absolute left-0 w-[3px] rounded-none bg-pink-500"
+          style={scrollThumbStyle}
         />
-      ))}
+      </div>
     </div>
   );
 }
