@@ -242,14 +242,25 @@ def get_documents():
             }
         )
 
+    print(f"[api] GET /api/documents -> {len(documents)} docs: {[d['name'] for d in documents]}")
     return {"documents": documents}
 
 
 @graph_router.post("/documents")
-def create_document(body: UpdateDocumentRequest):
-    """Fast draft save: create a lightweight document without full ingest."""
-    doc_id = create_document_text("./data/lancedb", body.title, body.text)
-    return {"doc_id": doc_id, "status": "saved"}
+async def create_document(body: UpdateDocumentRequest):
+    """Create a new document. Runs full ingest when text is provided, lightweight draft otherwise."""
+    text = (body.text or "").strip()
+
+    if not text:
+        doc_id = create_document_text("./data/lancedb", body.title, "")
+        return {"doc_id": doc_id, "status": "saved", "concepts": []}
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        partial(ingest_markdown, text, body.title, shared_kuzu_db=get_kuzu_engine()),
+    )
+    return result
 
 
 @graph_router.get("/documents/{doc_id}", response_model=DocumentResponse)

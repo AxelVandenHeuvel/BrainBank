@@ -140,13 +140,14 @@ def create_document_text(
         "centroid_vector": zero_vector,
     }])
 
+    print(f"[lance] CREATED doc_id={real_doc_id} name={doc_name!r} text_len={len(text)} (concepts=[], zero_vector)")
     return real_doc_id
 
 
 def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str) -> bool:
     """Quick-update a document's text in LanceDB without re-embedding or re-ingesting.
     Replaces chunk texts with a single merged chunk. Returns True if doc existed."""
-    _, table = init_lancedb(db_path)
+    db, table = init_lancedb(db_path)
     df = table.to_pandas()
     if df.empty:
         return False
@@ -180,12 +181,23 @@ def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str
             "doc_name": doc_name,
             "centroid_vector": first_vector,
         }])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[lance] WARNING: centroids update failed for doc_id={doc_id}: {e}")
+
+    print(f"[lance] UPDATED doc_id={doc_id} name={doc_name!r} text_len={len(new_text)} concepts={all_concepts}")
     return True
 
 
+_default_lancedb_cache: dict[str, tuple] = {}
+
+
 def init_lancedb(db_path: str = "./data/lancedb"):
+    resolved = os.path.abspath(db_path)
+    if resolved in _default_lancedb_cache:
+        print(f"[lance] CACHE HIT for {resolved}")
+        return _default_lancedb_cache[resolved]
+    print(f"[lance] CACHE MISS — opening new connection for {resolved}")
+
     os.makedirs(db_path, exist_ok=True)
 
     db = lancedb.connect(db_path)
@@ -193,4 +205,6 @@ def init_lancedb(db_path: str = "./data/lancedb"):
     _open_or_create_table(db, "document_centroids", DOCUMENT_CENTROIDS_SCHEMA)
     _open_or_create_table(db, "concept_centroids", CONCEPT_CENTROIDS_SCHEMA)
     _open_or_create_table(db, "community_summaries", COMMUNITY_SUMMARIES_SCHEMA)
-    return db, chunks_table
+    result = (db, chunks_table)
+    _default_lancedb_cache[resolved] = result
+    return result
