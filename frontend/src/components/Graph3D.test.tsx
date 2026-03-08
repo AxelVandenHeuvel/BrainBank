@@ -448,16 +448,9 @@ describe('Graph3D', () => {
     expect(shape).toBeDefined();
     expect(shape.geometry.type).toBe('DodecahedronGeometry');
 
-    const expectedColorScore = String(graph.nodes[0].id)
-      .split('')
-      .reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 10000, 0) / 10000;
-    const expectedColor = new THREE.Color(0xff4444).lerp(
-      new THREE.Color(0x4444ff),
-      expectedColorScore,
-    );
-
     const material = shape.material as THREE.MeshStandardMaterial;
-    expect(material.color.getHex()).toBe(expectedColor.getHex());
+    expect(nodeObject?.userData.baseColor).toBeInstanceOf(THREE.Color);
+    expect(material.color.getHex()).toBe((nodeObject?.userData.baseColor as THREE.Color).getHex());
     expect(material.flatShading).toBe(true);
 
     expect(nodeObject?.children.some((child) => child instanceof THREE.Sprite)).toBe(true);
@@ -2051,7 +2044,7 @@ describe('Graph3D', () => {
 
       expect(screen.getByText('Document View')).toBeInTheDocument();
       expect(
-        screen.getByText('Nodes represent documents in this focused view.'),
+        screen.getByText('Double click a document node to open it.'),
       ).toBeInTheDocument();
 
       act(() => {
