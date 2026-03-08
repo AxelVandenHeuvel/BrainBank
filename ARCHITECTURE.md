@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge through a backend-selected LLM provider, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend and flowing through a single provider registry.
 
 ## Stack
 
@@ -15,7 +15,9 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | API         | FastAPI                 | HTTP endpoints                   |
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
+| Clustering  | igraph + leidenalg      | Weighted Leiden community detection |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
+| Graph Analytics | NetworkX           | Batch Louvain community detection |
 | Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
 | LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
 
@@ -44,22 +46,43 @@ LanceDB is the sole source of document identity and the concept-to-document link
 
 `backend/services/embeddings.py` computes this centroid by averaging all chunk `vector` values that share the same `doc_id`.
 
+### LanceDB: `concept_centroids` table
+
+| Column          | Type         | Description                                       |
+|-----------------|--------------|---------------------------------------------------|
+| concept_name    | STRING       | Canonical concept name                            |
+| centroid_vector | FLOAT32[384] | Mean embedding vector across chunks tagged with that concept |
+| document_count  | INT32        | Number of distinct documents containing the concept |
+
+This table is rebuilt in batch and becomes the preferred local GraphRAG seed source when present. If it is empty, retrieval falls back to scoring concepts from chunk-seed hits.
+
+### LanceDB: `community_summaries` table
+
+| Column          | Type         | Description                                       |
+|-----------------|--------------|---------------------------------------------------|
+| community_id    | STRING       | Stable batch-assigned id such as `community:0001` |
+| member_concepts | STRING[]     | Sorted concept names in the detected community    |
+| summary         | STRING       | LLM-generated summary of the community            |
+| summary_vector  | FLOAT32[384] | Embedding of the summary text                     |
+
+This table powers the global GraphRAG route. It is refreshed only by the batch rebuild step, not by normal ingest.
+
 ### Kuzu: Graph Schema
 
 **Node Tables:**
-- `Concept(name STRING PRIMARY KEY)` - knowledge concepts extracted from documents
+- `Concept(name STRING, colorScore DOUBLE, community_id INT64, PRIMARY KEY(name))` - knowledge concepts; `community_id` is set by Leiden clustering after each ingestion (-1 / NULL means unclassified)
 - `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
 - `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
 - `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Relationship Tables:**
-- `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE)` - shared-document relationship with accumulated frequency weight
+- `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE, edge_type STRING)` - concept relationship; `edge_type` is `'RELATED_TO'` for organic shared-document edges and `'SEMANTIC_BRIDGE'` for edges added by `heal_graph`
 - `APPLIED_TO_PROJECT(Concept -> Project)` - concept is applied in a project
 - `GENERATED_TASK(Concept -> Task)` - concept generated a task
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.), `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend now opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
+Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -95,41 +118,52 @@ frontend/
       graphData.ts           - Graph payload validation + normalization
       graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
-      mockGraph.ts           - Realistic college-student mock data (calculus, physics, philosophy, personal journal)
+      mockGraph.ts           - Large multi-domain mock graph with curated notes, generated concept docs, and bridge edges
     test/
       setup.ts               - Vitest setup
     types/
       chat.ts                - Shared chat message and session types
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  graph_visualization.py    - Terminal-friendly concept graph loading from Kuzu with LanceDB fallback and ASCII rendering
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
-    lance.py                - LanceDB init + chunks/document_centroids schemas + duplicate document lookup
-    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + clear concurrent-open error translation
+    lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup
+    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + update_node_communities() + clear concurrent-open error translation
   services/
+    clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
-    llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
+    llm.py                  - BrainBank prompt workflows and JSON parsing for extraction/answering
+    llm_providers.py        - Provider registry plus Gemini/Ollama transport adapters
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
     pdf.py                  - PDF text extraction using PyMuPDF
+  scripts/
+    heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
     processor.py            - Ingest pipeline: chunk -> embed -> extract -> store
   session/
     memory.py               - In-memory session store with bounded turn window and TTL
   retrieval/
-    context.py              - Context dedupe + budgeted prompt assembly for retrieval
-    local_search.py         - Seed retrieval, graph expansion, and discovery chunk ranking
-    query.py                - Query orchestration: embed -> local search -> context -> answer
+    artifacts.py            - Batch rebuild for concept centroids and community summaries
+    context.py              - Deterministic context assembly for local/global GraphRAG
+    global_search.py        - Community-summary retrieval plus map/reduce answer synthesis
+    latent_discovery.py     - Shared concept-centroid to document-centroid discovery helpers
+    local_search.py         - Local GraphRAG seed selection, weighted expansion, and latent evidence retrieval
+    query.py                - Route-aware query orchestration
+    routing.py              - LOCAL vs GLOBAL query classification
     types.py                - Retrieval dataclasses and internal config defaults
 sample_data/
   college_math_notes/
     catalog.json            - Metadata for the sample math note corpus
     *.md                    - College student math note documents for document-opening tests
 scripts/
+  print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
+  rebuild_graphrag_artifacts.py - Recomputes concept centroids and community summaries in batch
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
@@ -142,8 +176,12 @@ tests/
   ingestion/
     test_chunker.py         - Chunking logic tests
     test_processor.py       - Ingestion pipeline tests
+  scripts/
+    test_heal_graph.py      - heal_graph: cosine similarity, centroid computation, edge-exists, bridge insertion tests
   services/
-    test_llm.py             - LLM extraction tests
+    test_clustering.py      - Leiden clustering: empty/small-graph handling + community assignment tests
+    test_llm.py             - Prompt workflow and extraction tests
+    test_llm_providers.py   - Provider registry and Gemini/Ollama adapter tests
     test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
     test_pdf.py             - PDF text extraction tests
   test_api_notion.py        - Notion import API endpoint tests
@@ -166,14 +204,12 @@ Each file has a single responsibility. Tests mirror the source structure.
 
 ## Mock Data
 
-`frontend/src/mock/mockGraph.ts` provides a realistic development dataset modeled as a college student's knowledge base across four domains:
+`frontend/src/mock/mockGraph.ts` now provides a broader fallback dataset with about 100 concept nodes so the 3D brain does not collapse into a sparse center-heavy cluster during offline or demo use. The original college-student knowledge base is still there as the curated core:
 
-- **Calculus** (6 concepts): Limits, Derivatives, Integrals, Chain Rule, Fundamental Theorem of Calculus
-- **Physics** (7 concepts): Classical Mechanics, Newton's Laws, Conservation of Energy, Electromagnetism, Maxwell's Equations, Thermodynamics, Entropy
-- **Philosophy** (7 concepts): Epistemology, Rationalism, Empiricism, Ethics, Utilitarianism, Existentialism, Free Will
-- **Personal** (4 concepts): Study Habits, Time Management, Motivation, Career Goals
+- **Calculus / Physics / Philosophy / Personal reflection** keep the hand-written notes and relationship snippets that power the richer document overlays.
+- **Computer Science, Biology, Economics, Psychology, Product Design, History, Arts, and Data Science** expand the graph into additional study areas so the brain has multiple visible lobes and more cross-cluster bridges.
 
-Two bridge concepts (Differential Equations, Determinism) connect clusters across disciplines. 12 Document nodes link to concepts via MENTIONS edges. Cross-domain RELATED_TO edges model real interdisciplinary connections (e.g., Derivatives↔Newton's Laws, Entropy↔Determinism, Existentialism↔Motivation, Ethics↔Career Goals). Six `mockRelationshipDetailsByEdge` entries provide evidence documents for the most interesting cross-domain connections.
+The fallback graph currently ships with 98 concept nodes and a much denser set of `RELATED_TO` edges. Cross-domain bridges intentionally connect technical, human, and reflective areas, such as Machine Learning↔Statistics, Behavioral Economics↔Cognitive Biases, Ethics↔Accessibility, Differential Equations↔Control Theory, and Entropy↔Information Theory. Curated concepts still use the detailed markdown notes in `MOCK_CONCEPT_DOCUMENTS`, while generated concepts use domain-aware document text so opening a node still shows a useful note instead of an empty placeholder.
 
 ## Frontend Graph Flow
 
@@ -224,9 +260,9 @@ The sidebar has a "New Note" button and a file upload option:
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend uses the loaded brain mesh as a real containment boundary for the graph, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the dodecahedron nodes stay inside the shell. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales it to a larger target diagonal (`325`) so the default framing gives the visualization more room. Each graph node is rendered as a procedural `DodecahedronGeometry` with flat shading and a text label sprite above it, colored with the same red-to-blue score gradient used previously.
+The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend uses the loaded brain mesh as a real containment boundary for the graph, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the dodecahedron nodes stay inside the shell. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales it to a larger target diagonal (`325`) so the default framing gives the visualization more room. That shell is rendered as a very light wireframe overlay (`opacity: 0.06`) so it frames the brain without competing with the nodes. Each graph node is rendered as a procedural `DodecahedronGeometry` with flat shading and a text label sprite above it, colored by community palette when a `community_id` is present or by the red-to-blue score gradient otherwise.
 
-Node placement is now deterministic. `Graph3D` assigns each node id a hardcoded 3D anchor from a fixed layout table, pins that anchor with `fx`, `fy`, and `fz`, and then lets the brain containment pass make any final inward adjustment that is needed. That keeps nodes distributed throughout the brain volume instead of drifting toward the center, and it makes click fly-to animations smoother because the target node no longer slides under the camera while the scene is animating. `Graph3D` disables the built-in navigation controls, keeps idle motion and left-button drag on the scene object's own rotation, reserves single-click for node interactions (single click = smooth camera fly to node using the same ease-out cubic animation as search, pin a semi-translucent card above the selected node, and request latent discovery tether request for concepts; double click = fly closer and open document expansion overlay), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. The scene spins by default on load and stops permanently when the user drags, clicks a node, or clicks an edge; rotation resumes only when the reset button is pressed (after the camera-return animation completes). The selected-node card reuses the tooltip positioning path, but once a node is clicked it stays anchored above that node until the user clears selection or opens another target; concept cards expose an `Open docs` button that opens the same related-document overlay as the double-click path. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width scales by relationship weight (`Math.log((weight || 1) + 1) * 3.5`) to make co-occurrence strength differences easier to see, and discovery ghost links stay dashed with `[2, 1]` line dashes so they read as temporary tethers. Unfocused edges use a translucent bluish-white base color so graph structure remains visible before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. When a concept node is focused, `Graph3D` stores that node's id as the active rotation target and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. During search, non-matching nodes and their labels are dimmed to 8% opacity while matched nodes stay fully visible. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, automatically opens the first document in `MarkdownDocumentViewer`, and still lets the user switch documents from the left-hand list without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+Node placement is now deterministic. `Graph3D` assigns each node id a hardcoded 3D anchor from a fixed layout table, pins that anchor with `fx`, `fy`, and `fz`, and then lets the brain containment pass make any final inward adjustment that is needed. That keeps nodes distributed throughout the brain volume instead of drifting toward the center, and it makes click fly-to animations smoother because the target node no longer slides under the camera while the scene is animating. `Graph3D` disables the built-in navigation controls, keeps idle motion and left-button drag on the scene object's own rotation, reserves single-click for node interactions (single click = smooth camera fly to node using the same ease-out cubic animation as search, pin a semi-translucent card above the selected node, and request latent discovery tether request for concepts; double click = fly closer and open document expansion overlay), and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. The scene spins by default on load and stops permanently when the user drags, clicks a node, or clicks an edge; rotation resumes only when the reset button is pressed (after the camera-return animation completes). The selected-node card reuses the tooltip positioning path, but once a node is clicked it stays anchored above that node until the user clears selection or opens another target; concept cards expose an `Open docs` button that opens the same related-document overlay as the double-click path. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Link width scales by relationship weight (`Math.log((weight || 1) + 1) * 2.2`) so stronger relationships still read clearly without dominating the scene, and discovery ghost links stay dashed with `[2, 1]` line dashes so they read as temporary tethers. Semantic bridge edges from `heal_graph` use a distinct amber tint and thinner width. Unfocused edges use a softer translucent bluish-white base color, the graph-level edge opacity is lowered, and ghost tethers are thinner so the nodes remain the visual priority before any hover or selection. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. When a concept node is focused, `Graph3D` stores that node's id as the active rotation target and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. During search, non-matching nodes and their labels are dimmed to 8% opacity while matched nodes stay fully visible. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, automatically opens the first document in `MarkdownDocumentViewer`, and still lets the user switch documents from the left-hand list without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
 When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. Discovery Mode adds temporary latent tethers from the selected concept to semantically similar documents returned by `/api/discovery/latent/{concept_name}`; these ghost links are dashed and use a distinct violet tint, and the user can toggle them on or off from the graph UI. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. That panel can be dismissed either with its close button or by pressing `Escape`.
 
@@ -286,9 +322,47 @@ Kuzu MERGE -- upsert Concept nodes only (no Document nodes)
   |
   v
 Kuzu MERGE -- RELATED_TO edges (concept->concept) with shared-document weighting
+  |
+  v
+clustering.run_leiden_clustering() -- build igraph from RELATED_TO edges, run Leiden (weighted)
+  |
+  v
+kuzu.update_node_communities() -- SET c.community_id on every Concept node
 ```
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
+
+## GraphRAG Artifact Rebuild Flow
+
+```
+Input: current LanceDB chunks + current Kuzu weighted concept graph
+  |
+  v
+retrieval.artifacts._build_concept_centroid_records() -- average chunk vectors per concept
+  |
+  v
+LanceDB replace concept_centroids -- persist concept_name, centroid_vector, document_count
+  |
+  v
+retrieval.artifacts._load_weighted_concept_graph() -- export Concept nodes + RELATED_TO.weight
+  |
+  v
+networkx.louvain_communities() -- deterministic weighted community detection (seed=0)
+  |
+  v
+retrieval.artifacts._select_representative_evidence() -- choose chunk texts for each community
+  |
+  v
+llm.generate_community_summary() -- summarize each community from member concepts + evidence
+  |
+  v
+embeddings.embed_texts() -- embed each summary
+  |
+  v
+LanceDB replace community_summaries -- persist community summaries for global GraphRAG
+```
+
+This rebuild is intentionally batch-only. Normal ingest updates `chunks`, `document_centroids`, `Concept` nodes, and weighted `RELATED_TO` edges immediately, but `concept_centroids` and `community_summaries` are refreshed only when `scripts/rebuild_graphrag_artifacts.py` is run.
 
 ## Notion Import Flow (`POST /ingest/notion`)
 
@@ -349,31 +423,44 @@ api.py -> get_kuzu_engine() -- reuse the shared Kuzu Database handle
 embeddings.embed_query() -- embed question to 384-dim vector
   |
   v
-local_search.build_chunk_seed_set() -- top 5 nearest chunks + ordered source concepts
+route.classify_query_route() -- GLOBAL for overview/theme prompts, otherwise LOCAL
   |
-  v
-local_search.expand_related_concepts() -- configurable BFS over RELATED_TO edges
-  v
-local_search.select_discovery_chunks() -- ranked extra chunks for discovery concepts
-  v
-context.assemble_context_chunks() -- seed chunks first, then discovery chunks,
-  |                                 dedupe by chunk id/text, apply word budget
+  +-- GLOBAL and community_summaries present?
+  |     |
+  |     v
+  |   global_search.run_global_search()
+  |     |
+  |     +-- LanceDB search community_summaries by query vector
+  |     +-- llm.generate_partial_answer() once per selected community
+  |     +-- llm.synthesize_answers() if more than one community matched
+  |     v
+  |   Output: { answer, source_concepts, discovery_concepts=[] }
   |
-  v
-context.build_context_text() -- join selected chunk texts with separators
-  |
-  v
-llm.generate_answer() -- Gemini or Ollama generates grounded answer
-  |                       includes conversation history for reference resolution
-  |
-  v
-api.py -> record assistant turn in SessionMemory (if session_id present)
-  |
-  v
-Output: { answer, source_concepts, discovery_concepts }
+  +-- otherwise LOCAL
+        |
+        v
+      local_search.run_local_search()
+        |
+        +-- search concept_centroids when present, else build chunk seeds from top chunk hits
+        +-- score source concepts from seed evidence
+        +-- weighted BFS over RELATED_TO edges up to configured hop depth
+        +-- concept-centroid -> document-centroid search for latent documents
+        +-- select top chunks per latent document
+        v
+      context.build_local_context() -- source concepts, discovery concepts, seed evidence, latent evidence
+        |
+        v
+      llm.generate_answer() -- grounded final answer from the assembled local GraphRAG context
+        |                    includes conversation history when provided
+        |
+        v
+      api.py -> record assistant turn in SessionMemory (if session_id present)
+        |
+        v
+      Output: { answer, source_concepts, discovery_concepts }
 ```
 
-The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. The retrieval path is still local-search-only in this phase, but it is now split into explicit steps with an internal `RetrievalConfig` for seed limits, graph-hop depth, discovery-chunk limits, and context budget. Default behavior stays equivalent to the old path: top-5 chunk seeds, 1-hop graph expansion, and the same external `/query` response shape. When `history` is provided, the conversation turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
+The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. Retrieval still preserves the stable `/query` contract, but internally it is now route-aware and GraphRAG-specific. Local retrieval defaults to chunk/document artifacts already produced during ingest and upgrades itself when `concept_centroids` exists. Global retrieval only activates when `community_summaries` exists; otherwise overview-style questions transparently fall back to the local path. When `session_id` and `history` are provided, the API stores turns in `SessionMemory`, and the history turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
 
 ## API Endpoints
 
@@ -388,8 +475,8 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 ### `GET /api/graph`
 - Intended payload: `{"nodes": [...], "edges": [...]}`
 - Current frontend behavior: fetch this route and fall back to local mock data until the backend endpoint exists
-- Returns: `{"nodes": [{"id", "type", "name", "colorScore"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
-- Full graph for frontend 3D visualization
+- Returns: `{"nodes": [{"id", "type", "name", "colorScore", "community_id"}], "edges": [{"source", "target", "type", "reason", "weight"}]}`
+- Full graph for frontend 3D visualization; `community_id` drives community-palette coloring in the 3D brain
 
 ### `GET /api/concepts`
 - Returns: `{"concepts": [{"name", "document_count", "related_concepts"}]}`
@@ -420,10 +507,17 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 
 ### `GET /api/discovery/latent/{concept_name}`
 - Returns: `{"concept_name": "...", "results": [{"doc_name", "similarity_score"}]}`
-- Computes a concept centroid from chunk vectors tagged with `concept_name`.
+- Uses the same latent discovery helper as the local GraphRAG query path.
+- Reads a persisted concept centroid when available, otherwise computes one from chunk vectors tagged with `concept_name`.
 - Searches `document_centroids` by vector similarity.
 - Excludes documents that already contain `concept_name`.
 - Returns at most 5 latent-similar documents.
+### `POST /api/recluster`
+- No body required
+- Runs Leiden clustering over all current Concept nodes and writes `community_id` back
+- Returns: `{"clustered": N}` (count of concepts assigned a community)
+- Useful for seeding community IDs on existing databases without triggering a new ingest
+
 ### `GET /api/stats`
 - Returns: `{"total_documents", "total_chunks", "total_concepts", "total_relationships"}`
 
@@ -431,11 +525,12 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 
 | Variable       | Required | Purpose            |
 |----------------|----------|--------------------|
+| BRAINBANK_LLM_PROVIDER | No | Default backend LLM provider for extraction and retrieval answers (default: `gemini`) |
 | GEMINI_API_KEY | Yes      | Gemini API authentication |
 | GEMINI_MODEL   | No       | Override model name (default: `gemini-2.5-flash`) |
-| TEST_LLM_PROVIDER | No    | Test route provider: `gemini` or `ollama` |
+| TEST_LLM_PROVIDER | No    | Optional override for the `/test-llm` route; if unset it reuses `BRAINBANK_LLM_PROVIDER` |
 | OLLAMA_BASE_URL | No      | Local Ollama base URL (default: `http://localhost:11434`) |
-| OLLAMA_MODEL | No         | Local Ollama model for the test route (default: `llama3.2:3b`) |
+| OLLAMA_MODEL | No         | Local Ollama model for any Ollama-backed route (default: `llama3.2:3b`) |
 
 Database paths default to `./data/lancedb` and `./data/kuzu`.
 
@@ -452,7 +547,3 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
-
-
-
-

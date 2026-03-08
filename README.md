@@ -58,6 +58,28 @@ uv run python scripts/seed_college_math_notes.py
 
 This loads six college-student math note documents directly into LanceDB and Kuzu so the graph and document-opening flows have realistic sample content without calling Gemini.
 
+### Rebuild GraphRAG artifacts
+
+```bash
+uv run python scripts/rebuild_graphrag_artifacts.py
+```
+
+This batch step rebuilds persisted `concept_centroids` and `community_summaries` from the current chunk store and weighted concept graph. Ingest still updates chunks, document centroids, concepts, and `RELATED_TO` edges immediately; the community/global GraphRAG artifacts refresh only when you run this command.
+
+### Print the current concept graph
+
+```bash
+uv run python scripts/print_concept_graph.py
+```
+
+This prints the current concept graph as an ASCII adjacency tree so you can quickly inspect which concepts are connected and how strong those connections are. By default it reads Kuzu from `./data/kuzu` and, if that fails, tries to reconstruct the graph from LanceDB chunk concept tags in `./data/lancedb`.
+
+You can also point it at explicit paths:
+
+```bash
+uv run python scripts/print_concept_graph.py --kuzu-db-path /path/to/kuzu --lance-db-path /path/to/lancedb
+```
+
 ### Run tests
 
 ```bash
@@ -86,6 +108,7 @@ cd frontend && npm test
 | POST   | `/ingest`         | Ingest text + title                |
 | POST   | `/query`          | Ask a question, get grounded answer|
 | GET    | `/api/graph`      | Full graph for visualization       |
+| GET    | `/api/discovery/latent/{concept_name}` | Latent document discovery |
 | GET    | `/api/concepts`   | List concepts with metadata        |
 | GET    | `/api/documents`  | List documents with metadata       |
 | GET    | `/api/stats`      | Aggregate counts                   |

@@ -15,9 +15,12 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=2.0.0",
     "scikit-learn>=1.0.0",
+    "networkx>=3.3",
     "notion-client>=3.0.0",
     "pymupdf>=1.27.1",
     "python-multipart>=0.0.22",
+    "igraph>=0.11.0",
+    "leidenalg>=0.10.0",
 ]
 
 [project.optional-dependencies]

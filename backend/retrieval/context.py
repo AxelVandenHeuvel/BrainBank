@@ -1,6 +1,10 @@
 from dataclasses import replace
 
-from backend.retrieval.types import ChunkHit
+from backend.retrieval.types import (
+    ChunkHit,
+    GlobalCommunityHit,
+    LocalSearchResult,
+)
 
 
 def _normalize_text(text: str) -> str:
@@ -51,3 +55,82 @@ def build_context_text(
 ) -> str:
     selected = assemble_context_chunks(seed_chunks, discovery_chunks, max_words)
     return "\n\n---\n\n".join(chunk.text for chunk in selected)
+
+
+def _append_line(lines: list[str], used_words: int, line: str, max_words: int) -> int:
+    normalized = _normalize_text(line)
+    if not normalized:
+        return used_words
+
+    words = normalized.split()
+    if used_words == 0 and len(words) > max_words:
+        lines.append(" ".join(words[:max_words]))
+        return max_words
+
+    if used_words + len(words) > max_words:
+        return used_words
+
+    lines.append(normalized)
+    return used_words + len(words)
+
+
+def build_local_context(search_result: LocalSearchResult, max_words: int) -> str:
+    if max_words < 1:
+        return ""
+
+    lines: list[str] = []
+    used_words = 0
+
+    used_words = _append_line(lines, used_words, "Source concepts:", max_words)
+    for hit in search_result.source_concepts:
+        used_words = _append_line(
+            lines,
+            used_words,
+            f"- {hit.name} (score={hit.score:.2f})",
+            max_words,
+        )
+
+    if search_result.discovery_concepts:
+        used_words = _append_line(lines, used_words, "Discovered concepts:", max_words)
+        for hit in search_result.discovery_concepts:
+            used_words = _append_line(
+                lines,
+                used_words,
+                (
+                    f"- {hit.name} (score={hit.score:.2f}, hop={hit.min_hop}, "
+                    f"seeds={', '.join(hit.supporting_seed_concepts)})"
+                ),
+                max_words,
+            )
+
+    selected_seed = assemble_context_chunks(search_result.seed_chunks, (), max_words)
+    selected_latent = assemble_context_chunks(search_result.discovery_chunks, (), max_words)
+
+    if selected_seed:
+        used_words = _append_line(lines, used_words, "Seed evidence:", max_words)
+        for chunk in selected_seed:
+            used_words = _append_line(lines, used_words, chunk.text, max_words)
+
+    if selected_latent:
+        used_words = _append_line(lines, used_words, "Latent document evidence:", max_words)
+        for chunk in selected_latent:
+            used_words = _append_line(lines, used_words, chunk.text, max_words)
+
+    return "\n".join(lines)
+
+
+def build_global_context(community_hit: GlobalCommunityHit, max_words: int) -> str:
+    if max_words < 1:
+        return ""
+
+    lines: list[str] = []
+    used_words = 0
+    used_words = _append_line(lines, used_words, f"Community: {community_hit.community_id}", max_words)
+    used_words = _append_line(
+        lines,
+        used_words,
+        f"Member concepts: {', '.join(community_hit.member_concepts)}",
+        max_words,
+    )
+    used_words = _append_line(lines, used_words, f"Summary: {community_hit.summary}", max_words)
+    return "\n".join(lines)

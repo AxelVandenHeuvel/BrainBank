@@ -73,3 +73,24 @@ class TestFindExistingDocument:
         assert "doc_id" in field_names
         assert "doc_name" in field_names
         assert "centroid_vector" in field_names
+
+    def test_creates_concept_centroids_table(self, lance_path):
+        db, _ = init_lancedb(lance_path)
+        concept_table = db.open_table("concept_centroids")
+
+        schema = concept_table.schema
+        field_names = [f.name for f in schema]
+        assert "concept_name" in field_names
+        assert "centroid_vector" in field_names
+        assert "document_count" in field_names
+
+    def test_creates_community_summaries_table(self, lance_path):
+        db, _ = init_lancedb(lance_path)
+        community_table = db.open_table("community_summaries")
+
+        schema = community_table.schema
+        field_names = [f.name for f in schema]
+        assert "community_id" in field_names
+        assert "member_concepts" in field_names
+        assert "summary" in field_names
+        assert "summary_vector" in field_names

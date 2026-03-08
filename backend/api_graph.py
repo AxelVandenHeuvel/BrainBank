@@ -1,8 +1,10 @@
 import kuzu
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.db.kuzu import get_db_connection
+from backend.db.kuzu import get_db_connection, update_node_communities
 from backend.db.lance import init_lancedb
+from backend.retrieval.latent_discovery import concept_name_from_query_rows, find_latent_document_hits
+from backend.services.clustering import run_leiden_clustering
 from backend.schemas import (
     DiscoveryItemResponse,
     DiscoveryResponse,
@@ -12,20 +14,6 @@ from backend.schemas import (
 )
 
 graph_router = APIRouter(prefix="/api")
-
-
-def _average_vectors(vectors: list[list[float]]) -> list[float]:
-    if not vectors:
-        return []
-
-    size = len(vectors[0])
-    centroid = [0.0] * size
-    for vector in vectors:
-        for index, value in enumerate(vector):
-            centroid[index] += float(value)
-
-    count = float(len(vectors))
-    return [value / count for value in centroid]
 
 
 def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse]:
@@ -57,17 +45,18 @@ def get_concept_documents_from_table(concept_name: str) -> list[DocumentResponse
 
 def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
     result = conn.execute(
-        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight"
+        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason, r.weight, r.edge_type"
     )
     edges = []
     while result.has_next():
-        source, target, reason, weight = result.get_next()
+        source, target, reason, weight, edge_type = result.get_next()
         safe_weight = float(weight) if weight is not None else 1.0
+        safe_type = edge_type if edge_type else "RELATED_TO"
         edges.append(
             GraphEdgeResponse(
                 source=f"concept:{source}",
                 target=f"concept:{target}",
-                type="RELATED_TO",
+                type=safe_type,
                 reason=reason,
                 weight=safe_weight,
             )
@@ -80,10 +69,16 @@ def get_related_to_edges(conn: kuzu.Connection) -> list[GraphEdgeResponse]:
 def get_graph(conn: kuzu.Connection = Depends(get_db_connection)):
     """Return all concept nodes and edges for frontend visualization."""
     nodes = []
-    result = conn.execute("MATCH (c:Concept) RETURN c.name, c.colorScore")
+    result = conn.execute("MATCH (c:Concept) RETURN c.name, c.colorScore, c.community_id")
     while result.has_next():
-        name, color_score = result.get_next()
-        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name, "colorScore": color_score})
+        name, color_score, community_id = result.get_next()
+        nodes.append({
+            "id": f"concept:{name}",
+            "type": "Concept",
+            "name": name,
+            "colorScore": color_score,
+            "community_id": community_id if community_id is not None and community_id >= 0 else None,
+        })
 
     edges = [edge.model_dump() for edge in get_related_to_edges(conn)]
     return {"nodes": nodes, "edges": edges}
@@ -129,40 +124,35 @@ def get_relationship_details(
 def get_latent_discovery(concept_name: str):
     """Return semantically similar documents that do not already contain concept_name."""
     db, chunks_table = init_lancedb()
-    centroids_table = db.open_table("document_centroids")
-
     chunks_df = chunks_table.to_pandas()
     if chunks_df.empty:
         return DiscoveryResponse(concept_name=concept_name, results=[])
 
-    exploded = chunks_df[["doc_id", "vector", "concepts"]].explode("concepts")
-    concept_rows = exploded[exploded["concepts"] == concept_name]
-    if concept_rows.empty:
-        return DiscoveryResponse(concept_name=concept_name, results=[])
+    try:
+        concept_centroids_table = db.open_table("concept_centroids")
+    except Exception:
+        concept_centroids_table = None
 
-    concept_centroid = _average_vectors(concept_rows["vector"].tolist())
-    if not concept_centroid:
+    excluded_doc_ids, ranked_concepts = concept_name_from_query_rows(chunks_df, concept_name)
+    if not ranked_concepts:
         return DiscoveryResponse(concept_name=concept_name, results=[])
-
-    existing_doc_ids = set(concept_rows["doc_id"].astype(str))
-    search_result = centroids_table.search(concept_centroid).limit(50).to_pandas()
 
     results: list[DiscoveryItemResponse] = []
-    for _, row in search_result.iterrows():
-        if str(row["doc_id"]) in existing_doc_ids:
-            continue
-
-        distance = float(row.get("_distance", 0.0))
-        similarity_score = 1.0 / (1.0 + distance)
+    hits = find_latent_document_hits(
+        db,
+        chunks_df,
+        ranked_concepts=ranked_concepts,
+        excluded_doc_ids=excluded_doc_ids,
+        limit=5,
+        concept_centroids_table=concept_centroids_table,
+    )
+    for hit in hits:
         results.append(
             DiscoveryItemResponse(
-                doc_name=str(row["doc_name"]),
-                similarity_score=similarity_score,
+                doc_name=hit.doc_name,
+                similarity_score=hit.score,
             )
         )
-
-        if len(results) == 5:
-            break
 
     return DiscoveryResponse(concept_name=concept_name, results=results)
 
@@ -250,3 +240,10 @@ def get_stats(conn: kuzu.Connection = Depends(get_db_connection)):
         "total_relationships": rel_result.get_next()[0],
     }
 
+
+@graph_router.post("/recluster")
+def recluster(conn: kuzu.Connection = Depends(get_db_connection)):
+    """Run Leiden clustering over all current Concept nodes and persist results."""
+    community_map = run_leiden_clustering(conn)
+    update_node_communities(conn, community_map)
+    return {"clustered": len(community_map)}

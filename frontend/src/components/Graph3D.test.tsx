@@ -273,6 +273,35 @@ describe('Graph3D', () => {
     }).enableNavigationControls).toBe(false);
   });
 
+  it('renders the brain shell with a lighter wireframe opacity', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const brainMaterials: THREE.MeshBasicMaterial[] = [];
+    sceneObject.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial) {
+        brainMaterials.push(child.material);
+      }
+    });
+
+    expect(brainMaterials).not.toHaveLength(0);
+    brainMaterials.forEach((material) => {
+      expect(material.transparent).toBe(true);
+      expect(material.opacity).toBeCloseTo(0.06, 6);
+    });
+  });
+
   it('creates dodecahedron node with correct color and label', () => {
     render(
       <Graph3D
@@ -837,7 +866,7 @@ describe('Graph3D', () => {
     expect(props.linkHoverPrecision).toBeGreaterThanOrEqual(8);
   });
 
-  it('makes edges slightly more opaque so the click targets are easier to see', () => {
+  it('keeps edges visually subdued so the neuron models remain the focus', () => {
     render(
       <Graph3D
         data={graph}
@@ -848,10 +877,10 @@ describe('Graph3D', () => {
       />,
     );
 
-    expect(getLatestGraphProps().linkOpacity).toBeGreaterThan(0.7);
+    expect(getLatestGraphProps().linkOpacity).toBeCloseTo(0.55, 6);
   });
 
-  it('renders unhighlighted edges as translucent bluish white for baseline visibility', () => {
+  it('renders unhighlighted edges as a softer bluish white', () => {
     render(
       <Graph3D
         data={graph}
@@ -863,7 +892,7 @@ describe('Graph3D', () => {
     );
 
     const props = getLatestGraphProps();
-    expect(props.linkColor(graph.links[0])).toBe('rgba(186, 224, 255, 0.52)');
+    expect(props.linkColor(graph.links[0])).toBe('rgba(186, 224, 255, 0.34)');
   });
 
   it('shows a meaningful visual width difference between low and high weighted links', () => {
@@ -1466,8 +1495,8 @@ describe('Graph3D', () => {
 
     expect(focusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
     expect(focusedProps.linkColor(graph.links[1])).toBe('rgba(125, 211, 252, 0.9)');
-    expect(focusedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
-    expect(focusedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(focusedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
+    expect(focusedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
 
     await act(async () => {
       getLatestGraphProps().onNodeClick(graph.nodes[1]);
@@ -1477,8 +1506,8 @@ describe('Graph3D', () => {
 
     expect(refocusedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
     expect(refocusedProps.linkColor(graph.links[1])).toBe('rgba(51, 65, 85, 0.22)');
-    expect(refocusedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
-    expect(refocusedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(refocusedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
+    expect(refocusedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
   });
 
   it('selected edge styling takes precedence over hover styling', async () => {
@@ -1509,8 +1538,8 @@ describe('Graph3D', () => {
     };
 
     expect(selectedProps.linkColor(graph.links[0])).toBe('rgba(125, 211, 252, 0.9)');
-    expect(selectedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
-    expect(selectedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(selectedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
+    expect(selectedProps.linkWidth(graph.links[1])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
   });
 
   it('closing the panel clears selected edge state', async () => {
@@ -1541,7 +1570,7 @@ describe('Graph3D', () => {
       linkWidth: (link: GraphLink) => number;
     };
 
-    expect(clearedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(clearedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
   });
 
   it('pressing Escape clears selected edge state', async () => {
@@ -1580,7 +1609,7 @@ describe('Graph3D', () => {
       linkWidth: (link: GraphLink) => number;
     };
 
-    expect(clearedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 3.5, 6);
+    expect(clearedProps.linkWidth(graph.links[0])).toBeCloseTo(Math.log((1 + 1)) * 2.2, 6);
   });
 
   it('pressing Escape also exits node-focused rotation mode', async () => {
@@ -1668,7 +1697,7 @@ describe('Graph3D', () => {
     );
 
     const props = getLatestGraphProps();
-    expect(props.linkWidth({ ...graph.links[0], weight: 8 })).toBeCloseTo(Math.log(9) * 3.5, 6);
+    expect(props.linkWidth({ ...graph.links[0], weight: 8 })).toBeCloseTo(Math.log(9) * 2.2, 6);
   });
 
   it('injects latent ghost links on concept click and hides them when discovery mode is off', async () => {
@@ -1711,7 +1740,7 @@ describe('Graph3D', () => {
     expect(ghostLink).toBeTruthy();
     if (ghostLink) {
       expect(withGhost.linkLineDash?.(ghostLink)).toEqual([2, 1]);
-      expect(withGhost.linkWidth(ghostLink)).toBeCloseTo(0.8, 6);
+      expect(withGhost.linkWidth(ghostLink)).toBeCloseTo(0.55, 6);
     }
 
     fireEvent.click(screen.getByLabelText('Discovery mode'));

@@ -1,32 +1,10 @@
 import json
 import os
-from urllib.request import Request, urlopen
 
-from dotenv import load_dotenv
-from google import genai
+from backend.services.llm_providers import get_provider
 
-load_dotenv()
-
-_client = None
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 EXTRACTION_MIN_CONCEPTS = 4
 EXTRACTION_MAX_CONCEPTS = 8
-
-
-def _get_client():
-    global _client
-    if _client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
-        _client = genai.Client(api_key=api_key)
-    return _client
-
-
-def _get_model_name() -> str:
-    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 
 
 def _get_llm_provider() -> str:
@@ -34,26 +12,7 @@ def _get_llm_provider() -> str:
 
 
 def _get_test_llm_provider() -> str:
-    return os.environ.get("TEST_LLM_PROVIDER", "gemini").lower()
-
-
-def _generate_ollama_response(prompt: str) -> str:
-    payload = json.dumps(
-        {
-            "model": os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
-            "prompt": prompt,
-            "stream": False,
-        }
-    ).encode("utf-8")
-    request = Request(
-        f"{os.environ.get('OLLAMA_BASE_URL', DEFAULT_OLLAMA_URL)}/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urlopen(request) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    return data["response"]
+    return os.environ.get("TEST_LLM_PROVIDER", _get_llm_provider()).lower()
 
 
 def _parse_json_response(raw_text: str) -> dict:
@@ -91,12 +50,9 @@ def _build_extraction_prompt(text: str, doc_name: str) -> str:
 
 
 def extract_concepts(text: str, doc_name: str) -> dict:
-    client = _get_client()
     prompt = _build_extraction_prompt(text=text, doc_name=doc_name)
-    response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
-    )
-    return _parse_json_response(response.text)
+    response_text = get_provider().generate_text(prompt)
+    return _parse_json_response(response_text)
 
 
 def _format_history(history: list[dict]) -> str:
@@ -124,14 +80,45 @@ def generate_answer(query: str, context: str, concepts: list[str], history: list
         "Provide a grounded answer based only on the context provided."
     )
 
-    if _get_llm_provider() == "ollama":
-        return _generate_ollama_response(prompt)
+    return get_provider().generate_text(prompt)
 
-    client = _get_client()
-    response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
+
+def generate_partial_answer(query: str, summary: str, member_concepts: list[str]) -> str:
+    prompt = (
+        "You are answering a corpus-level question from one graph community.\n\n"
+        f"Question: {query}\n\n"
+        f"Community summary:\n{summary}\n\n"
+        f"Member concepts: {', '.join(member_concepts)}\n\n"
+        "Answer only from this summary. Keep the answer concise and grounded."
     )
-    return response.text
+    return get_provider().generate_text(prompt)
+
+
+def synthesize_answers(query: str, partial_answers: list[str]) -> str:
+    prompt = (
+        "Synthesize the following community-level answers into one grounded answer.\n\n"
+        f"Question: {query}\n\n"
+        "Partial answers:\n"
+        f"{chr(10).join(partial_answers)}\n\n"
+        "Combine overlaps, keep the final answer coherent, and avoid adding unsupported facts."
+    )
+    return get_provider().generate_text(prompt)
+
+
+def generate_community_summary(
+    community_id: str,
+    member_concepts: list[str],
+    representative_evidence: list[str],
+) -> str:
+    prompt = (
+        "You are summarizing a graph community for retrieval.\n\n"
+        f"Community ID: {community_id}\n"
+        f"Member concepts: {', '.join(member_concepts)}\n\n"
+        "Representative evidence:\n"
+        f"{chr(10).join(representative_evidence)}\n\n"
+        "Write a concise summary of the main themes and how the concepts relate."
+    )
+    return get_provider().generate_text(prompt)
 
 
 def generate_test_answer(question: str) -> str:
@@ -142,11 +129,4 @@ def generate_test_answer(question: str) -> str:
         f"Question: {question}"
     )
 
-    if _get_test_llm_provider() == "ollama":
-        return _generate_ollama_response(question)
-
-    client = _get_client()
-    response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
-    )
-    return response.text
+    return get_provider(provider_name=_get_test_llm_provider()).generate_text(prompt)

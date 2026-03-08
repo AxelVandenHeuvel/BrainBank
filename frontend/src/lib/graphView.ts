@@ -42,6 +42,23 @@ export function conceptColorFromScore(score: number | undefined): string {
   return `hsl(${hue}, 75%, 60%)`;
 }
 
+/** Ten distinct colors mirroring D3's schemeCategory10. */
+const COMMUNITY_PALETTE = [
+  '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+];
+
+/**
+ * Maps a Leiden community_id to a distinct palette color.
+ * Falls back to the default Concept color when community_id is absent.
+ */
+export function communityColor(communityId: number | null | undefined): string {
+  if (communityId === undefined || communityId === null || communityId < 0) {
+    return NODE_TYPE_COLORS.Concept;
+  }
+  return COMMUNITY_PALETTE[communityId % COMMUNITY_PALETTE.length];
+}
+
 export const DIMMED_NODE_COLOR = 'rgba(148, 163, 184, 0.2)';
 export const DIMMED_SEARCH_COLOR = 'rgba(71, 85, 105, 0.35)';
 export const DIMMED_LINK_COLOR = 'rgba(51, 65, 85, 0.22)';
