@@ -31,6 +31,21 @@ describe('ConceptDocumentOverlay', () => {
     expect(screen.getByText('Loading documents...')).toBeInTheDocument();
   });
 
+  it('opens the first document automatically when related documents are available', () => {
+    render(
+      <ConceptDocumentOverlay
+        conceptName="Calculus"
+        documents={documents}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'Math Notes', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Chain rule explanation.')).toBeInTheDocument();
+  });
+
   it('opens a document in the markdown viewer when its title is clicked', async () => {
     const user = userEvent.setup();
 
@@ -41,10 +56,6 @@ describe('ConceptDocumentOverlay', () => {
         onClose={vi.fn()}
       />,
     );
-
-    expect(
-      screen.getByText('Select a document to read its markdown.'),
-    ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Math Notes' }));
 
