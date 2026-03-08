@@ -36,8 +36,10 @@ import type {
   GraphLink,
   GraphNode,
   GraphSource,
+  RelationshipDocument,
   RelationshipDetails,
 } from '../types/graph';
+import { ConceptDocumentOverlay } from './ConceptDocumentOverlay';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { NodeTooltip } from './NodeTooltip';
 
@@ -110,6 +112,8 @@ const IDLE_ROTATE_DELAY_MS = 5000;
 const IDLE_ROTATE_INTERVAL_MS = 16;
 const BUTTON_ZOOM_IN_FACTOR = 0.84;
 const BUTTON_ZOOM_OUT_FACTOR = 1.2;
+const WHEEL_ZOOM_IN_FACTOR = 0.9;
+const WHEEL_ZOOM_OUT_FACTOR = 1.2;
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
 const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
 const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
@@ -170,7 +174,7 @@ export function Graph3D({
   const expandedConceptIdRef = useRef<string | null>(null);
 
   const [expandedConcept, setExpandedConcept] = useState<GraphNode | null>(null);
-  const [expandedDocs, setExpandedDocs] = useState<Array<{ doc_id: string; name: string; full_text: string }> | null>(null);
+  const [expandedDocs, setExpandedDocs] = useState<RelationshipDocument[] | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedEdge, setSelectedEdge] = useState<SelectedRelationshipEdge | null>(null);
@@ -197,6 +201,11 @@ export function Graph3D({
     }
 
     return nodeId.slice('concept:'.length);
+  }
+
+  function getNodeName(nodeId: string): string {
+    const node = displayData.nodes.find((candidate) => candidate.id === nodeId);
+    return node?.name ?? nodeId;
   }
 
   function isSelectedLink(link: GraphLink): boolean {
@@ -569,6 +578,16 @@ export function Graph3D({
     handleZoom(BUTTON_ZOOM_OUT_FACTOR);
   }
 
+  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
+    if (expandedConcept || event.deltaY === 0) {
+      return;
+    }
+
+    handleInteraction();
+    event.preventDefault();
+    handleZoom(event.deltaY < 0 ? WHEEL_ZOOM_IN_FACTOR : WHEEL_ZOOM_OUT_FACTOR);
+  }
+
   async function handleConceptExpansion(node: GraphNode) {
     if (expandedConceptIdRef.current) return;
 
@@ -582,7 +601,7 @@ export function Graph3D({
        (controls as any).enablePan = false;
     }
 
-    let docs: Array<{ doc_id: string; name: string; full_text: string }> = [];
+    let docs: RelationshipDocument[] = [];
     try {
       const response = await fetch(`/api/concepts/${encodeURIComponent(node.name)}/documents`);
       if (response.ok) {
@@ -639,18 +658,12 @@ export function Graph3D({
   }
 
   async function handleLinkClick(link: GraphLink) {
-    if (link.type !== 'RELATED_TO') {
-      return;
-    }
-
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
     const targetId = typeof link.target === 'string' ? link.target : link.target.id;
     const sourceConcept = getConceptName(sourceId);
     const targetConcept = getConceptName(targetId);
-
-    if (!sourceConcept || !targetConcept) {
-      return;
-    }
+    const sourceName = getNodeName(sourceId);
+    const targetName = getNodeName(targetId);
 
     const mockDetailsKey = `${sourceId}->${targetId}`;
     const mockDetails = mockRelationshipDetailsByEdge[mockDetailsKey];
@@ -661,22 +674,32 @@ export function Graph3D({
       reason: link.reason ?? '',
     });
     setRelationshipDetails({
-      source: sourceConcept,
-      target: targetConcept,
-      type: 'RELATED_TO',
-      reason: link.reason ?? 'Related concepts',
+      source: sourceName,
+      target: targetName,
+      type: link.type,
+      reason: link.reason ?? `${link.type} connection`,
       source_documents: [],
       target_documents: [],
       shared_document_ids: [],
     });
     setRelationshipError(null);
-    setIsRelationshipLoading(true);
+    setIsRelationshipLoading(link.type === 'RELATED_TO');
+
+    if (link.type !== 'RELATED_TO') {
+      return;
+    }
+
+    if (!sourceConcept || !targetConcept) {
+      setRelationshipError('Relationship details are only available for concept-to-concept links.');
+      setIsRelationshipLoading(false);
+      return;
+    }
 
     if (graphSource === 'mock') {
       setRelationshipDetails(
         mockDetails ?? {
-          source: sourceConcept,
-          target: targetConcept,
+          source: sourceName,
+          target: targetName,
           type: 'RELATED_TO',
           reason: link.reason ?? 'Related concepts',
           source_documents: [],
@@ -1008,15 +1031,8 @@ export function Graph3D({
   }
 
   function getLinkWidth(link: GraphLink): number {
-    if (isSelectedLink(link)) {
-      return 3.2;
-    }
-
-    if (focusedEdgeNodeId) {
-      return isFocusedNodeLink(link) ? 2.8 : 0.7;
-    }
-
-    return isDirectHoverLink(link, hoveredNode) ? 2.8 : 0.7;
+    void link;
+    return 0.7;
   }
 
   return (
@@ -1049,7 +1065,7 @@ export function Graph3D({
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseEnd}
       onMouseLeave={handleMouseEnd}
-      onWheel={handleInteraction}
+      onWheel={handleWheel}
       onTouchStart={handleInteraction}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
@@ -1069,7 +1085,7 @@ export function Graph3D({
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
         linkHoverPrecision={10}
-        linkOpacity={0.7}
+        linkOpacity={0.82}
         nodeRelSize={5}
         linkDirectionalParticles={0}
         cooldownTicks={120}
@@ -1124,43 +1140,13 @@ export function Graph3D({
         />
       ) : null}
 
-      {/* 2D Overlay with Frosted Glass Effect */}
       {expandedConcept && (
-        <div className="absolute inset-0 z-30 bg-slate-950/80 backdrop-blur-md flex flex-col items-center overflow-y-auto animate-in fade-in duration-300">
-          <div className="sticky top-0 z-40 w-full bg-slate-950/40 backdrop-blur-lg border-b border-white/10 px-8 py-6 flex justify-between items-center mb-8">
-            <h2 className="text-3xl font-bold text-slate-100">{expandedConcept.name}</h2>
-            <button onClick={handleCollapse} className="px-6 py-2.5 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-sm font-semibold text-slate-100 shadow-lg shadow-indigo-950/30 transition float-right">
-              ← Back to Web (Esc)
-            </button>
-          </div>
-          <div className="w-full max-w-7xl px-8 pb-20">
-            {!expandedDocs ? (
-              <div className="text-slate-400 mt-20 text-xl animate-pulse text-center">Loading documents...</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {expandedDocs.map((doc, idx) => (
-                  <div
-                    key={doc.doc_id}
-                    className="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl shadow-xl transition hover:-translate-y-1 hover:shadow-2xl hover:bg-slate-800/80 cursor-pointer flex flex-col"
-                    style={{ animation: `float ${4 + (idx % 3)}s ease-in-out infinite alternate` }}
-                  >
-                    <h3 className="text-xl font-semibold text-yellow-300 mb-3 leading-tight">{doc.name}</h3>
-                    <p className="text-slate-400 leading-relaxed overflow-hidden text-ellipsis line-clamp-[8]">{doc.full_text}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <ConceptDocumentOverlay
+          conceptName={expandedConcept.name}
+          documents={expandedDocs}
+          onClose={handleCollapse}
+        />
       )}
-
-      <style>{`
-        @keyframes float {
-          0% { transform: translateY(0px) rotate(0deg); }
-          50% { transform: translateY(-6px) rotate(0.5deg); }
-          100% { transform: translateY(0px) rotate(0deg); }
-        }
-      `}</style>
 
       {selectedEdge ? (
         <EdgeDetailPanel

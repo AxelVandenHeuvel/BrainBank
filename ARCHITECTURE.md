@@ -10,6 +10,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 |-------------|-------------------------|----------------------------------|
 | Frontend    | React + Vite + TypeScript | Standalone graph UI            |
 | UI Styling  | Tailwind CSS            | Search, sidebar, and overlays    |
+| Markdown Rendering | react-markdown   | In-app read-only document viewer |
 | 3D Rendering| react-force-graph-3d + Three.js | Force graph and brain shell |
 | API         | FastAPI                 | HTTP endpoints                   |
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
@@ -48,7 +49,7 @@ LanceDB is the sole source of document identity and the concept→document link.
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`.
+Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. When the current Kuzu Python binding reports a same-path concurrent-open failure as `IndexError: unordered_map::at: key not found`, `backend/db/kuzu.py` now translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -66,12 +67,14 @@ frontend/
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation
+      ConceptDocumentOverlay.tsx - Related-document overlay with document selection state
       EdgeDetailPanel.tsx    - Selected relationship panel with evidence documents
       Graph3D.tsx            - 3D graph scene, edge selection, and interaction behavior
       IngestPanel.tsx        - New Note button + file upload + Notion import
+      MarkdownDocumentViewer.tsx - Read-only markdown renderer for selected documents
       NoteEditor.tsx         - Full-page markdown note editor
-      SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
+      SearchBar.tsx          - Controlled search input
     hooks/
       useChat.ts             - POST /query hook for chat state, retrieval answers, and concept metadata
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
@@ -95,7 +98,7 @@ backend/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
     lance.py                - LanceDB init + chunks table schema + duplicate document lookup
-    kuzu.py                 - Kuzu init + graph schema (nodes + edges)
+    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + clear concurrent-open error translation
   services/
     embeddings.py           - Sentence-transformer embedding functions
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
@@ -166,7 +169,9 @@ Graph3D -- react-force-graph-3d scene
   |         +-- idle (5s) -> slow in-place scene rotation around the brain center
   |         |                 or around the currently focused concept node
   |         +-- top-right UI buttons -> zoom in / zoom out / reset
+  |         +-- scroll wheel -> zoom camera in or out around the current focus point
   |         +-- click node -> move that node to screen center and expand its documents
+  |         +-- click document title in overlay -> render that document in the markdown reader
   |         +-- double-click node -> center that node more tightly
   |         +-- clicked concept node -> becomes the active rotation pivot
   |         +-- double-click empty space / Escape -> restore brain-centered pivot
@@ -187,9 +192,9 @@ The sidebar has a "New Note" button and a file upload option:
 
 All modes trigger `useGraphData.refetch()` to reload the 3D graph. Vite proxies `/ingest` to the backend alongside `/api`.
 
-The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object’s own rotation, and reserves left-click for node interactions such as focus and document expansion. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node’s id as the active rotation target, resolves that node’s live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation, and persists highlight on the node’s adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. A `ResizeObserver` watches the graph panel’s real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
+The desktop layout locks the app to the viewport and gives the left rail, main graph/editor area, and chat column their own internal scroll behavior so a standard browser window does not need to scroll the whole page to reach the chat form or the bottom of the sidebar. The frontend also uses the loaded brain mesh as a real containment boundary for the force layout, not just a visual shell. It builds raycastable mesh geometry, finds an interior anchor point, and clamps out-of-bounds nodes back inward with extra surface inset so the full rendered node spheres stay inside the model during simulation. Before the brain is added to the Three.js scene, `brainScene.centerObject3DAtOrigin()` rescales the loaded GLTF, computes its bounding-box centroid, and offsets the model into a zeroed pivot group at the scene origin. `Graph3D` disables the built-in navigation controls, keeps idle motion and right-button drag on the scene object's own rotation, reserves left-click for node interactions such as focus and document expansion, and maps scroll-wheel input to the same camera-distance zoom system used by the top-right zoom buttons. Wheel zoom is ignored while the full-screen document overlay is open so the overlay can keep normal vertical scrolling. Relationship edges render as plain static lines with no directional particle animation, while `linkHoverPrecision` stays elevated so edge hitboxes remain easy to click. Edge highlighting is color-only; the rendered line width stays thin even when a node or relationship is focused. The scene now tracks a local focus point: the home view pins the brain centroid at world origin, and clicking or searching for a node shifts the scene position so that local node sits at world origin before any camera move. That keeps the actual rotation pivot centered in the viewport by default and keeps the selected node centered while the scene rotates. When a concept node is focused, `Graph3D` also stores that node's id as the active rotation target, resolves that node's live graph coordinates on each rotation update so the selected concept center remains the local focus point during idle rotation and right-drag rotation, and persists highlight on the node's adjacent edges until the focus is cleared. Reset, `Escape`, or double-clicking empty space clears that focused pivot and restores the default brain-centered rotation mode. When a concept overlay is open, `ConceptDocumentOverlay` lists the related documents returned by `/api/concepts/{concept}/documents`, and clicking a document title sends that document into `MarkdownDocumentViewer`, which renders `full_text` in-place via `react-markdown` without another API request. A `ResizeObserver` watches the graph panel's real rendered size, feeds those measured dimensions into `ForceGraph3D`, and recalculates the home view both when the chat column opens or closes and when the graph panel receives its first non-zero layout size on initial page load. That keeps the centered brain shell visually centered in the actual graph viewport instead of centering relative to stale pre-layout or full-window dimensions. During development, Vite proxies `/api/*` and `/ingest` requests to `http://localhost:8000`.
 
-When a user clicks a `RELATED_TO` edge, the frontend keeps that exact edge selected, dims unrelated nodes, fetches `/api/relationships/details?source=...&target=...`, and renders `EdgeDetailPanel` with the stored reason plus shared, source-only, and target-only supporting documents. That panel can be dismissed either with its close button or by pressing `Escape`. `MENTIONS` edges remain non-interactive.
+When a user clicks any visible edge, the frontend keeps that exact edge selected, dims unrelated nodes, and opens `EdgeDetailPanel` showing the edge type. For `RELATED_TO` edges, the frontend also fetches `/api/relationships/details?source=...&target=...` and renders the stored reason plus shared, source-only, and target-only supporting documents. Relationship detail lookup is direction-agnostic, so the panel still opens even if the clicked edge is queried in reverse endpoint order. Non-`RELATED_TO` edges use local panel details only and do not trigger the backend evidence lookup. That panel can be dismissed either with its close button or by pressing `Escape`.
 
 ## Frontend Chat Flow
 
