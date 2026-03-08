@@ -9,50 +9,23 @@ graph_router = APIRouter(prefix="/api")
 
 @graph_router.get("/graph")
 def get_graph():
-    """Return all nodes and edges for frontend visualization."""
-    _, conn = init_kuzu()
-    _, table = init_lancedb()
-    df = table.to_pandas()
+    """Return Concept nodes and RELATED_TO edges for frontend visualization."""
+    try:
+        nodes = []
+        edges = []
 
-    nodes = []
-    edges = []
+        result = conn.execute("MATCH (c:Concept) RETURN c.name")
+        while result.has_next():
+            name = result.get_next()[0]
+            nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
 
-    # Concept nodes from Kuzu
-    result = conn.execute("MATCH (c:Concept) RETURN c.name")
-    while result.has_next():
-        name = result.get_next()[0]
-        nodes.append({"id": f"concept:{name}", "type": "Concept", "name": name})
-
-    # Document nodes from LanceDB (distinct docs)
-    if not df.empty:
-        for _, row in df.drop_duplicates("doc_id")[["doc_id", "doc_name"]].iterrows():
-            nodes.append(
-                {"id": f"doc:{row['doc_id']}", "type": "Document", "name": row["doc_name"]}
-            )
-
-        # MENTIONS edges from LanceDB (one edge per unique doc->concept pair)
-        exploded = df[["doc_id", "concepts"]].explode("concepts").dropna(subset=["concepts"]).drop_duplicates()
-        for _, row in exploded.iterrows():
-            if row["concepts"]:
-                edges.append(
-                    {
-                        "source": f"doc:{row['doc_id']}",
-                        "target": f"concept:{row['concepts']}",
-                        "type": "MENTIONS",
-                    }
-                )
-
-    # RELATED_TO edges from Kuzu
-    result = conn.execute(
-        "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
-    )
-    while result.has_next():
-        row = result.get_next()
-        edges.append(
-            {"source": f"concept:{row[0]}", "target": f"concept:{row[1]}", "type": row[2]}
+        result = conn.execute(
+            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.name, b.name, r.reason"
         )
 
-    return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": edges}
+    finally:
+        print("Finished get_graph, leaving connection open to avoid write locks")
 
 
 @graph_router.get("/concepts")
@@ -90,7 +63,9 @@ def get_concepts():
             {"name": name, "document_count": doc_count, "related_concepts": related}
         )
 
-    return {"concepts": concepts}
+        return {"concepts": concepts}
+    finally:
+        print("Finished get_concepts, leaving connection open to avoid write locks")
 
 
 @graph_router.get("/documents")
@@ -141,18 +116,20 @@ def get_concept_documents(concept_name: str):
 @graph_router.get("/stats")
 def get_stats():
     """Return aggregate counts across the knowledge graph."""
-    _, conn = init_kuzu()
-    _, table = init_lancedb()
-    df = table.to_pandas()
+    try:
+        _, table = init_lancedb()
+        df = table.to_pandas()
 
-    concept_result = conn.execute("MATCH (c:Concept) RETURN count(c)")
-    rel_result = conn.execute("MATCH ()-[r:RELATED_TO]->() RETURN count(r)")
+        concept_result = conn.execute("MATCH (c:Concept) RETURN count(c)")
+        rel_result = conn.execute("MATCH ()-[r:RELATED_TO]->() RETURN count(r)")
 
-    total_documents = int(df["doc_id"].nunique()) if not df.empty else 0
+        total_documents = int(df["doc_id"].nunique()) if not df.empty else 0
 
-    return {
-        "total_documents": total_documents,
-        "total_chunks": len(df),
-        "total_concepts": concept_result.get_next()[0],
-        "total_relationships": rel_result.get_next()[0],
-    }
+        return {
+            "total_documents": total_documents,
+            "total_chunks": len(df),
+            "total_concepts": concept_result.get_next()[0],
+            "total_relationships": rel_result.get_next()[0],
+        }
+    finally:
+        print("Finished stats, leaving connection open to avoid write locks")

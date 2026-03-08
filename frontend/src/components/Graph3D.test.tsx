@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
@@ -100,6 +100,11 @@ describe('Graph3D', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     currentCameraPosition = { x: 200, y: 60, z: 200 };
+    // Default: fetch returns empty doc list so existing tests don't crash
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
   });
 
   afterEach(() => {
@@ -251,6 +256,145 @@ describe('Graph3D', () => {
       expect.objectContaining({ x: -10, y: 0, z: 0 }),
       1200,
     );
+  });
+
+  describe('Concept node document expansion', () => {
+    it('clicking a Document node is a no-op and does not fetch', async () => {
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[2]); // Document node
+      });
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('clicking a Concept node fetches its documents from the API', async () => {
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // Calculus
+      });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/concepts/Calculus/documents',
+      );
+    });
+
+    it('fetched documents are injected as extra nodes and links into the graph', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]); // Calculus
+      });
+
+      const { graphData } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        graphData: GraphData;
+      };
+      expect(graphData.nodes).toHaveLength(graph.nodes.length + 1);
+      const injected = graphData.nodes.find((n) => n.id === 'doc:abc123');
+      expect(injected?.name).toBe('Math Notes');
+      expect(injected?.type).toBe('Document');
+      expect(graphData.links.some((l) => l.target === 'doc:abc123')).toBe(true);
+    });
+
+    it('clicking the same Concept node again collapses the document nodes', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'content' },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+
+      // First click — expand
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[0]);
+      });
+      expect(graphPropsSpy.mock.calls.at(-1)?.[0].graphData.nodes).toHaveLength(
+        graph.nodes.length + 1,
+      );
+
+      // Advance past double-click threshold so second click is not treated as zoom
+      vi.advanceTimersByTime(400);
+
+      // Second click — collapse
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[0]);
+      });
+      expect(graphPropsSpy.mock.calls.at(-1)?.[0].graphData.nodes).toHaveLength(
+        graph.nodes.length,
+      );
+    });
+
+    it('clicking a different Concept node replaces the previous document nodes', async () => {
+      const docsA = [{ doc_id: 'docA', name: 'Doc A', full_text: 'a' }];
+      const docsB = [{ doc_id: 'docB', name: 'Doc B', full_text: 'b' }];
+      let call = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(call++ === 0 ? docsA : docsB),
+        }),
+      );
+
+      render(
+        <Graph3D data={graph} query="" hoveredNode={null} onHoverNode={vi.fn()} />,
+      );
+
+      // Click Calculus
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[0]);
+      });
+
+      vi.advanceTimersByTime(400);
+
+      // Click Derivatives
+      await act(async () => {
+        (graphPropsSpy.mock.calls.at(-1)?.[0] as {
+          onNodeClick: (n: GraphNode) => void;
+        }).onNodeClick(graph.nodes[1]);
+      });
+
+      const { graphData } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        graphData: GraphData;
+      };
+      expect(graphData.nodes.find((n) => n.id === 'doc:docA')).toBeUndefined();
+      expect(graphData.nodes.find((n) => n.id === 'doc:docB')).toBeDefined();
+    });
   });
 
   it('keeps simulated nodes inside the brain containment volume', () => {
