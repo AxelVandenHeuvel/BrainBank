@@ -12,12 +12,13 @@ interface UseGraphDataResult {
   refetch: () => void;
 }
 
+const emptyGraphData: GraphData = { nodes: [], links: [] };
 const fallbackGraphData = normalizeGraphData(mockGraphApiResponse);
 
 export function useGraphData(): UseGraphDataResult {
   const [result, setResult] = useState<Omit<UseGraphDataResult, 'refetch'>>({
-    data: fallbackGraphData,
-    source: 'mock',
+    data: emptyGraphData,
+    source: 'api',
     isLoading: true,
     error: null,
   });
