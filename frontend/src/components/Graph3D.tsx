@@ -1372,10 +1372,6 @@ export function Graph3D({
     return BASE_LINK_COLOR;
   }
 
-  function getLinkLineDash(link: GraphLink): number[] | null {
-    return isGhostLink(link) ? [2, 1] : null;
-  }
-
   function getLinkWidth(link: GraphLink): number {
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
