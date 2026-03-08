@@ -38,6 +38,7 @@ import type {
   GraphLink,
   GraphNode,
   GraphSource,
+  GraphStatsResponse,
   DiscoveryResponse,
   RelationshipDocument,
   RelationshipDetails,
@@ -384,11 +385,48 @@ export function Graph3D({
   const diveStartTimeRef = useRef<number | null>(null);
   const [isDiving, setIsDiving] = useState(false);
   const [showBrainMesh, setShowBrainMesh] = useState(true);
+  const [graphStats, setGraphStats] = useState<GraphStatsResponse | null>(null);
   const showBrainMeshRef = useRef(showBrainMesh);
 
   useEffect(() => {
     showBrainMeshRef.current = showBrainMesh;
   }, [showBrainMesh]);
+
+  useEffect(() => {
+    if (graphSource !== 'api') {
+      setGraphStats(null);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadGraphStats() {
+      try {
+        const response = await fetch('/api/stats', {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Stats request failed: ${response.status}`);
+        }
+
+        const nextStats = (await response.json()) as GraphStatsResponse;
+        setGraphStats(nextStats);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        console.warn('Failed to load graph stats footer data', error);
+        setGraphStats(null);
+      }
+    }
+
+    void loadGraphStats();
+
+    return () => {
+      controller.abort();
+    };
+  }, [graphSource]);
 
   // No node injection — documents are shown in a 2D overlay on concept click.
   const displayData = useMemo<GraphData>(() => {
@@ -502,16 +540,15 @@ export function Graph3D({
   displayDataRef.current = displayData;
 
   const graphStatsSummary = useMemo(() => {
-    const conceptCount = displayData.nodes.filter((node) => node.type === 'Concept').length;
-    const documentCount = displayData.nodes.filter((node) => node.type === 'Document').length;
+    const visibleDocumentCount = displayData.nodes.filter((node) => node.type === 'Document').length;
+    const documentCount = graphStats?.total_documents ?? visibleDocumentCount;
 
     return [
       formatStatLabel(displayData.nodes.length, 'node', 'nodes'),
       formatStatLabel(displayData.links.length, 'edge', 'edges'),
-      formatStatLabel(conceptCount, 'concept', 'concepts'),
       formatStatLabel(documentCount, 'document', 'documents'),
     ].join(' • ');
-  }, [displayData]);
+  }, [displayData, graphStats]);
 
   useEffect(() => {
     traversalPulseWindowsRef.current = new Map();
