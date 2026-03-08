@@ -13,6 +13,7 @@ from backend.db.kuzu import get_kuzu_engine
 from backend.db.lance import find_existing_document
 from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
+from backend.session.memory import SessionMemory
 from backend.services.llm import generate_test_answer
 from backend.services.pdf import pdf_to_text
 from backend.services.notion import (
@@ -23,6 +24,8 @@ from backend.services.notion import (
 
 app = FastAPI(title="BrainBank", version="0.1.0")
 app.include_router(graph_router)
+
+session_memory = SessionMemory()
 
 
 class IngestRequest(BaseModel):
@@ -35,8 +38,15 @@ class NotionImportRequest(BaseModel):
     url: str
 
 
+class HistoryTurn(BaseModel):
+    role: str
+    content: str
+
+
 class QueryRequest(BaseModel):
     question: str
+    session_id: str | None = None
+    history: list[HistoryTurn] | None = None
 
 
 @app.post("/ingest")
@@ -51,11 +61,21 @@ async def ingest(req: IngestRequest):
 
 @app.post("/query")
 async def query(req: QueryRequest):
+    history_dicts = None
+    if req.session_id:
+        session_memory.add_turn(req.session_id, "user", req.question)
+    if req.session_id and req.history:
+        history_dicts = [{"role": t.role, "content": t.content} for t in req.history]
+
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        partial(query_brainbank, req.question, shared_kuzu_db=get_kuzu_engine()),
+        partial(query_brainbank, req.question, shared_kuzu_db=get_kuzu_engine(), history=history_dicts),
     )
+
+    if req.session_id:
+        session_memory.add_turn(req.session_id, "assistant", result["answer"])
+
     return {
         "answer": result["answer"],
         "source_concepts": result["source_concepts"],

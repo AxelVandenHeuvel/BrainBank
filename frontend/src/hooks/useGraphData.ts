@@ -42,8 +42,8 @@ export function useGraphData(): UseGraphDataResult {
 
         const payload = await response.json();
 
-        if (!validateGraphApiResponse(payload)) {
-          throw new Error('Invalid graph payload');
+        if (!validateGraphApiResponse(payload) || payload.nodes.length === 0) {
+          throw new Error('Empty or invalid graph payload');
         }
 
         setResult({

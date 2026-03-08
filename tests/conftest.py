@@ -51,5 +51,5 @@ def mock_extract_concepts(text: str, doc_name: str) -> dict:
     }
 
 
-def mock_generate_answer(query: str, context: str, concepts: list[str]) -> str:
+def mock_generate_answer(query: str, context: str, concepts: list[str], history: list[dict] | None = None) -> str:
     return f"Mock answer for: {query}. Based on {len(concepts)} concepts."
