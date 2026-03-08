@@ -780,7 +780,7 @@ export function Graph3D({
       },
       { x: worldPos.x, y: worldPos.y, z: worldPos.z },
     );
-  }  }
+  }
 
   function handleNodeClick(node: GraphNode) {
     if (node.type === 'Document') {
@@ -1237,14 +1237,6 @@ export function Graph3D({
     return BASE_LINK_COLOR;
   }
 
-
-  function getLinkDash(link: GraphLink): [number, number] | undefined {
-    if (isGhostLink(link)) {
-      return [2, 1];
-    }
-
-    return undefined;
-  }
   function getLinkWidth(link: GraphLink): number {
     if (isGhostLink(link)) {
       return GHOST_EDGE_WIDTH;
@@ -1341,7 +1333,6 @@ export function Graph3D({
         nodeThreeObjectExtend={false}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
-        linkLineDash={getLinkDash}
         linkHoverPrecision={10}
         linkOpacity={0.82}
         nodeRelSize={5}
