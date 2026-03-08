@@ -45,24 +45,24 @@ export function EdgeDetailPanel({
 }: EdgeDetailPanelProps) {
   const sharedDocuments = relationship
     ? relationship.source_documents.filter((document) =>
-        relationship.shared_document_ids.includes(document.doc_id),
-      )
+      relationship.shared_document_ids.includes(document.doc_id),
+    )
     : [];
   const sourceOnlyDocuments = relationship
     ? relationship.source_documents.filter(
-        (document) => !relationship.shared_document_ids.includes(document.doc_id),
-      )
+      (document) => !relationship.shared_document_ids.includes(document.doc_id),
+    )
     : [];
   const targetOnlyDocuments = relationship
     ? relationship.target_documents.filter(
-        (document) => !relationship.shared_document_ids.includes(document.doc_id),
-      )
+      (document) => !relationship.shared_document_ids.includes(document.doc_id),
+    )
     : [];
 
   return (
     <aside
       data-testid="edge-detail-panel"
-      className="absolute bottom-4 left-4 z-10 flex max-h-[calc(100%-2rem)] w-[24rem] max-w-[calc(100%-2rem)] flex-col border border-white/[0.08] bg-black/95 p-4 shadow-xl backdrop-blur"
+      className="absolute bottom-4 left-4 z-10 flex max-h-[calc(100%-2rem)] w-[24rem] max-w-[calc(100%-2rem)] flex-col border border-white/[0.08] bg-black/95 p-4 backdrop-blur"
     >
       <div className="flex shrink-0 items-start justify-between gap-4">
         <div>

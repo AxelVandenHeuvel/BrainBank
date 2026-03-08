@@ -35,6 +35,13 @@ export interface GraphApiResponse {
   edges: GraphEdge[];
 }
 
+export interface GraphStatsResponse {
+  total_documents: number;
+  total_chunks: number;
+  total_concepts: number;
+  total_relationships: number;
+}
+
 export interface GraphLink {
   source: string | GraphNode;
   target: string | GraphNode;

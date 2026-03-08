@@ -8,6 +8,7 @@ import { IngestPanel } from './components/IngestPanel';
 import { SearchBar } from './components/SearchBar';
 import { TabBar } from './components/TabBar';
 import { useGraphData } from './hooks/useGraphData';
+import { useFileTree } from './hooks/useFileTree';
 import { findMatchingNodeIds } from './lib/graphView';
 import { getMockDocumentsForConcept } from './mock/mockGraph';
 import type { AssistantMessageSelection } from './types/chat';
@@ -31,13 +32,44 @@ export default function App() {
   const deferredQuery = useDeferredValue(query);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const matchCount = findMatchingNodeIds(data.nodes, deferredQuery).size;
 
   // Tab system state
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>(BRAIN_TAB_ID);
   const [highlightedConcept, setHighlightedConcept] = useState<string | null>(null);
-  const [fileTreeRefetchSignal, setFileTreeRefetchSignal] = useState(0);
+
+  const { tree, isLoading: isTreeLoading, refetch: refetchTree } = useFileTree(data);
+
+  const matchCount = useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLowerCase();
+    if (!normalizedQuery) return 0;
+
+    const nodeMatches = findMatchingNodeIds(data.nodes, deferredQuery);
+    const nodeMatchIds = new Set(nodeMatches);
+
+    // Also count matches in file tree that might not be in the graph nodes
+    let extraMatches = 0;
+    tree.forEach((concept) => {
+      // If concept name matches and it's not already a matching node
+      const isConceptMatching = concept.name.toLowerCase().includes(normalizedQuery);
+      const isNodeMatch = data.nodes.some(n => n.name === concept.name && nodeMatchIds.has(n.id));
+
+      if (isConceptMatching && !isNodeMatch) {
+        extraMatches++;
+      }
+
+      concept.documents.forEach((doc) => {
+        const isDocMatching = doc.name.toLowerCase().includes(normalizedQuery);
+        const isDocNodeMatch = data.nodes.some(n => n.id === doc.docId && nodeMatchIds.has(n.id));
+        if (isDocMatching && !isDocNodeMatch) {
+          extraMatches++;
+        }
+      });
+    });
+
+    return nodeMatches.size + extraMatches;
+  }, [data.nodes, tree, deferredQuery]);
+
   const [selectedAssistantMessage, setSelectedAssistantMessage] =
     useState<AssistantMessageSelection | null>(null);
   const [activeTraversal, setActiveTraversal] = useState<ActiveTraversal | null>(null);
@@ -57,11 +89,11 @@ export default function App() {
         return prev.map((tab) => (
           tab.id === docId
             ? {
-                ...tab,
-                title: name,
-                content: content || tab.content,
-                isLoading: options?.isLoading ?? false,
-              }
+              ...tab,
+              title: name,
+              content: content || tab.content,
+              isLoading: options?.isLoading ?? false,
+            }
             : tab
         ));
       }
@@ -106,45 +138,44 @@ export default function App() {
   function handleDocSaved(docId: string, newDocId?: string, currentContent?: string) {
     const wasNewTab = openTabs.find((t) => t.id === docId)?.isNew ?? false;
 
-    setOpenTabs((prev) =>
-      {
-        const idx = prev.findIndex((t) => t.id === docId);
-        if (idx === -1) return prev;
+    setOpenTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === docId);
+      if (idx === -1) return prev;
 
-        const savedTab = prev[idx];
+      const savedTab = prev[idx];
 
-        if (savedTab.isNew) {
-          const next = prev.filter((t) => t.id !== docId);
-          if (activeTabId === docId) {
-            if (next.length === 0) {
-              setActiveTabId(BRAIN_TAB_ID);
-            } else if (idx < next.length) {
-              setActiveTabId(next[idx].id);
-            } else {
-              setActiveTabId(next[next.length - 1].id);
-            }
+      if (savedTab.isNew) {
+        const next = prev.filter((t) => t.id !== docId);
+        if (activeTabId === docId) {
+          if (next.length === 0) {
+            setActiveTabId(BRAIN_TAB_ID);
+          } else if (idx < next.length) {
+            setActiveTabId(next[idx].id);
+          } else {
+            setActiveTabId(next[next.length - 1].id);
           }
-          return next;
         }
-
-        return prev.map((t) => {
-          if (t.id !== docId) return t;
-          // Update the tab id, preserve content so remount doesn't lose it, mark as not new
-          return {
-            ...t,
-            id: newDocId ?? docId,
-            isNew: false,
-            isLoading: false,
-            content: currentContent ?? t.content,
-          };
-        });
+        return next;
       }
+
+      return prev.map((t) => {
+        if (t.id !== docId) return t;
+        // Update the tab id, preserve content so remount doesn't lose it, mark as not new
+        return {
+          ...t,
+          id: newDocId ?? docId,
+          isNew: false,
+          isLoading: false,
+          content: currentContent ?? t.content,
+        };
+      });
+    }
     );
     if (!wasNewTab && newDocId && activeTabId === docId) {
       setActiveTabId(newDocId);
     }
     refetch();
-    setFileTreeRefetchSignal((n) => n + 1);
+    refetchTree();
   }
 
   function handleNewNote() {
@@ -232,15 +263,12 @@ export default function App() {
         {/* Collapsible sidebar */}
         <aside
           data-testid="sidebar"
-          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${
-            sidebarCollapsed ? 'w-[3rem]' : 'w-[22rem] p-4'
-          }`}
+          className={`flex shrink-0 flex-col border-r border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${sidebarCollapsed ? 'w-[3rem]' : 'w-[22rem] p-4'
+            }`}
         >
           {/* Branding + toggle */}
-          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} mb-4`}>
-            {!sidebarCollapsed && (
-              <span className="text-sm font-bold tracking-tight text-white">braen.</span>
-            )}
+          <div className={`flex items-center ${sidebarCollapsed ? 'flex-col gap-2' : 'justify-between'} mb-4`}>
+            <span className={`font-bold tracking-tight text-white ${sidebarCollapsed ? 'text-[10px]' : 'text-sm'}`}>braen.</span>
             <button
               type="button"
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -251,9 +279,8 @@ export default function App() {
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                className={`h-4 w-4 transition-transform duration-300 ${
-                  sidebarCollapsed ? 'rotate-180' : ''
-                }`}
+                className={`h-4 w-4 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''
+                  }`}
               >
                 <path
                   fillRule="evenodd"
@@ -267,11 +294,10 @@ export default function App() {
           {/* Sidebar content - hidden when collapsed */}
           <div
             data-testid="sidebar-content"
-            className={`flex flex-col gap-4 overflow-hidden transition-opacity duration-300 ${
-              sidebarCollapsed ? 'pointer-events-none h-0 opacity-0' : 'opacity-100'
-            }`}
+            className={`flex flex-col gap-4 overflow-hidden transition-opacity duration-300 ${sidebarCollapsed ? 'pointer-events-none h-0 opacity-0' : 'opacity-100'
+              }`}
           >
-            <IngestPanel onIngestComplete={() => { refetch(); setFileTreeRefetchSignal((n) => n + 1); }} onNewNote={handleNewNote} />
+            <IngestPanel onIngestComplete={() => { refetch(); refetchTree(); }} onNewNote={handleNewNote} />
 
             <section
               data-testid="sidebar-files-section"
@@ -281,10 +307,12 @@ export default function App() {
                 Files
               </p>
               <FileExplorer
+                tree={tree}
+                isLoading={isTreeLoading}
                 highlightedConcept={highlightedConcept}
                 onOpenDocument={handleFileExplorerOpenDocument}
-                refetchSignal={fileTreeRefetchSignal}
                 graphData={data}
+                searchQuery={deferredQuery}
               />
             </section>
           </div>
@@ -324,9 +352,9 @@ export default function App() {
               chatFocus={
                 selectedAssistantMessage
                   ? {
-                      sourceConcepts: selectedAssistantMessage.sourceConcepts,
-                      discoveryConcepts: selectedAssistantMessage.discoveryConcepts,
-                    }
+                    sourceConcepts: selectedAssistantMessage.sourceConcepts,
+                    discoveryConcepts: selectedAssistantMessage.discoveryConcepts,
+                  }
                   : null
               }
               onOpenDocument={openDocument}
@@ -359,31 +387,43 @@ export default function App() {
           )}
         </div>
 
-        {/* Chat overlay */}
+        {/* Chat sidebar */}
         <aside
-          data-testid="chat-overlay"
-          className={`relative min-h-[70vh] lg:absolute lg:inset-y-3 lg:right-3 lg:z-20 lg:w-[30rem] lg:min-h-0 ${
-            isChatOpen ? 'flex lg:pointer-events-auto' : 'hidden lg:flex lg:pointer-events-none'
-          }`}
-          aria-hidden={!isChatOpen}
+          data-testid="chat-sidebar"
+          className={`flex shrink-0 flex-col border-l border-white/[0.06] bg-black transition-all duration-300 ease-in-out lg:min-h-0 ${isChatOpen ? 'w-[24rem]' : 'w-[3rem]'
+            }`}
         >
-          <button
-            type="button"
-            aria-label={getChatToggleLabel(true)}
-            onClick={() => setIsChatOpen(false)}
-            className={`absolute left-0 top-1/2 z-10 -translate-x-[calc(100%-0.5rem)] -translate-y-1/2 rounded-l-md rounded-r-none border border-pink-500/20 border-r-0 bg-black px-2.5 py-4 text-[10px] font-semibold uppercase tracking-widest text-pink-400 transition hover:border-pink-500/40 hover:text-pink-300 [writing-mode:vertical-rl] ${
-              isChatOpen ? '' : 'pointer-events-none opacity-0'
-            }`}
-          >
-            Chat
-          </button>
+          {/* Chat header with toggle */}
+          <div className={`flex items-center ${isChatOpen ? 'justify-between px-4' : 'justify-center'} py-3`}>
+            {isChatOpen && (
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-pink-400">Chat</span>
+            )}
+            <button
+              type="button"
+              aria-label={getChatToggleLabel(isChatOpen)}
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className="text-neutral-500 transition hover:text-pink-400"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className={`h-4 w-4 transition-transform duration-300 ${isChatOpen ? '' : 'rotate-180'
+                  }`}
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+
+          {/* Chat content */}
           <div
-            hidden={!isChatOpen}
-            className={`flex w-full transition lg:h-full ${
-              isChatOpen
-                ? 'visible translate-x-0 opacity-100'
-                : 'invisible translate-x-8 opacity-0'
-            }`}
+            className={`flex min-h-0 flex-1 flex-col overflow-hidden transition-opacity duration-300 ${isChatOpen ? 'opacity-100' : 'pointer-events-none h-0 opacity-0'
+              }`}
           >
             <ChatPanel
               graphSource={source}
@@ -393,17 +433,6 @@ export default function App() {
             />
           </div>
         </aside>
-
-        {!isChatOpen ? (
-          <button
-            type="button"
-            aria-label={getChatToggleLabel(false)}
-            onClick={() => setIsChatOpen(true)}
-            className="fixed right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-md rounded-r-none border border-pink-500/20 border-r-0 bg-black px-2.5 py-4 text-[10px] font-semibold uppercase tracking-widest text-pink-400 transition hover:border-pink-500/40 hover:text-pink-300 [writing-mode:vertical-rl]"
-          >
-            Chat
-          </button>
-        ) : null}
       </div>
     </main>
   );

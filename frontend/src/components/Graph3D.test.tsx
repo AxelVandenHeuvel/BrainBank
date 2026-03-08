@@ -253,6 +253,18 @@ describe('Graph3D', () => {
           });
         }
 
+        if (url === '/api/stats') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              total_documents: 4,
+              total_chunks: 12,
+              total_concepts: 2,
+              total_relationships: 2,
+            }),
+          });
+        }
+
         return Promise.resolve({
           ok: true,
           json: async () => [],
@@ -436,16 +448,9 @@ describe('Graph3D', () => {
     expect(shape).toBeDefined();
     expect(shape.geometry.type).toBe('DodecahedronGeometry');
 
-    const expectedColorScore = String(graph.nodes[0].id)
-      .split('')
-      .reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 10000, 0) / 10000;
-    const expectedColor = new THREE.Color(0xff4444).lerp(
-      new THREE.Color(0x4444ff),
-      expectedColorScore,
-    );
-
     const material = shape.material as THREE.MeshStandardMaterial;
-    expect(material.color.getHex()).toBe(expectedColor.getHex());
+    expect(nodeObject?.userData.baseColor).toBeInstanceOf(THREE.Color);
+    expect(material.color.getHex()).toBe((nodeObject?.userData.baseColor as THREE.Color).getHex());
     expect(material.flatShading).toBe(true);
 
     expect(nodeObject?.children.some((child) => child instanceof THREE.Sprite)).toBe(true);
@@ -1303,6 +1308,29 @@ describe('Graph3D', () => {
     );
   });
 
+  it('renders nodes, edges, and backend document totals instead of control helper copy', async () => {
+    render(
+      <Graph3D
+        data={graph}
+        source="api"
+        query=""
+        hoveredNode={null}
+        onHoverNode={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const statsFooter = screen.getByTestId('graph-stats-footer');
+    expect(statsFooter).toHaveTextContent('3 nodes');
+    expect(statsFooter).toHaveTextContent('2 edges');
+    expect(statsFooter).toHaveTextContent('4 documents');
+    expect(statsFooter).not.toHaveTextContent('concept');
+    expect(screen.queryByText(/left-click:\s*rotate/i)).not.toBeInTheDocument();
+  });
+
   it('locks the graph shell and brain mesh to the chosen default colors without debug controls', async () => {
     render(
       <Graph3D
@@ -1615,6 +1643,7 @@ describe('Graph3D', () => {
       const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
         onNodeClick: (n: GraphNode) => void;
       };
+      vi.mocked(globalThis.fetch).mockClear();
 
       await act(async () => {
         onNodeClick(graph.nodes[2]); // Document node
@@ -1690,6 +1719,69 @@ describe('Graph3D', () => {
       const latestData = getLatestGraphProps().graphData;
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:abc123')).toBe(true);
       expect(latestData.nodes.some((n: GraphNode) => n.id === 'doc-expand:def456')).toBe(true);
+    });
+
+    it('keeps visible node and edge totals live while using backend document totals', async () => {
+      const mockDocs = [
+        { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
+        { doc_id: 'def456', name: 'Other Notes', full_text: 'other content' },
+      ];
+      globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+
+        if (url === '/api/stats') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              total_documents: 7,
+              total_chunks: 21,
+              total_concepts: 2,
+              total_relationships: 2,
+            }),
+          });
+        }
+
+        return Promise.resolve({
+          ok: true,
+          json: async () => mockDocs,
+        });
+      });
+
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+      };
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
+      const statsFooter = screen.getByTestId('graph-stats-footer');
+      expect(statsFooter).toHaveTextContent('5 nodes');
+      expect(statsFooter).toHaveTextContent('3 edges');
+      expect(statsFooter).toHaveTextContent('7 documents');
+      expect(statsFooter).not.toHaveTextContent('concept');
     });
 
     it('frames the expanded visible set instead of zooming all the way into just the clicked node', async () => {
@@ -1921,6 +2013,50 @@ describe('Graph3D', () => {
       expect(screen.queryByRole('button', { name: /back to graph/i })).toBeNull();
     });
 
+    it('shows a Document View badge only while the expanded document view is active', async () => {
+      render(
+        <Graph3D
+          data={graph}
+          source="api"
+          query=""
+          hoveredNode={null}
+          onHoverNode={vi.fn()}
+        />,
+      );
+      const { onNodeClick, onBackgroundClick } = graphPropsSpy.mock.calls.at(-1)?.[0] as {
+        onNodeClick: (n: GraphNode) => void;
+        onBackgroundClick: () => void;
+      };
+
+      expect(screen.queryByText('Document View')).toBeNull();
+
+      await act(async () => {
+        onNodeClick(graph.nodes[0]);
+        vi.advanceTimersByTime(100);
+        onNodeClick(graph.nodes[0]);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Document View')).toBeInTheDocument();
+      expect(
+        screen.getByText('Double click a document node to open it.'),
+      ).toBeInTheDocument();
+
+      act(() => {
+        onBackgroundClick();
+      });
+
+      expect(screen.queryByText('Document View')).toBeNull();
+      expect(
+        screen.queryByText('Nodes represent documents in this focused view.'),
+      ).toBeNull();
+    });
+
     it('double-clicking a doc-expand node opens the document in a tab', async () => {
       const mockDocs = [
         { doc_id: 'abc123', name: 'Math Notes', full_text: 'some content' },
@@ -2138,6 +2274,7 @@ describe('Graph3D', () => {
     const props = graphPropsSpy.mock.calls.at(-1)?.[0] as {
       onLinkClick: (link: GraphLink) => Promise<void> | void;
     };
+    vi.mocked(globalThis.fetch).mockClear();
 
     await act(async () => {
       await props.onLinkClick(graph.links[1]);
