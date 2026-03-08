@@ -135,10 +135,7 @@ const GHOST_EDGE_WIDTH = 0.55;
 const SEMANTIC_BRIDGE_WIDTH = 0.7;
 const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
 const BRAIN_MODEL_TARGET_DIAGONAL = 500;
-const PAGE_ACCENT_PINK = '#ec4899';
-const BRAIN_MESH_COLOR = new THREE.Color(PAGE_ACCENT_PINK)
-  .lerp(new THREE.Color('#ffffff'), 0.4)
-  .getHex();
+const DEFAULT_BRAIN_MESH_HEX = '#FFFFFF';
 const BRAIN_MESH_BASE_OPACITY = 0.06;
 const BRAIN_MESH_TOGGLE_FADE_DURATION_MS = 200;
 const NEURON_MODEL_TARGET_DIAGONAL = 10;
@@ -147,6 +144,7 @@ const EXPANDED_VIEW_DISTANCE = 78;
 const NODE_LABEL_Y_OFFSET = 16;
 const DISCOVERY_OUTLINE_COLOR = '#fbbf24';
 const DIVE_ZOOM_IN_DURATION_MS = 700;
+const DEFAULT_BACKGROUND_HEX = '#0E0F10';
 /** Seed initial position from a deterministic hash so the force simulation starts
  *  with nodes spread out instead of all at the origin. */
 function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
@@ -1218,7 +1216,7 @@ export function Graph3D({
       brainGroup.traverse((node) => {
         if (node instanceof THREE.Mesh) {
           const material = new THREE.MeshBasicMaterial({
-            color: BRAIN_MESH_COLOR,
+            color: DEFAULT_BRAIN_MESH_HEX,
             wireframe: true,
             transparent: true,
             opacity: BRAIN_MESH_BASE_OPACITY,
@@ -1276,7 +1274,6 @@ export function Graph3D({
       }
     };
   }, []);
-
 
   useEffect(() => {
     clampNodesWithinBrain(true);
@@ -1843,7 +1840,11 @@ export function Graph3D({
   return (
     <div
       ref={containerRef}
-      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/70 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      data-testid="graph-shell"
+      data-background-hex={DEFAULT_BACKGROUND_HEX}
+      data-brain-mesh-hex={DEFAULT_BRAIN_MESH_HEX}
+      className="relative h-full min-h-[26rem] overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_0_80px_rgba(8,47,73,0.45)] lg:min-h-0"
+      style={{ backgroundColor: DEFAULT_BACKGROUND_HEX }}
       onContextMenu={(event) => event.preventDefault()}
       onDoubleClick={(event) => {
         if (
@@ -1876,7 +1877,6 @@ export function Graph3D({
       onWheel={handleWheel}
       onTouchStart={handleInteraction}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_38%),radial-gradient(circle_at_bottom_left,_rgba(168,85,247,0.14),_transparent_35%)]" />
       <ForceGraph3D
         ref={graphRef as never}
         {...dashedLinkProps}
