@@ -28,6 +28,7 @@ def query_brainbank(
     kuzu_db_path: str = "./data/kuzu",
     shared_kuzu_db=None,
     config: RetrievalConfig | None = None,
+    history: list[dict] | None = None,
 ) -> dict:
     if config is None:
         config = RetrievalConfig()
@@ -76,6 +77,7 @@ def query_brainbank(
             user_query,
             context,
             list(source_concepts) + list(discovery_concepts),
+            history=history or None,
         )
 
         return QueryResult(

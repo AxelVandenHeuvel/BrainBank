@@ -110,9 +110,25 @@ def extract_concepts(text: str, doc_name: str) -> dict:
     return _parse_json_response(response.text)
 
 
-def generate_answer(query: str, context: str, concepts: list[str]) -> str:
+def _format_history(history: list[dict]) -> str:
+    lines = []
+    for turn in history:
+        role = turn.get("role", "user").capitalize()
+        lines.append(f"{role}: {turn.get('content', '')}")
+    return "\n".join(lines)
+
+
+def generate_answer(query: str, context: str, concepts: list[str], history: list[dict] | None = None) -> str:
+    history_section = ""
+    if history:
+        history_section = (
+            "Conversation history (use this to resolve references like 'it', 'that', 'the second one'):\n"
+            f"{_format_history(history)}\n\n"
+        )
+
     prompt = (
         "Answer the following question based on the provided context.\n\n"
+        f"{history_section}"
         f"Question: {query}\n\n"
         f"Context:\n{context}\n\n"
         f"Related concepts: {', '.join(concepts)}\n\n"
