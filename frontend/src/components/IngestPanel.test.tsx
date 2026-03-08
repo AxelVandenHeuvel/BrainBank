@@ -245,6 +245,24 @@ describe('IngestPanel', () => {
     expect(onIngestComplete).toHaveBeenCalled();
   });
 
+  it('shows Notion setup instructions when help is toggled', async () => {
+    const user = userEvent.setup();
+    render(<IngestPanel onIngestComplete={onIngestComplete} onNewNote={onNewNote} />);
+
+    await user.click(screen.getByRole('button', { name: /import from notion/i }));
+
+    // Help should not be visible initially
+    expect(screen.queryByText(/notion.so\/profile\/integrations/i)).not.toBeInTheDocument();
+
+    // Click the help toggle
+    await user.click(screen.getByRole('button', { name: /setup guide/i }));
+
+    // Setup instructions should now be visible
+    expect(screen.getByText(/notion.so\/profile\/integrations/i)).toBeInTheDocument();
+    expect(screen.getByText(/share.*page.*with your integration/i)).toBeInTheDocument();
+    expect(screen.getByText(/imported as markdown/i)).toBeInTheDocument();
+  });
+
   it('shows error on Notion import failure', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({

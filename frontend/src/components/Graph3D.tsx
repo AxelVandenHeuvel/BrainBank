@@ -494,7 +494,7 @@ export function Graph3D({
 
   const expandedNodeIds = useMemo<Set<string> | null>(() => {
     if (!expandedConcept) return null;
-    const ids = new Set<string>([expandedConcept.node.id]);
+    const ids = new Set<string>();
     expandedConcept.docs.forEach((doc) => ids.add(`doc-expand:${doc.doc_id}`));
     return ids;
   }, [expandedConcept]);
