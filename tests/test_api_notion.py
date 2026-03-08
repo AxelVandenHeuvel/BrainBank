@@ -8,9 +8,10 @@ from backend.api import app
 client = TestClient(app)
 
 
+@patch("backend.api.get_kuzu_engine", return_value=object())
 @patch("backend.api.ingest_markdown")
 @patch("backend.api.fetch_page_markdown")
-def test_import_single_page(mock_fetch, mock_ingest):
+def test_import_single_page(mock_fetch, mock_ingest, _mock_kuzu_engine):
     mock_fetch.return_value = ("My Page", "# Hello\n\nSome content")
     mock_ingest.return_value = {"doc_id": "abc", "chunks": 2, "concepts": ["Math"]}
 
@@ -29,10 +30,11 @@ def test_import_single_page(mock_fetch, mock_ingest):
     mock_ingest.assert_called_once_with("# Hello\n\nSome content", "My Page", shared_kuzu_db=ANY)
 
 
+@patch("backend.api.get_kuzu_engine", return_value=object())
 @patch("backend.api.ingest_markdown")
 @patch("backend.api.fetch_page_markdown")
 @patch("backend.api.fetch_database_page_ids")
-def test_import_database(mock_db_pages, mock_fetch, mock_ingest):
+def test_import_database(mock_db_pages, mock_fetch, mock_ingest, _mock_kuzu_engine):
     mock_db_pages.return_value = ["id-1", "id-2"]
     mock_fetch.side_effect = [
         ("Page 1", "Content 1"),

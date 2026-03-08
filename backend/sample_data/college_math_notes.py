@@ -10,7 +10,6 @@ from backend.services.embeddings import VECTOR_DIM
 SAMPLE_NOTES_DIR = (
     Path(__file__).resolve().parents[2] / "sample_data" / "college_math_notes"
 )
-CATALOG_PATH = SAMPLE_NOTES_DIR / "catalog.json"
 
 
 @dataclass(frozen=True)
@@ -66,7 +65,7 @@ def seed_college_math_notes(
     kuzu_db_path: str = "./data/kuzu",
 ) -> dict[str, int]:
     notes = load_college_math_notes()
-    lance_db, table = init_lancedb(lance_db_path)
+    _, table = init_lancedb(lance_db_path)
     kuzu_db, conn = init_kuzu(kuzu_db_path)
 
     try:

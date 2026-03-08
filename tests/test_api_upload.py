@@ -51,7 +51,7 @@ class TestUploadEndpoint:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_single_txt(self, mock_llm, mock_emb, mock_color):
+    def test_upload_single_txt(self, _mock_llm, _mock_emb, _mock_color):
         file = io.BytesIO(b"Some plain text notes about math")
         resp = client.post(
             "/ingest/upload",
@@ -65,7 +65,7 @@ class TestUploadEndpoint:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_single_md(self, mock_llm, mock_emb, mock_color):
+    def test_upload_single_md(self, _mock_llm, _mock_emb, _mock_color):
         file = io.BytesIO(b"# Physics\nForce = mass * acceleration")
         resp = client.post(
             "/ingest/upload",
@@ -80,7 +80,7 @@ class TestUploadEndpoint:
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     @patch("backend.api.pdf_to_text", return_value="Extracted PDF text about biology")
-    def test_upload_single_pdf(self, mock_pdf, mock_llm, mock_emb, mock_color):
+    def test_upload_single_pdf(self, mock_pdf, _mock_llm, _mock_emb, _mock_color):
         file = io.BytesIO(b"%PDF-fake-content")
         resp = client.post(
             "/ingest/upload",
@@ -96,7 +96,7 @@ class TestUploadEndpoint:
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     @patch("backend.api.pdf_to_text", return_value="PDF content")
-    def test_upload_multiple_files(self, mock_pdf, mock_llm, mock_emb, mock_color):
+    def test_upload_multiple_files(self, _mock_pdf, _mock_llm, _mock_emb, _mock_color):
         txt_file = io.BytesIO(b"Text notes")
         pdf_file = io.BytesIO(b"%PDF-fake")
         resp = client.post(
@@ -131,7 +131,7 @@ class TestZipUpload:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_zip_with_md_and_txt(self, mock_llm, mock_emb, mock_color):
+    def test_zip_with_md_and_txt(self, _mock_llm, _mock_emb, _mock_color):
         zip_bytes = _make_zip({
             "notes.md": b"# Markdown file",
             "readme.txt": b"Plain text file",
@@ -149,7 +149,7 @@ class TestZipUpload:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_zip_skips_macosx_and_hidden_files(self, mock_llm, mock_emb, mock_color):
+    def test_zip_skips_macosx_and_hidden_files(self, _mock_llm, _mock_emb, _mock_color):
         zip_bytes = _make_zip({
             "__MACOSX/._notes.md": b"mac metadata",
             ".hidden.md": b"hidden file",
@@ -178,7 +178,7 @@ class TestZipUpload:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_zip_skips_unsupported_files_silently(self, mock_llm, mock_emb, mock_color):
+    def test_zip_skips_unsupported_files_silently(self, _mock_llm, _mock_emb, _mock_color):
         zip_bytes = _make_zip({
             "image.png": b"\x89PNG",
             "data.csv": b"a,b,c",
@@ -200,7 +200,7 @@ class TestDuplicateDetection:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_skips_duplicate(self, mock_llm, mock_emb, mock_color, monkeypatch):
+    def test_upload_skips_duplicate(self, _mock_llm, _mock_emb, _mock_color, monkeypatch):
         """When find_existing_document returns a match, the file should be skipped."""
         monkeypatch.setattr(
             "backend.api.find_existing_document",
@@ -221,7 +221,7 @@ class TestDuplicateDetection:
     @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
     @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
     @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_proceeds_when_no_duplicate(self, mock_llm, mock_emb, mock_color):
+    def test_upload_proceeds_when_no_duplicate(self, _mock_llm, _mock_emb, _mock_color):
         """When find_existing_document returns None, the file should be ingested."""
         file = io.BytesIO(b"# New content")
         resp = client.post(

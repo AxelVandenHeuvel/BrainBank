@@ -36,7 +36,7 @@ export const mockGraphApiResponse: GraphApiResponse = {
   ],
 };
 
-export interface MockDocument {
+interface MockDocument {
   doc_id: string;
   name: string;
   full_text: string;

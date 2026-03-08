@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  CHAT_ACTIVE_SESSION_KEY,
-  CHAT_SESSIONS_KEY,
   loadActiveSessionId,
   loadSessions,
   saveActiveSessionId,
   saveSessions,
 } from './chatStorage';
+
+const CHAT_SESSIONS_KEY = 'brainbank.chat.sessions';
+const CHAT_ACTIVE_SESSION_KEY = 'brainbank.chat.activeSessionId';
 
 describe('chatStorage', () => {
   afterEach(() => {

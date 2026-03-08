@@ -2,14 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   NODE_TYPE_COLORS,
-  autoRotateCamera,
   buildAdjacencyMap,
   centerCameraOnTarget,
   conceptColorFromScore,
   findMatchingNodeIds,
   getConnectionCount,
-  setOrbitTarget,
-  zoomToNode,
 } from './graphView';
 import type { GraphData } from '../types/graph';
 
@@ -73,59 +70,6 @@ describe('graphView helpers', () => {
     expect(matches).toEqual(new Set(['concept:Calculus']));
   });
 
-  it('rotates the camera around a fixed y-axis target', () => {
-    let currentPosition = { x: 120, y: 25, z: 10 };
-    const cameraPosition = vi.fn((position?: typeof currentPosition) => {
-      if (!position) {
-        return currentPosition;
-      }
-
-      currentPosition = position;
-      return currentPosition;
-    });
-    const fgRef = {
-      current: {
-        cameraPosition,
-      },
-    };
-
-    autoRotateCamera(fgRef, { x: 20, y: 5, z: 10 }, 0.01);
-
-    expect(cameraPosition).toHaveBeenLastCalledWith({
-      x: expect.closeTo(119.995, 3),
-      y: 25,
-      z: expect.closeTo(10.9999, 3),
-    }, { x: 20, y: 5, z: 10 });
-  });
-
-  it('zooms the camera to a node', () => {
-    const cameraPosition = vi.fn();
-    const fgRef = {
-      current: {
-        cameraPosition,
-      },
-    };
-
-    zoomToNode(
-      fgRef,
-      {
-        id: 'concept:Calculus',
-        type: 'Concept',
-        name: 'Calculus',
-        x: 10,
-        y: 5,
-        z: -5,
-      },
-      120,
-    );
-
-    expect(cameraPosition).toHaveBeenCalledWith(
-      { x: 130, y: 35, z: 115 },
-      { x: 10, y: 5, z: -5 },
-      1200,
-    );
-  });
-
   it('centers the home view camera on a target', () => {
     const cameraPosition = vi.fn();
     const fgRef = {
@@ -148,22 +92,4 @@ describe('graphView helpers', () => {
     );
   });
 
-  it('sets the orbit controls target to a fixed point', () => {
-    const set = vi.fn();
-    const update = vi.fn();
-    const fgRef = {
-      current: {
-        cameraPosition: vi.fn(),
-        controls: () => ({
-          target: { set },
-          update,
-        }),
-      },
-    };
-
-    setOrbitTarget(fgRef, { x: 1, y: 2, z: 3 });
-
-    expect(set).toHaveBeenCalledWith(1, 2, 3);
-    expect(update).toHaveBeenCalled();
-  });
 });
