@@ -1,3 +1,6 @@
+import pytest
+
+import backend.db.kuzu as kuzu_module
 from backend.db.kuzu import init_kuzu
 
 
@@ -27,6 +30,19 @@ class TestInitKuzu:
         db1.close()
         db2, conn2 = init_kuzu(kuzu_path)
         assert conn2 is not None
+
+    def test_surfaces_a_clear_error_when_kuzu_open_fails_with_binding_index_error(
+        self,
+        monkeypatch,
+        kuzu_path,
+    ):
+        def raise_index_error(_db_path):
+            raise IndexError("unordered_map::at: key not found")
+
+        monkeypatch.setattr(kuzu_module.kuzu, "Database", raise_index_error)
+
+        with pytest.raises(RuntimeError, match="Another process may already be using it"):
+            init_kuzu(kuzu_path)
 
     # --- Node table tests ---
 

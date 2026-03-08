@@ -49,7 +49,7 @@ LanceDB is the sole source of document identity and the concept→document link.
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`.
+Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.) and `reason` is optional edge metadata. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. When the current Kuzu Python binding reports a same-path concurrent-open failure as `IndexError: unordered_map::at: key not found`, `backend/db/kuzu.py` now translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -98,7 +98,7 @@ backend/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
     lance.py                - LanceDB init + chunks table schema + duplicate document lookup
-    kuzu.py                 - Kuzu init + graph schema (nodes + edges)
+    kuzu.py                 - Kuzu init + graph schema (nodes + edges) + clear concurrent-open error translation
   services/
     embeddings.py           - Sentence-transformer embedding functions
     llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
