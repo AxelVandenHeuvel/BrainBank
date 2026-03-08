@@ -63,7 +63,7 @@ frontend/
     human-brain.glb          - Embedded glTF brain wireframe asset
   src/
     main.tsx                 - React entrypoint
-    App.tsx                  - Layout shell, view switching (graph/editor), legend, search
+    App.tsx                  - Layout shell, view switching (graph/editor), search
     index.css                - Tailwind import + global theme
     components/
       ChatPanel.tsx          - Right-side chat UI with session list and active conversation

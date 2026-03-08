@@ -95,8 +95,8 @@ interface Graph3DProps {
   data: GraphData;
   source: GraphSource;
   query: string;
-  hoveredNode: GraphNode | null;
-  onHoverNode: (node: GraphNode | null) => void;
+  hoveredNode?: GraphNode | null;
+  onHoverNode?: (node: GraphNode | null) => void;
 }
 
 interface SelectedRelationshipEdge {
@@ -154,9 +154,12 @@ export function Graph3D({
   data,
   source: graphSource,
   query,
-  hoveredNode,
-  onHoverNode,
+  hoveredNode: hoveredNodeProp,
+  onHoverNode: onHoverNodeProp,
 }: Graph3DProps) {
+  const [internalHoveredNode, setInternalHoveredNode] = useState<GraphNode | null>(null);
+  const hoveredNode = hoveredNodeProp ?? internalHoveredNode;
+  const onHoverNode = onHoverNodeProp ?? setInternalHoveredNode;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphHandle | null>(null);
   const brainContainmentRef = useRef<BrainContainment | null>(null);
