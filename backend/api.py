@@ -105,6 +105,11 @@ async def query(req: QueryRequest):
         "answer": result["answer"],
         "source_concepts": result["source_concepts"],
         "discovery_concepts": result["discovery_concepts"],
+        "source_documents": result["source_documents"],
+        "discovery_documents": result["discovery_documents"],
+        "source_chunks": result["source_chunks"],
+        "discovery_chunks": result["discovery_chunks"],
+        "supporting_relationships": result["supporting_relationships"],
     }
 
 
@@ -114,7 +119,13 @@ async def query_test_llm(req: QueryRequest):
     answer = await loop.run_in_executor(None, partial(generate_test_answer, req.question))
     return {
         "answer": answer,
+        "source_concepts": [],
         "discovery_concepts": [],
+        "source_documents": [],
+        "discovery_documents": [],
+        "source_chunks": [],
+        "discovery_chunks": [],
+        "supporting_relationships": [],
         "mode": "llm_test",
     }
 

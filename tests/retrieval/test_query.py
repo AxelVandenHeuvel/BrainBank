@@ -55,11 +55,32 @@ class TestQueryBrainbank:
 
     @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
+    def test_returns_answer_provenance(self, _mock_emb, _mock_llm, lance_path, kuzu_path):
+        self._ingest_sample(lance_path, kuzu_path)
+        result = query_brainbank("What is calculus?", lance_path, kuzu_path)
+
+        assert result["source_documents"]
+        assert result["source_documents"][0]["name"] == "Math Notes"
+        assert result["source_chunks"]
+        assert result["source_chunks"][0]["doc_name"] == "Math Notes"
+        assert result["supporting_relationships"]
+        assert any(
+            relationship["source"] == "Calculus" and relationship["target"] == "Derivatives"
+            for relationship in result["supporting_relationships"]
+        )
+
+    @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
+    @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
     def test_empty_db_returns_no_results(self, _mock_emb, _mock_llm, lance_path, kuzu_path):
         result = query_brainbank("What is calculus?", lance_path, kuzu_path)
         assert result["answer"] == "No ingested documents found. Upload or import notes before querying BrainBank."
         assert result["source_concepts"] == []
         assert result["discovery_concepts"] == []
+        assert result["source_documents"] == []
+        assert result["discovery_documents"] == []
+        assert result["source_chunks"] == []
+        assert result["discovery_chunks"] == []
+        assert result["supporting_relationships"] == []
 
     @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)

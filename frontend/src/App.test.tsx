@@ -50,7 +50,13 @@ vi.mock('./components/DocumentEditor', () => ({
 }));
 
 vi.mock('./components/ChatPanel', () => ({
-  ChatPanel: ({ graphSource }: { graphSource: 'api' | 'mock' }) => {
+  ChatPanel: ({
+    graphSource,
+    onOpenDocument,
+  }: {
+    graphSource: 'api' | 'mock';
+    onOpenDocument?: (docId: string, name: string) => void;
+  }) => {
     const [draft, setDraft] = useState('');
 
     return (
@@ -62,6 +68,9 @@ vi.mock('./components/ChatPanel', () => ({
           onChange={(event) => setDraft(event.target.value)}
         />
         <div>{draft || 'Empty draft'}</div>
+        <button type="button" onClick={() => onOpenDocument?.('doc-1', 'Architecture Notes')}>
+          Open cited doc
+        </button>
       </div>
     );
   },
@@ -193,5 +202,26 @@ describe('App', () => {
 
     expect(screen.queryByTestId('document-editor')).not.toBeInTheDocument();
     expect(screen.getByTestId('graph-scene')).toBeVisible();
+  });
+
+  it('opens a cited chat document in the document editor', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        doc_id: 'doc-1',
+        name: 'Architecture Notes',
+        full_text: '# Architecture Notes',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Open cited doc' }));
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/doc-1');
+    expect(await screen.findByTestId('document-editor')).toBeInTheDocument();
+    expect(screen.getByText('doc-1')).toBeInTheDocument();
   });
 });

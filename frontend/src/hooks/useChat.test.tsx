@@ -16,6 +16,25 @@ describe('useChat', () => {
         answer: 'Calculus is the study of change.',
         source_concepts: ['Calculus'],
         discovery_concepts: ['Derivatives', 'Integrals'],
+        source_documents: [{ doc_id: 'doc-1', name: 'Math Notes' }],
+        discovery_documents: [{ doc_id: 'doc-2', name: 'Derivative Rules' }],
+        source_chunks: [
+          {
+            chunk_id: 'chunk-1',
+            doc_id: 'doc-1',
+            doc_name: 'Math Notes',
+            text: 'Calculus is the study of change.',
+          },
+        ],
+        discovery_chunks: [],
+        supporting_relationships: [
+          {
+            source: 'Calculus',
+            target: 'Derivatives',
+            type: 'RELATED_TO',
+            reason: 'Derivatives are part of calculus.',
+          },
+        ],
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -43,6 +62,25 @@ describe('useChat', () => {
         content: 'Calculus is the study of change.',
         sourceConcepts: ['Calculus'],
         discoveryConcepts: ['Derivatives', 'Integrals'],
+        sourceDocuments: [{ docId: 'doc-1', name: 'Math Notes' }],
+        discoveryDocuments: [{ docId: 'doc-2', name: 'Derivative Rules' }],
+        sourceChunks: [
+          {
+            chunkId: 'chunk-1',
+            docId: 'doc-1',
+            docName: 'Math Notes',
+            text: 'Calculus is the study of change.',
+          },
+        ],
+        discoveryChunks: [],
+        supportingRelationships: [
+          {
+            source: 'Calculus',
+            target: 'Derivatives',
+            type: 'RELATED_TO',
+            reason: 'Derivatives are part of calculus.',
+          },
+        ],
       },
     ]);
   });
@@ -65,6 +103,11 @@ describe('useChat', () => {
         content: 'I could not reach BrainBank right now.',
         sourceConcepts: [],
         discoveryConcepts: [],
+        sourceDocuments: [],
+        discoveryDocuments: [],
+        sourceChunks: [],
+        discoveryChunks: [],
+        supportingRelationships: [],
       },
     ]);
   });

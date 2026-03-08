@@ -148,6 +148,22 @@ export default function App() {
     }
   }
 
+  function handleChatOpenDocument(docId: string, name: string) {
+    openDocument(docId, name, '');
+
+    fetch(`/api/documents/${encodeURIComponent(docId)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('fetch failed');
+        return res.json();
+      })
+      .then((doc: { doc_id: string; name: string; full_text: string }) => {
+        setOpenTabs((prev) =>
+          prev.map((tab) => (tab.id === docId ? { ...tab, content: doc.full_text } : tab)),
+        );
+      })
+      .catch(() => {});
+  }
+
   const allTabs = useMemo<OpenTab[]>(() => {
     const brainTab: OpenTab = { id: BRAIN_TAB_ID, title: 'Brain', content: '', isNew: false, closable: false };
     return [brainTab, ...openTabs];
@@ -304,7 +320,7 @@ export default function App() {
                 : 'invisible translate-x-8 opacity-0'
             }`}
           >
-            <ChatPanel graphSource={source} />
+            <ChatPanel graphSource={source} onOpenDocument={handleChatOpenDocument} />
           </div>
         </aside>
 

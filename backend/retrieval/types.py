@@ -82,14 +82,74 @@ class GlobalSearchResult:
 
 
 @dataclass(frozen=True)
+class DocumentCitation:
+    doc_id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class ChunkCitation:
+    chunk_id: str
+    doc_id: str
+    doc_name: str
+    text: str
+
+
+@dataclass(frozen=True)
+class RelationshipCitation:
+    source: str
+    target: str
+    type: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class QueryResult:
     answer: str
     source_concepts: tuple[str, ...]
     discovery_concepts: tuple[str, ...]
+    source_documents: tuple[DocumentCitation, ...] = ()
+    discovery_documents: tuple[DocumentCitation, ...] = ()
+    source_chunks: tuple[ChunkCitation, ...] = ()
+    discovery_chunks: tuple[ChunkCitation, ...] = ()
+    supporting_relationships: tuple[RelationshipCitation, ...] = ()
 
     def to_response(self) -> dict:
         return {
             "answer": self.answer,
             "source_concepts": list(self.source_concepts),
             "discovery_concepts": list(self.discovery_concepts),
+            "source_documents": [
+                {"doc_id": doc.doc_id, "name": doc.name} for doc in self.source_documents
+            ],
+            "discovery_documents": [
+                {"doc_id": doc.doc_id, "name": doc.name} for doc in self.discovery_documents
+            ],
+            "source_chunks": [
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "doc_id": chunk.doc_id,
+                    "doc_name": chunk.doc_name,
+                    "text": chunk.text,
+                }
+                for chunk in self.source_chunks
+            ],
+            "discovery_chunks": [
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "doc_id": chunk.doc_id,
+                    "doc_name": chunk.doc_name,
+                    "text": chunk.text,
+                }
+                for chunk in self.discovery_chunks
+            ],
+            "supporting_relationships": [
+                {
+                    "source": relationship.source,
+                    "target": relationship.target,
+                    "type": relationship.type,
+                    "reason": relationship.reason,
+                }
+                for relationship in self.supporting_relationships
+            ],
         }

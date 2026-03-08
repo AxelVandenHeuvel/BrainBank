@@ -5,6 +5,7 @@ from backend.db.lance import init_lancedb
 from backend.retrieval.context import build_local_context
 from backend.retrieval.global_search import run_global_search
 from backend.retrieval.local_search import run_local_search
+from backend.retrieval.provenance import build_local_answer_provenance
 from backend.retrieval.routing import QueryRoute, classify_query_route
 from backend.retrieval.types import QueryResult, RetrievalConfig
 from backend.services.embeddings import embed_query
@@ -81,6 +82,7 @@ def query_brainbank(
         source_concepts = tuple(hit.name for hit in search_result.source_concepts)
         discovery_concepts = tuple(hit.name for hit in search_result.discovery_concepts)
         context = build_local_context(search_result, config.max_context_words)
+        provenance = build_local_answer_provenance(search_result, conn, config.max_context_words)
         answer = generate_answer(
             user_query,
             context,
@@ -92,6 +94,11 @@ def query_brainbank(
             answer=answer,
             source_concepts=source_concepts,
             discovery_concepts=discovery_concepts,
+            source_documents=provenance["source_documents"],
+            discovery_documents=provenance["discovery_documents"],
+            source_chunks=provenance["source_chunks"],
+            discovery_chunks=provenance["discovery_chunks"],
+            supporting_relationships=provenance["supporting_relationships"],
         ).to_response()
     finally:
         conn.close()

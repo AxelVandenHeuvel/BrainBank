@@ -1,13 +1,19 @@
 import { useState } from 'react';
 
 import { useChat } from '../hooks/useChat';
+import type {
+  ChatChunkCitation,
+  ChatDocumentCitation,
+  ChatRelationshipCitation,
+} from '../types/chat';
 import type { GraphSource } from '../types/graph';
 
 interface ChatPanelProps {
   graphSource: GraphSource;
+  onOpenDocument?: (docId: string, name: string) => void;
 }
 
-export function ChatPanel({ graphSource }: ChatPanelProps) {
+export function ChatPanel({ graphSource, onOpenDocument }: ChatPanelProps) {
   const {
     messages,
     sessions,
@@ -124,6 +130,32 @@ export function ChatPanel({ graphSource }: ChatPanelProps) {
                             concepts={message.discoveryConcepts}
                           />
                         ) : null}
+                        {message.sourceDocuments?.length ? (
+                          <DocumentSection
+                            title="Source documents"
+                            documents={message.sourceDocuments}
+                            onOpenDocument={onOpenDocument}
+                          />
+                        ) : null}
+                        {message.discoveryDocuments?.length ? (
+                          <DocumentSection
+                            title="Discovery documents"
+                            documents={message.discoveryDocuments}
+                            onOpenDocument={onOpenDocument}
+                          />
+                        ) : null}
+                        {(message.sourceChunks?.length || message.discoveryChunks?.length) ? (
+                          <ChunkSection
+                            title="Evidence excerpts"
+                            chunks={[...(message.sourceChunks ?? []), ...(message.discoveryChunks ?? [])]}
+                          />
+                        ) : null}
+                        {message.supportingRelationships?.length ? (
+                          <RelationshipSection
+                            title="Supporting relationships"
+                            relationships={message.supportingRelationships}
+                          />
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -181,6 +213,92 @@ function ConceptSection({ title, concepts }: ConceptSectionProps) {
           >
             {concept}
           </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface DocumentSectionProps {
+  title: string;
+  documents: ChatDocumentCitation[];
+  onOpenDocument?: (docId: string, name: string) => void;
+}
+
+function DocumentSection({ title, documents, onOpenDocument }: DocumentSectionProps) {
+  return (
+    <section>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+        {title}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {documents.map((document) => (
+          <button
+            key={`${title}-${document.docId}`}
+            type="button"
+            onClick={() => onOpenDocument?.(document.docId, document.name)}
+            className="border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200 transition hover:border-emerald-300/40"
+          >
+            {document.name}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface ChunkSectionProps {
+  title: string;
+  chunks: ChatChunkCitation[];
+}
+
+function ChunkSection({ title, chunks }: ChunkSectionProps) {
+  return (
+    <section>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+        {title}
+      </p>
+      <div className="mt-2 space-y-2">
+        {chunks.map((chunk) => (
+          <div
+            key={`${title}-${chunk.chunkId}`}
+            className="border border-white/[0.06] bg-black/40 px-3 py-2 text-xs leading-5 text-neutral-300"
+          >
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+              {chunk.docName}
+            </p>
+            <p>{chunk.text}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface RelationshipSectionProps {
+  title: string;
+  relationships: ChatRelationshipCitation[];
+}
+
+function RelationshipSection({ title, relationships }: RelationshipSectionProps) {
+  return (
+    <section>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+        {title}
+      </p>
+      <div className="mt-2 space-y-2">
+        {relationships.map((relationship) => (
+          <div
+            key={`${title}-${relationship.source}-${relationship.target}-${relationship.type}`}
+            className="border border-white/[0.06] bg-black/40 px-3 py-2 text-xs leading-5 text-neutral-300"
+          >
+            <p className="font-medium text-neutral-100">
+              {relationship.source} {'->'} {relationship.target}
+            </p>
+            {relationship.reason ? (
+              <p className="mt-1 text-neutral-400">{relationship.reason}</p>
+            ) : null}
+          </div>
         ))}
       </div>
     </section>
