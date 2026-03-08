@@ -1,10 +1,24 @@
-import { startTransition, useDeferredValue, useState } from 'react';
+import { Component, lazy, startTransition, Suspense, useDeferredValue, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import { ChatPanel } from './components/ChatPanel';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
-import { NoteEditor } from './components/NoteEditor';
 import { SearchBar } from './components/SearchBar';
+
+const NoteEditor = lazy(() =>
+  import('./components/NoteEditor').then((m) => ({ default: m.NoteEditor })),
+);
+
+class EditorErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(err: Error) { return { error: err.message }; }
+  componentDidCatch() { this.props.onError(); }
+  render() {
+    if (this.state.error) return <div className="p-8 text-red-400">Editor failed to load: {this.state.error}</div>;
+    return this.props.children;
+  }
+}
 import { useGraphData } from './hooks/useGraphData';
 import { NODE_TYPE_COLORS, findMatchingNodeIds } from './lib/graphView';
 import type { GraphNode, GraphNodeType } from './types/graph';
@@ -124,7 +138,14 @@ export default function App() {
 
         <section className="min-h-[70vh] lg:min-h-0 lg:overflow-hidden">
           {view === 'editor' ? (
-            <NoteEditor onSave={handleNoteSaved} onCancel={() => setView('graph')} />
+            <EditorErrorBoundary onError={() => setView('graph')}>
+              <Suspense fallback={<div className="flex h-full items-center justify-center text-slate-400">Loading editor...</div>}>
+                <NoteEditor
+                  onSave={handleNoteSaved}
+                  onCancel={() => setView('graph')}
+                />
+              </Suspense>
+            </EditorErrorBoundary>
           ) : (
             <Graph3D
               data={data}
