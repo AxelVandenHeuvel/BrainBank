@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in LanceDB, and stores a weighted concept co-occurrence graph in Kuzu. Query-time retrieval now supports two GraphRAG paths behind the same `POST /query` contract: a local path that expands over weighted `RELATED_TO` edges and pulls latent documents through centroid search, and a global path that answers broad summary questions from persisted community summaries. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend.
 
 ## Stack
 
@@ -17,6 +17,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
 | Clustering  | igraph + leidenalg      | Weighted Leiden community detection |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
+| Graph Analytics | NetworkX           | Batch Louvain community detection |
 | Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
 | LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
 
@@ -45,6 +46,27 @@ LanceDB is the sole source of document identity and the concept-to-document link
 
 `backend/services/embeddings.py` computes this centroid by averaging all chunk `vector` values that share the same `doc_id`.
 
+### LanceDB: `concept_centroids` table
+
+| Column          | Type         | Description                                       |
+|-----------------|--------------|---------------------------------------------------|
+| concept_name    | STRING       | Canonical concept name                            |
+| centroid_vector | FLOAT32[384] | Mean embedding vector across chunks tagged with that concept |
+| document_count  | INT32        | Number of distinct documents containing the concept |
+
+This table is rebuilt in batch and becomes the preferred local GraphRAG seed source when present. If it is empty, retrieval falls back to scoring concepts from chunk-seed hits.
+
+### LanceDB: `community_summaries` table
+
+| Column          | Type         | Description                                       |
+|-----------------|--------------|---------------------------------------------------|
+| community_id    | STRING       | Stable batch-assigned id such as `community:0001` |
+| member_concepts | STRING[]     | Sorted concept names in the detected community    |
+| summary         | STRING       | LLM-generated summary of the community            |
+| summary_vector  | FLOAT32[384] | Embedding of the summary text                     |
+
+This table powers the global GraphRAG route. It is refreshed only by the batch rebuild step, not by normal ingest.
+
 ### Kuzu: Graph Schema
 
 **Node Tables:**
@@ -60,7 +82,7 @@ LanceDB is the sole source of document identity and the concept-to-document link
 - `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
 - `HAS_TASK(Project -> Task)` - project contains a task
 
-Documents are **not** stored in Kuzu. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` now emits a stable edge shape where `type` is the relationship kind (`RELATED_TO`, `MENTIONS`, etc.), `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. For concept-to-concept edges, the human-readable relationship text lives in `reason`, not `type`. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend now opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
+Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path.
 
 ## Project Structure
 
@@ -105,11 +127,12 @@ frontend/
 backend/
   api.py                    - FastAPI /ingest and /query endpoints
   api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/stats, /api/concepts/{name}/documents
+  graph_visualization.py    - Terminal-friendly concept graph loading from Kuzu with LanceDB fallback and ASCII rendering
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
   db/
-    lance.py                - LanceDB init + chunks/document_centroids schemas + duplicate document lookup
+    lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup
     kuzu.py                 - Kuzu init + graph schema (nodes + edges) + update_node_communities() + clear concurrent-open error translation
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
@@ -125,16 +148,22 @@ backend/
   session/
     memory.py               - In-memory session store with bounded turn window and TTL
   retrieval/
-    context.py              - Context dedupe + budgeted prompt assembly for retrieval
-    local_search.py         - Seed retrieval, graph expansion, and discovery chunk ranking
-    query.py                - Query orchestration: embed -> local search -> context -> answer
+    artifacts.py            - Batch rebuild for concept centroids and community summaries
+    context.py              - Deterministic context assembly for local/global GraphRAG
+    global_search.py        - Community-summary retrieval plus map/reduce answer synthesis
+    latent_discovery.py     - Shared concept-centroid to document-centroid discovery helpers
+    local_search.py         - Local GraphRAG seed selection, weighted expansion, and latent evidence retrieval
+    query.py                - Route-aware query orchestration
+    routing.py              - LOCAL vs GLOBAL query classification
     types.py                - Retrieval dataclasses and internal config defaults
 sample_data/
   college_math_notes/
     catalog.json            - Metadata for the sample math note corpus
     *.md                    - College student math note documents for document-opening tests
 scripts/
+  print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
+  rebuild_graphrag_artifacts.py - Recomputes concept centroids and community summaries in batch
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
@@ -301,6 +330,38 @@ kuzu.update_node_communities() -- SET c.community_id on every Concept node
 
 Key behavior: Concepts are **upserted** via Cypher `MERGE`. Documents are never stored in Kuzu — document identity and concept tagging live entirely in LanceDB chunks.
 
+## GraphRAG Artifact Rebuild Flow
+
+```
+Input: current LanceDB chunks + current Kuzu weighted concept graph
+  |
+  v
+retrieval.artifacts._build_concept_centroid_records() -- average chunk vectors per concept
+  |
+  v
+LanceDB replace concept_centroids -- persist concept_name, centroid_vector, document_count
+  |
+  v
+retrieval.artifacts._load_weighted_concept_graph() -- export Concept nodes + RELATED_TO.weight
+  |
+  v
+networkx.louvain_communities() -- deterministic weighted community detection (seed=0)
+  |
+  v
+retrieval.artifacts._select_representative_evidence() -- choose chunk texts for each community
+  |
+  v
+llm.generate_community_summary() -- summarize each community from member concepts + evidence
+  |
+  v
+embeddings.embed_texts() -- embed each summary
+  |
+  v
+LanceDB replace community_summaries -- persist community summaries for global GraphRAG
+```
+
+This rebuild is intentionally batch-only. Normal ingest updates `chunks`, `document_centroids`, `Concept` nodes, and weighted `RELATED_TO` edges immediately, but `concept_centroids` and `community_summaries` are refreshed only when `scripts/rebuild_graphrag_artifacts.py` is run.
+
 ## Notion Import Flow (`POST /ingest/notion`)
 
 ```
@@ -360,31 +421,44 @@ api.py -> get_kuzu_engine() -- reuse the shared Kuzu Database handle
 embeddings.embed_query() -- embed question to 384-dim vector
   |
   v
-local_search.build_chunk_seed_set() -- top 5 nearest chunks + ordered source concepts
+route.classify_query_route() -- GLOBAL for overview/theme prompts, otherwise LOCAL
   |
-  v
-local_search.expand_related_concepts() -- configurable BFS over RELATED_TO edges
-  v
-local_search.select_discovery_chunks() -- ranked extra chunks for discovery concepts
-  v
-context.assemble_context_chunks() -- seed chunks first, then discovery chunks,
-  |                                 dedupe by chunk id/text, apply word budget
+  +-- GLOBAL and community_summaries present?
+  |     |
+  |     v
+  |   global_search.run_global_search()
+  |     |
+  |     +-- LanceDB search community_summaries by query vector
+  |     +-- llm.generate_partial_answer() once per selected community
+  |     +-- llm.synthesize_answers() if more than one community matched
+  |     v
+  |   Output: { answer, source_concepts, discovery_concepts=[] }
   |
-  v
-context.build_context_text() -- join selected chunk texts with separators
-  |
-  v
-llm.generate_answer() -- Gemini or Ollama generates grounded answer
-  |                       includes conversation history for reference resolution
-  |
-  v
-api.py -> record assistant turn in SessionMemory (if session_id present)
-  |
-  v
-Output: { answer, source_concepts, discovery_concepts }
+  +-- otherwise LOCAL
+        |
+        v
+      local_search.run_local_search()
+        |
+        +-- search concept_centroids when present, else build chunk seeds from top chunk hits
+        +-- score source concepts from seed evidence
+        +-- weighted BFS over RELATED_TO edges up to configured hop depth
+        +-- concept-centroid -> document-centroid search for latent documents
+        +-- select top chunks per latent document
+        v
+      context.build_local_context() -- source concepts, discovery concepts, seed evidence, latent evidence
+        |
+        v
+      llm.generate_answer() -- grounded final answer from the assembled local GraphRAG context
+        |                    includes conversation history when provided
+        |
+        v
+      api.py -> record assistant turn in SessionMemory (if session_id present)
+        |
+        v
+      Output: { answer, source_concepts, discovery_concepts }
 ```
 
-The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. The retrieval path is still local-search-only in this phase, but it is now split into explicit steps with an internal `RetrievalConfig` for seed limits, graph-hop depth, discovery-chunk limits, and context budget. Default behavior stays equivalent to the old path: top-5 chunk seeds, 1-hop graph expansion, and the same external `/query` response shape. When `history` is provided, the conversation turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
+The query route no longer opens Kuzu from path on every request. Instead it reuses the module-level `kuzu.Database` from the API layer and creates a short-lived `kuzu.Connection` inside the retrieval worker thread. Retrieval still preserves the stable `/query` contract, but internally it is now route-aware and GraphRAG-specific. Local retrieval defaults to chunk/document artifacts already produced during ingest and upgrades itself when `concept_centroids` exists. Global retrieval only activates when `community_summaries` exists; otherwise overview-style questions transparently fall back to the local path. When `session_id` and `history` are provided, the API stores turns in `SessionMemory`, and the history turns are prepended to the LLM prompt so the model can resolve follow-up references against prior turns.
 
 ## API Endpoints
 
@@ -431,7 +505,8 @@ The query route no longer opens Kuzu from path on every request. Instead it reus
 
 ### `GET /api/discovery/latent/{concept_name}`
 - Returns: `{"concept_name": "...", "results": [{"doc_name", "similarity_score"}]}`
-- Computes a concept centroid from chunk vectors tagged with `concept_name`.
+- Uses the same latent discovery helper as the local GraphRAG query path.
+- Reads a persisted concept centroid when available, otherwise computes one from chunk vectors tagged with `concept_name`.
 - Searches `document_centroids` by vector similarity.
 - Excludes documents that already contain `concept_name`.
 - Returns at most 5 latent-similar documents.
@@ -469,5 +544,4 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
-
 

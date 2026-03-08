@@ -56,6 +56,17 @@ def _generate_ollama_response(prompt: str) -> str:
     return data["response"]
 
 
+def _generate_with_current_provider(prompt: str) -> str:
+    if _get_llm_provider() == "ollama":
+        return _generate_ollama_response(prompt)
+
+    client = _get_client()
+    response = client.models.generate_content(
+        model=_get_model_name(), contents=prompt
+    )
+    return response.text
+
+
 def _parse_json_response(raw_text: str) -> dict:
     raw = raw_text.strip()
     if raw.startswith("```"):
@@ -124,14 +135,45 @@ def generate_answer(query: str, context: str, concepts: list[str], history: list
         "Provide a grounded answer based only on the context provided."
     )
 
-    if _get_llm_provider() == "ollama":
-        return _generate_ollama_response(prompt)
+    return _generate_with_current_provider(prompt)
 
-    client = _get_client()
-    response = client.models.generate_content(
-        model=_get_model_name(), contents=prompt
+
+def generate_partial_answer(query: str, summary: str, member_concepts: list[str]) -> str:
+    prompt = (
+        "You are answering a corpus-level question from one graph community.\n\n"
+        f"Question: {query}\n\n"
+        f"Community summary:\n{summary}\n\n"
+        f"Member concepts: {', '.join(member_concepts)}\n\n"
+        "Answer only from this summary. Keep the answer concise and grounded."
     )
-    return response.text
+    return _generate_with_current_provider(prompt)
+
+
+def synthesize_answers(query: str, partial_answers: list[str]) -> str:
+    prompt = (
+        "Synthesize the following community-level answers into one grounded answer.\n\n"
+        f"Question: {query}\n\n"
+        "Partial answers:\n"
+        f"{chr(10).join(partial_answers)}\n\n"
+        "Combine overlaps, keep the final answer coherent, and avoid adding unsupported facts."
+    )
+    return _generate_with_current_provider(prompt)
+
+
+def generate_community_summary(
+    community_id: str,
+    member_concepts: list[str],
+    representative_evidence: list[str],
+) -> str:
+    prompt = (
+        "You are summarizing a graph community for retrieval.\n\n"
+        f"Community ID: {community_id}\n"
+        f"Member concepts: {', '.join(member_concepts)}\n\n"
+        "Representative evidence:\n"
+        f"{chr(10).join(representative_evidence)}\n\n"
+        "Write a concise summary of the main themes and how the concepts relate."
+    )
+    return _generate_with_current_provider(prompt)
 
 
 def generate_test_answer(question: str) -> str:

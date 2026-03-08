@@ -25,6 +25,23 @@ DOCUMENT_CENTROIDS_SCHEMA = pa.schema(
     ]
 )
 
+CONCEPT_CENTROIDS_SCHEMA = pa.schema(
+    [
+        pa.field("concept_name", pa.string()),
+        pa.field("centroid_vector", pa.list_(pa.float32(), VECTOR_DIM)),
+        pa.field("document_count", pa.int32()),
+    ]
+)
+
+COMMUNITY_SUMMARIES_SCHEMA = pa.schema(
+    [
+        pa.field("community_id", pa.string()),
+        pa.field("member_concepts", pa.list_(pa.string())),
+        pa.field("summary", pa.string()),
+        pa.field("summary_vector", pa.list_(pa.float32(), VECTOR_DIM)),
+    ]
+)
+
 
 def _open_or_create_table(db, table_name: str, schema: pa.Schema):
     try:
@@ -36,6 +53,18 @@ def _open_or_create_table(db, table_name: str, schema: pa.Schema):
             table = db.create_table(table_name, schema=schema)
     except Exception:
         table = db.create_table(table_name, schema=schema)
+    return table
+
+
+def replace_table_records(db, table_name: str, schema: pa.Schema, records: list[dict]):
+    try:
+        db.drop_table(table_name)
+    except Exception:
+        pass
+
+    table = db.create_table(table_name, schema=schema)
+    if records:
+        table.add(records)
     return table
 
 
@@ -61,4 +90,6 @@ def init_lancedb(db_path: str = "./data/lancedb"):
     db = lancedb.connect(db_path)
     chunks_table = _open_or_create_table(db, "chunks", CHUNKS_SCHEMA)
     _open_or_create_table(db, "document_centroids", DOCUMENT_CENTROIDS_SCHEMA)
+    _open_or_create_table(db, "concept_centroids", CONCEPT_CENTROIDS_SCHEMA)
+    _open_or_create_table(db, "community_summaries", COMMUNITY_SUMMARIES_SCHEMA)
     return db, chunks_table

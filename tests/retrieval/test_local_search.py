@@ -1,22 +1,21 @@
-from unittest.mock import patch
-
 import kuzu
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
-from backend.ingestion.processor import ingest_markdown
+from backend.retrieval.latent_discovery import find_latent_document_hits
 from backend.retrieval.local_search import (
     build_chunk_seed_set,
-    expand_related_concepts,
+    expand_weighted_related_concepts,
     normalize_concepts,
     run_local_search,
-    select_discovery_chunks,
+    score_source_concepts_from_seed_chunks,
+    select_top_chunks_for_documents,
 )
-from backend.retrieval.types import ChunkHit, RetrievalConfig
-from tests.conftest import (
-    mock_embed_query,
-    mock_embed_texts,
-)
+from backend.retrieval.types import ChunkHit, RetrievalConfig, SourceConceptHit
+
+
+def _vector(head: float, tail: float = 0.0) -> list[float]:
+    return [head, tail] + [0.0] * 382
 
 
 class TestNormalizeConcepts:
@@ -33,206 +32,210 @@ class TestNormalizeConcepts:
 class TestLocalSearch:
     @staticmethod
     def _seed_chunk_table(lance_path):
-        _, table = init_lancedb(lance_path)
+        db, table = init_lancedb(lance_path)
         table.add(
             [
                 {
                     "chunk_id": "chunk-1",
-                    "doc_id": "doc-1",
-                    "doc_name": "Math Notes",
-                    "text": "Calculus connects derivatives and integrals.",
-                    "concepts": ["Calculus", "Derivatives"],
-                    "vector": mock_embed_texts(["chunk-1"])[0],
+                    "doc_id": "seed-doc",
+                    "doc_name": "Seed Doc",
+                    "text": "Limits support continuity.",
+                    "concepts": ["Limits", "Continuity"],
+                    "vector": _vector(1.0, 0.0),
                 },
                 {
                     "chunk_id": "chunk-2",
-                    "doc_id": "doc-2",
-                    "doc_name": "Extra Notes",
-                    "text": "Integrals connect to limits.",
-                    "concepts": ["Integrals", "Limits"],
-                    "vector": mock_embed_texts(["chunk-2"])[0],
+                    "doc_id": "seed-doc-2",
+                    "doc_name": "Seed Doc 2",
+                    "text": "Calculus uses limits.",
+                    "concepts": ["Calculus", "Limits"],
+                    "vector": _vector(0.9, 0.0),
+                },
+                {
+                    "chunk_id": "chunk-3",
+                    "doc_id": "latent-doc",
+                    "doc_name": "Latent Doc",
+                    "text": "Derivatives connect to tangent lines.",
+                    "concepts": ["Derivatives"],
+                    "vector": _vector(0.95, 0.0),
+                },
+                {
+                    "chunk_id": "chunk-4",
+                    "doc_id": "latent-doc",
+                    "doc_name": "Latent Doc",
+                    "text": "Derivative rules and chain rule.",
+                    "concepts": ["Derivatives", "Chain Rule"],
+                    "vector": _vector(0.94, 0.01),
                 },
             ]
         )
-        return table
+        centroids = db.open_table("document_centroids")
+        centroids.add(
+            [
+                {
+                    "doc_id": "seed-doc",
+                    "doc_name": "Seed Doc",
+                    "centroid_vector": _vector(1.0, 0.0),
+                },
+                {
+                    "doc_id": "seed-doc-2",
+                    "doc_name": "Seed Doc 2",
+                    "centroid_vector": _vector(0.9, 0.0),
+                },
+                {
+                    "doc_id": "latent-doc",
+                    "doc_name": "Latent Doc",
+                    "centroid_vector": _vector(0.95, 0.0),
+                },
+            ]
+        )
+        return db, table
 
     @staticmethod
     def _seed_graph(conn: kuzu.Connection):
-        conn.execute("MERGE (c:Concept {name: 'Calculus'})")
-        conn.execute("MERGE (c:Concept {name: 'Derivatives'})")
-        conn.execute("MERGE (c:Concept {name: 'Integrals'})")
-        conn.execute("MERGE (c:Concept {name: 'Limits'})")
-        conn.execute("MERGE (c:Concept {name: 'Physics'})")
+        for name in ["Calculus", "Limits", "Continuity", "Derivatives", "Chain Rule"]:
+            conn.execute("MERGE (c:Concept {name: $name})", parameters={"name": name})
         conn.execute(
-            "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Integrals'}) "
-            "CREATE (a)-[:RELATED_TO {reason: 'contains'}]->(b)"
+            "MATCH (a:Concept {name: 'Limits'}), (b:Concept {name: 'Derivatives'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 3.0}]->(b)"
         )
         conn.execute(
-            "MATCH (a:Concept {name: 'Integrals'}), (b:Concept {name: 'Limits'}) "
-            "CREATE (a)-[:RELATED_TO {reason: 'depends_on'}]->(b)"
+            "MATCH (a:Concept {name: 'Derivatives'}), (b:Concept {name: 'Chain Rule'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 2.0}]->(b)"
         )
         conn.execute(
-            "MATCH (a:Concept {name: 'Limits'}), (b:Concept {name: 'Physics'}) "
-            "CREATE (a)-[:RELATED_TO {reason: 'applies_to'}]->(b)"
+            "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Continuity'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 1.0}]->(b)"
         )
 
-    def test_build_chunk_seed_set_returns_ordered_seed_chunks_and_source_concepts(
-        self,
-        lance_path,
-    ):
-        table = self._seed_chunk_table(lance_path)
-        query_vector = mock_embed_query("Calculus")
-
-        seed_chunks, source_concepts = build_chunk_seed_set(
-            table,
-            query_vector,
-            limit=2,
-        )
+    def test_build_chunk_seed_set_returns_ordered_seed_chunks(self, lance_path):
+        _db, table = self._seed_chunk_table(lance_path)
+        seed_chunks = build_chunk_seed_set(table, _vector(1.0, 0.0), limit=2)
 
         assert len(seed_chunks) == 2
         assert isinstance(seed_chunks[0], ChunkHit)
-        assert source_concepts == ["Calculus", "Derivatives", "Integrals", "Limits"]
+        assert [chunk.chunk_id for chunk in seed_chunks] == ["chunk-1", "chunk-3"]
 
-    def test_expand_related_concepts_supports_multi_hop_ranking(self, kuzu_path):
+    def test_score_source_concepts_from_seed_chunks_applies_exact_match_bonus(self):
+        seed_chunks = [
+            ChunkHit(
+                chunk_id="chunk-1",
+                doc_id="doc-1",
+                doc_name="Doc 1",
+                text="Limits support continuity.",
+                concepts=("Limits", "Continuity"),
+                rank=0,
+            ),
+            ChunkHit(
+                chunk_id="chunk-2",
+                doc_id="doc-2",
+                doc_name="Doc 2",
+                text="Calculus uses limits.",
+                concepts=("Calculus", "Limits"),
+                rank=1,
+            ),
+        ]
+
+        hits = score_source_concepts_from_seed_chunks(
+            seed_chunks,
+            "How are limits related to continuity?",
+            limit=5,
+        )
+
+        assert [hit.name for hit in hits] == ["Limits", "Continuity", "Calculus"]
+        assert hits[0].score == 3.5
+        assert hits[1].score == 3.0
+        assert hits[2].score == 0.5
+
+    def test_expand_weighted_related_concepts_uses_edge_weights_and_hops(self, kuzu_path):
         kuzu_db, conn = init_kuzu(kuzu_path)
         self._seed_graph(conn)
 
-        discovered = expand_related_concepts(
+        hits = [
+            SourceConceptHit(
+                name="Limits",
+                score=4.0,
+                matched_chunk_ids=("chunk-1",),
+            )
+        ]
+        discovered = expand_weighted_related_concepts(
             conn,
-            ["Calculus"],
+            hits,
             max_hops=2,
             max_discovery_concepts=10,
         )
 
-        assert [concept.name for concept in discovered] == ["Integrals", "Limits"]
-        assert discovered[0].min_hop == 1
+        assert [concept.name for concept in discovered] == ["Derivatives", "Chain Rule"]
+        assert discovered[0].score == 12.0
+        assert discovered[1].score == 4.0
         assert discovered[1].min_hop == 2
 
         conn.close()
         kuzu_db.close()
 
-    def test_expand_related_concepts_handles_cycles_without_duplicates(self, kuzu_path):
+    def test_find_latent_document_hits_excludes_seed_docs_and_ranks_by_best_support(self, lance_path):
+        db, table = self._seed_chunk_table(lance_path)
+        chunks_df = table.to_pandas()
+
+        hits = find_latent_document_hits(
+            db,
+            chunks_df,
+            ranked_concepts=[("Limits", 1.0), ("Derivatives", 0.5)],
+            excluded_doc_ids={"seed-doc", "seed-doc-2"},
+            limit=5,
+        )
+
+        assert len(hits) == 1
+        assert hits[0].doc_id == "latent-doc"
+        assert hits[0].supporting_concepts == ("Limits",)
+
+    def test_select_top_chunks_for_documents_returns_best_chunks_per_doc(self, lance_path):
+        _db, table = self._seed_chunk_table(lance_path)
+        df = table.to_pandas()
+
+        chunks = select_top_chunks_for_documents(
+            df,
+            query_vector=_vector(1.0, 0.0),
+            latent_documents=[
+                type(
+                    "DocHit",
+                    (),
+                    {
+                        "doc_id": "latent-doc",
+                        "doc_name": "Latent Doc",
+                    },
+                )()
+            ],
+            per_document_limit=1,
+        )
+
+        assert [chunk.chunk_id for chunk in chunks] == ["chunk-3"]
+
+    def test_run_local_search_returns_weighted_discovery_and_latent_docs(self, lance_path, kuzu_path):
+        db, table = self._seed_chunk_table(lance_path)
         kuzu_db, conn = init_kuzu(kuzu_path)
         self._seed_graph(conn)
-        conn.execute(
-            "MATCH (a:Concept {name: 'Limits'}), (b:Concept {name: 'Calculus'}) "
-            "CREATE (a)-[:RELATED_TO {reason: 'cycles'}]->(b)"
-        )
-
-        discovered = expand_related_concepts(
-            conn,
-            ["Calculus"],
-            max_hops=3,
-            max_discovery_concepts=10,
-        )
-
-        assert [concept.name for concept in discovered] == ["Integrals", "Limits", "Physics"]
-
-        conn.close()
-        kuzu_db.close()
-
-    def test_select_discovery_chunks_excludes_seed_chunks_and_limits_results(self, lance_path):
-        table = self._seed_chunk_table(lance_path)
-        df = table.to_pandas()
-        discovery_chunks = select_discovery_chunks(
-            df,
-            discovery_concepts=[],
-            excluded_chunk_ids={"chunk-1"},
-            max_chunks=5,
-        )
-        assert discovery_chunks == []
-
-    def test_select_discovery_chunks_ranks_by_concept_priority_and_caps_results(self, lance_path):
-        _, table = init_lancedb(lance_path)
-        table.add(
-            [
-                {
-                    "chunk_id": "chunk-a",
-                    "doc_id": "doc-a",
-                    "doc_name": "Doc A",
-                    "text": "Integrals are important.",
-                    "concepts": ["Integrals"],
-                    "vector": mock_embed_texts(["chunk-a"])[0],
-                },
-                {
-                    "chunk_id": "chunk-b",
-                    "doc_id": "doc-b",
-                    "doc_name": "Doc B",
-                    "text": "Limits support integrals.",
-                    "concepts": ["Limits", "Integrals"],
-                    "vector": mock_embed_texts(["chunk-b"])[0],
-                },
-                {
-                    "chunk_id": "chunk-c",
-                    "doc_id": "doc-c",
-                    "doc_name": "Doc C",
-                    "text": "Physics uses limits.",
-                    "concepts": ["Physics", "Limits"],
-                    "vector": mock_embed_texts(["chunk-c"])[0],
-                },
-            ]
-        )
-        df = table.to_pandas()
-
-        discovery_chunks = select_discovery_chunks(
-            df,
-            discovery_concepts=[
-                build_discovered_concept("Integrals", min_hop=1),
-                build_discovered_concept("Limits", min_hop=2),
-            ],
-            excluded_chunk_ids=set(),
-            max_chunks=2,
-        )
-
-        assert [chunk.chunk_id for chunk in discovery_chunks] == ["chunk-b", "chunk-a"]
-
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    def test_run_local_search_returns_seed_and_discovery_chunks(
-        self,
-        _mock_embed,
-        lance_path,
-        kuzu_path,
-    ):
-        with patch(
-            "backend.ingestion.processor.extract_concepts",
-            return_value={
-                "concepts": ["Calculus", "Derivatives"],
-                "relationships": [
-                    {"from": "Calculus", "to": "Integrals", "relationship": "contains"},
-                    {"from": "Integrals", "to": "Limits", "relationship": "depends_on"},
-                ],
-            },
-        ):
-            ingest_markdown(
-                "Calculus explains derivatives and integrals. Limits support integrals.",
-                "Math Notes",
-                lance_path,
-                kuzu_path,
-            )
-
-        _, table = init_lancedb(lance_path)
-        kuzu_db, conn = init_kuzu(kuzu_path)
 
         result = run_local_search(
+            db,
             table,
             conn,
-            mock_embed_query("Calculus"),
-            RetrievalConfig(max_graph_hops=2, max_discovery_chunks=5),
+            "How are limits related to continuity?",
+            _vector(1.0, 0.0),
+            RetrievalConfig(
+                seed_chunk_limit=1,
+                source_concept_limit=2,
+                max_graph_hops=2,
+                latent_doc_limit=5,
+                latent_doc_chunk_limit=1,
+            ),
         )
 
         assert result.seed_chunks
+        assert result.source_concepts
         assert result.discovery_concepts
-        assert isinstance(result.discovery_chunks, tuple)
+        assert result.latent_documents
+        assert result.discovery_chunks
 
         conn.close()
         kuzu_db.close()
-
-
-def build_discovered_concept(name: str, *, min_hop: int) -> object:
-    from backend.retrieval.types import DiscoveredConcept
-
-    return DiscoveredConcept(
-        name=name,
-        min_hop=min_hop,
-        supporting_seed_concepts=("Calculus",),
-    )
