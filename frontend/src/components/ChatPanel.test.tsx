@@ -12,6 +12,7 @@ let messages = [
   {
     role: 'assistant',
     content: 'You are building BrainBank.',
+    sourceConcepts: ['BrainBank'],
     discoveryConcepts: ['BrainBank', 'Knowledge Graph'],
   },
 ];
@@ -47,13 +48,15 @@ vi.mock('../hooks/useChat', () => ({
 import { ChatPanel } from './ChatPanel';
 
 describe('ChatPanel', () => {
-  it('renders message history, discovery tags, and loading state', () => {
+  it('renders message history, retrieval concept sections, and loading state', () => {
     isLoading = true;
     render(<ChatPanel />);
 
     expect(screen.getByText('What am I building?')).toBeInTheDocument();
     expect(screen.getByText('You are building BrainBank.')).toBeInTheDocument();
-    expect(screen.getByText('BrainBank')).toBeInTheDocument();
+    expect(screen.getByText('Source concepts')).toBeInTheDocument();
+    expect(screen.getByText('Discovery concepts')).toBeInTheDocument();
+    expect(screen.getAllByText('BrainBank')).toHaveLength(2);
     expect(screen.getByText('Knowledge Graph')).toBeInTheDocument();
     expect(screen.getByText('Thinking...')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Current chat' })).toHaveAttribute(

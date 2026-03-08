@@ -10,6 +10,7 @@ import type { ChatMessage, ChatSession } from '../types/chat';
 
 interface QueryResponse {
   answer?: string;
+  source_concepts?: string[];
   discovery_concepts?: string[];
 }
 
@@ -23,7 +24,7 @@ interface UseChatResult {
   sendMessage: (question: string) => Promise<void>;
 }
 
-const QUERY_ENDPOINT = '/query/test-llm';
+const QUERY_ENDPOINT = '/query';
 const FALLBACK_ERROR_MESSAGE = 'I could not reach BrainBank right now.';
 const DEFAULT_SESSION_TITLE = 'New chat';
 
@@ -162,12 +163,14 @@ export function useChat(): UseChatResult {
       appendMessage(activeSession.id, {
         role: 'assistant',
         content: data.answer ?? '',
+        sourceConcepts: data.source_concepts ?? [],
         discoveryConcepts: data.discovery_concepts ?? [],
       });
     } catch {
       appendMessage(activeSession.id, {
         role: 'assistant',
         content: FALLBACK_ERROR_MESSAGE,
+        sourceConcepts: [],
         discoveryConcepts: [],
       });
     } finally {

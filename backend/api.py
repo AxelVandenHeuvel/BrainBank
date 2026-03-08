@@ -30,6 +30,7 @@ def query(req: QueryRequest):
     result = query_brainbank(req.question)
     return {
         "answer": result["answer"],
+        "source_concepts": result["source_concepts"],
         "discovery_concepts": result["discovery_concepts"],
     }
 

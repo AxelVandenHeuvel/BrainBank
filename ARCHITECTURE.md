@@ -2,7 +2,7 @@
 
 ## Overview
 
-BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay.
+BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visualization. The backend ingests markdown documents and journal entries, extracts structured knowledge via Gemini, stores chunks with embeddings in a vector DB, and stores the concept graph in a graph DB. Queries combine vector similarity search with graph traversal to surface hidden connections, while the frontend renders that graph as an interactive 3D neural map with search, hover highlighting, clickable concept relationships, supporting-document detail panels, ingest controls, and a translucent brain-shell overlay. Grounded answer generation can run through Gemini or a local Ollama model, with provider selection staying entirely on the backend.
 
 ## Stack
 
@@ -15,7 +15,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
-| LLM         | Gemini 1.5 Flash        | Knowledge extraction + answers   |
+| LLM         | Gemini 2.5 Flash + Ollama | Gemini extraction + grounded answers |
 
 ## Data Model
 
@@ -71,7 +71,7 @@ frontend/
       SearchBar.tsx          - Controlled search input
       NodeTooltip.tsx        - Hover tooltip
     hooks/
-      useChat.ts             - POST /query hook for chat state and answers
+      useChat.ts             - POST /query hook for chat state, retrieval answers, and concept metadata
       useGraphData.ts        - GET /api/graph with mock fallback
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
@@ -94,7 +94,7 @@ backend/
     kuzu.py                 - Kuzu init + graph schema (nodes + edges)
   services/
     embeddings.py           - Sentence-transformer embedding functions
-    llm.py                  - Gemini API for legacy concept extraction, richer knowledge extraction, and answer gen
+    llm.py                  - Gemini extraction plus Gemini/Ollama answer generation
   ingestion/
     chunker.py              - Text splitting by paragraphs
     journal_parser.py       - Regex-based journal pre-processor for sections, tasks, and reflections
@@ -178,16 +178,16 @@ useChat -- load/create/select persisted sessions and expose active messages
 useChat.sendMessage() -- append user message to active session and set loading state
   |
   v
-POST /query/test-llm -- proxied by Vite in development to the backend API
+POST /query -- proxied by Vite in development to the backend API
   |
   v
-Backend returns { answer, discovery_concepts, mode }
+Backend returns { answer, source_concepts, discovery_concepts }
   |
   v
-ChatPanel -- render assistant answer + discovery concept tags
+ChatPanel -- render assistant answer + separate source/discovery concept sections
 ```
 
-Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the panel is purely a visibility change and does not reset local component state. Gemini access still happens only on the backend through `GEMINI_API_KEY`; the frontend never receives or stores the model key. The current frontend panel intentionally uses a clearly named test route that bypasses retrieval and Kuzu so model connectivity can be validated while the database work is in progress. That same route can switch to a local Ollama server when `TEST_LLM_PROVIDER=ollama`.
+Chat state now persists in browser `localStorage` under explicit `brainbank.chat.*` keys. `useChat` owns a list of chat sessions, tracks the active session, creates a default empty session when needed, renames a session from its first user message, and keeps sessions ordered by `updatedAt`. `App` keeps the chat subtree mounted at all times so closing the panel is purely a visibility change and does not reset local component state. The frontend now uses the real retrieval route, and assistant messages preserve both `sourceConcepts` and `discoveryConcepts` so the UI can show what came directly from search versus graph expansion. Model access still happens only on the backend; the frontend never receives or stores provider credentials.
 
 ## Ingestion Flow (`POST /ingest`)
 
@@ -253,10 +253,10 @@ Kuzu: 1-hop expansion -- for each source Concept, find RELATED_TO
 LanceDB chunk metadata -- get extra chunk texts for discovery concepts
   |
   v
-llm.generate_answer() -- Gemini generates grounded answer from all context
+llm.generate_answer() -- Gemini or Ollama generates grounded answer from all context
   |
   v
-Output: { answer, discovery_concepts }
+Output: { answer, source_concepts, discovery_concepts }
 ```
 
 The 1-hop graph expansion is what surfaces "hidden" connections - concepts not in the original search results but semantically linked through the knowledge graph.

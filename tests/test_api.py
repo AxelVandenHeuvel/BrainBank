@@ -69,6 +69,7 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "answer" in data
+        assert "source_concepts" in data
         assert "discovery_concepts" in data
 
     def test_query_missing_fields(self):

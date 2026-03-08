@@ -49,10 +49,12 @@ class TestQueryBrainbank:
         self._ingest_sample(lance_path, kuzu_path)
         result = query_brainbank("What is calculus?", lance_path, kuzu_path)
         assert "source_concepts" in result
+        assert result["source_concepts"] == ["Calculus", "Derivatives", "Integrals"]
 
     @patch("backend.retrieval.query.generate_answer", side_effect=mock_generate_answer)
     @patch("backend.retrieval.query.embed_query", side_effect=mock_embed_query)
     def test_empty_db_returns_no_results(self, mock_emb, mock_llm, lance_path, kuzu_path):
         result = query_brainbank("What is calculus?", lance_path, kuzu_path)
         assert result["answer"] == "No relevant information found."
+        assert result["source_concepts"] == []
         assert result["discovery_concepts"] == []

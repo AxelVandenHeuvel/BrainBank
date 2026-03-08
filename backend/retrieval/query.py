@@ -67,12 +67,14 @@ def query_brainbank(
                 all_texts.append(row["text"])
 
     # Step 5: Generate grounded answer
-    all_concepts = list(source_concepts | discovery_concepts)
+    source_concept_list = sorted(source_concepts)
+    discovery_concept_list = sorted(discovery_concepts)
+    all_concepts = source_concept_list + discovery_concept_list
     context = "\n\n---\n\n".join(all_texts)
     answer = generate_answer(user_query, context, all_concepts)
 
     return {
         "answer": answer,
-        "source_concepts": list(source_concepts),
-        "discovery_concepts": list(discovery_concepts),
+        "source_concepts": source_concept_list,
+        "discovery_concepts": discovery_concept_list,
     }
