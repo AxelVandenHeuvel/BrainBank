@@ -1,4 +1,21 @@
 #!/usr/bin/env python3
+"""
+Rebuild GraphRAG Artifacts
+==========================
+WHEN TO USE: After ingesting new documents, or periodically to clean up
+the knowledge graph. Runs the full 5-step maintenance pipeline:
+  1. Consolidation cleanup (merge under-populated concepts)
+  2. Heal graph (add semantic bridge edges)
+  3. Forced orphan cleanup (reap concepts with < 3 docs)
+  4. Island reaper (merge zero-edge nodes)
+  5. Rebuild community artifacts (centroids + summaries)
+
+IMPORTANT: Stop the backend server before running. Kuzu enforces an
+exclusive file lock, so this script cannot run while the API is serving.
+
+Usage:
+    python scripts/rebuild_graphrag_artifacts.py
+"""
 import sys
 from pathlib import Path
 

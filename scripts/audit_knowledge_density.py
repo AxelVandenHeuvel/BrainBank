@@ -1,7 +1,18 @@
 """
-Knowledge Integrity Audit for BrainBank.
-Verifies that Kuzu (Graph) and LanceDB (Chunks) are in sync and 
-that the 3-document minimum is strictly enforced.
+Audit Knowledge Density
+=======================
+WHEN TO USE: To check the health of your knowledge graph. Run this after
+any rebuild, ghost exorcism, or if the graph looks wrong in the UI.
+Reports three categories:
+  - Healthy concepts (3+ documents)
+  - Orphans (< 3 documents, should be reaped)
+  - Ghosts (in LanceDB chunks but missing from Kuzu graph)
+
+IMPORTANT: Stop the backend server before running. Kuzu enforces an
+exclusive file lock.
+
+Usage:
+    python scripts/audit_knowledge_density.py
 """
 
 import lancedb

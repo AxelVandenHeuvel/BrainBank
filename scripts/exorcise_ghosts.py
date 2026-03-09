@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""One-shot script to replace known ghost concepts in LanceDB chunk metadata."""
+"""
+Exorcise Ghosts
+===============
+WHEN TO USE: After audit_knowledge_density.py reports ghost concepts
+(concepts in LanceDB chunks but missing from the Kuzu graph). This script
+replaces a hardcoded list of known ghosts with their logical parent concepts.
+Edit GHOST_MAPPING to add new ghosts as they appear. No LLM calls needed.
+
+Usage:
+    python scripts/exorcise_ghosts.py
+    python scripts/audit_knowledge_density.py   # verify 0 ghosts after
+"""
 import sys
 from pathlib import Path
 

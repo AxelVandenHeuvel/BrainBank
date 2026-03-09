@@ -1,3 +1,17 @@
+"""
+Purge Zombies
+=============
+WHEN TO USE: When audit_knowledge_density.py shows concepts in the Kuzu
+graph that have ZERO documents in LanceDB (the opposite of ghosts). These
+"zombie" nodes exist in the graph but have no backing data. This script
+deletes them from Kuzu with DETACH DELETE.
+
+IMPORTANT: Stop the backend server before running. Kuzu enforces an
+exclusive file lock.
+
+Usage:
+    python scripts/purging_zombies.py
+"""
 import kuzu
 import lancedb
 

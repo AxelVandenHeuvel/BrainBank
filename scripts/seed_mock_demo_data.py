@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+Seed Mock Demo Data
+===================
+WHEN TO USE: To load the curated hackathon demo dataset with pre-defined
+concepts, edges, and community summaries. Good for demos and UI development.
+Skips documents that already exist, so it's safe to run multiple times.
+
+Usage:
+    python scripts/seed_mock_demo_data.py
+"""
 import argparse
 import sys
 from pathlib import Path
