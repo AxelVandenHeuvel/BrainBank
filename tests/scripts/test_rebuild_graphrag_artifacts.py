@@ -36,7 +36,7 @@ class TestRebuildGraphRagArtifactsScript:
         output = capsys.readouterr().out
         assert "concept centroids" in output
         assert "communities" in output
-        assert "concept merges=3" in output
-        assert "canonical renames=4" in output
-        assert "semantic bridges=5" in output
-        assert "forced orphan merges=2" in output
+        assert "Merged 3 concepts" in output
+        assert "Renamed 4 canonical concepts" in output
+        assert "Added 5 semantic bridges" in output
+        assert "Forced 2 orphan merges" in output
