@@ -172,6 +172,7 @@ scripts/
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
   seed_mock_demo_data.py     - Seeds the hackathon demo corpus into local databases
   rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup → heal_graph (semantic bridges) → forced orphan reaper → island reaper (zero-edge nodes) → recomputes concept centroids and community summaries
+  exorcise_ghosts.py          - One-shot script to replace known ghost concepts (in LanceDB but not Kuzu) with their logical parents; zero-LLM, safe SQL escaping
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests

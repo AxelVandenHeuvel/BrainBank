@@ -626,6 +626,63 @@ class TestReplaceConceptInChunks:
         assert "Electromagnetism" not in all_concepts
 
 
+class TestApplyMergeAtomicity:
+    def test_apply_merge_skips_kuzu_delete_when_lancedb_update_fails(self, lance_path, kuzu_path):
+        """If LanceDB update fails, Kuzu must NOT delete the node (prevents ghosts)."""
+        db, chunks_table = init_lancedb(lance_path)
+        concept_centroids = db.open_table("concept_centroids")
+        chunks_table.add([
+            {
+                "chunk_id": "c1",
+                "doc_id": "d1",
+                "doc_name": "Doc 1",
+                "text": "Ghost concept",
+                "concepts": ["Ghost Source"],
+                "vector": _vec(1.0, 0.0),
+            },
+        ])
+
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Ghost Source'})")
+        conn.execute("CREATE (:Concept {name: 'Target Hub'})")
+
+        consolidator = ConceptConsolidator(chunks_table, concept_centroids, db)
+
+        with patch(
+            "backend.ingestion.consolidator._replace_concept_in_chunks",
+            side_effect=RuntimeError("LanceDB update failed"),
+        ):
+            result = consolidator._apply_merge(conn, "Ghost Source", "Target Hub")
+
+        assert result is False
+
+        # Kuzu node must still exist — no ghost created
+        still_exists = conn.execute("MATCH (c:Concept {name: 'Ghost Source'}) RETURN count(c)")
+        assert still_exists.get_next()[0] == 1
+        conn.close()
+
+    def test_replace_concept_in_chunks_raises_on_update_failure(self, lance_path):
+        """_replace_concept_in_chunks must propagate errors, not silently swallow them."""
+        db, chunks_table = init_lancedb(lance_path)
+        chunks_table.add([
+            {
+                "chunk_id": "c1",
+                "doc_id": "d1",
+                "doc_name": "Doc 1",
+                "text": "test",
+                "concepts": ["Source"],
+                "vector": _vec(1.0, 0.0),
+            },
+        ])
+
+        broken_table = Mock()
+        broken_table.update.side_effect = RuntimeError("DataFusion error")
+
+        import pytest
+        with pytest.raises(RuntimeError, match="DataFusion error"):
+            _replace_concept_in_chunks(broken_table, "Source", "Target")
+
+
 class TestForceConsolidateIslands:
     def test_merges_zero_edge_node_into_llm_chosen_neighbor(self, lance_path, kuzu_path):
         db, chunks_table = init_lancedb(lance_path)

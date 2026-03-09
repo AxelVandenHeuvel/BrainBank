@@ -72,14 +72,11 @@ def _replace_concept_in_chunks(chunks_table, source_name: str, target_name: str)
     escaped_source = source_name.replace("'", "''")
     escaped_target = target_name.replace("'", "''")
 
-    try:
-        result = chunks_table.update(
-            where=f"list_contains(concepts, '{escaped_source}')",
-            values_sql={"concepts": f"array_replace(concepts, '{escaped_source}', '{escaped_target}')"},
-        )
-        return result.rows_updated
-    except Exception:
-        return 0
+    result = chunks_table.update(
+        where=f"list_contains(concepts, '{escaped_source}')",
+        values_sql={"concepts": f"array_replace(concepts, '{escaped_source}', '{escaped_target}')"},
+    )
+    return result.rows_updated
 
 
 def _batched(items: list[dict], size: int) -> list[list[dict]]:
@@ -593,7 +590,18 @@ class ConceptConsolidator:
         if not source_name or not target_name or source_name == target_name:
             return False
 
-        _replace_concept_in_chunks(self.chunks_table, source_name, target_name)
+        try:
+            _replace_concept_in_chunks(self.chunks_table, source_name, target_name)
+        except Exception as error:
+            logger.warning(
+                "LanceDB update failed for '%s' -> '%s': %s. "
+                "Skipping Kuzu merge to prevent ghost concept.",
+                source_name,
+                target_name,
+                error,
+            )
+            return False
+
         merge_concepts(conn, source_name, target_name)
         return True
 
