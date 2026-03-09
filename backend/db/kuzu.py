@@ -100,15 +100,6 @@ def _init_schema(conn: kuzu.Connection) -> None:
     except Exception:
         pass  # Column already present — nothing to do.
     conn.execute(
-        "CREATE NODE TABLE IF NOT EXISTS Project(name STRING, status STRING, PRIMARY KEY (name))"
-    )
-    conn.execute(
-        "CREATE NODE TABLE IF NOT EXISTS Task(task_id STRING, name STRING, status STRING, PRIMARY KEY (task_id))"
-    )
-    conn.execute(
-        "CREATE NODE TABLE IF NOT EXISTS Reflection(reflection_id STRING, text STRING, PRIMARY KEY (reflection_id))"
-    )
-    conn.execute(
         "CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept, reason STRING, weight DOUBLE, edge_type STRING)"
     )
     # Add weight to existing databases that predate this column.
@@ -121,10 +112,6 @@ def _init_schema(conn: kuzu.Connection) -> None:
         conn.execute("ALTER TABLE RELATED_TO ADD edge_type STRING DEFAULT 'RELATED_TO'")
     except Exception:
         pass  # Column already present.
-    conn.execute("CREATE REL TABLE IF NOT EXISTS APPLIED_TO_PROJECT(FROM Concept TO Project)")
-    conn.execute("CREATE REL TABLE IF NOT EXISTS GENERATED_TASK(FROM Concept TO Task)")
-    conn.execute("CREATE REL TABLE IF NOT EXISTS SPARKED_REFLECTION(FROM Concept TO Reflection)")
-    conn.execute("CREATE REL TABLE IF NOT EXISTS HAS_TASK(FROM Project TO Task)")
 
 
 def _normalize_concepts(value) -> list[str]:

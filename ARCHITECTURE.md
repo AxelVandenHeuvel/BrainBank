@@ -71,16 +71,9 @@ This table powers the global GraphRAG route. It is refreshed only by the batch r
 
 **Node Tables:**
 - `Concept(name STRING, colorScore DOUBLE, community_id INT64, PRIMARY KEY(name))` - knowledge concepts; `community_id` is set by Leiden clustering after each ingestion (-1 / NULL means unclassified)
-- `Project(name STRING PRIMARY KEY, status STRING)` - projects the user is building
-- `Task(task_id STRING PRIMARY KEY, name STRING, status STRING)` - actionable tasks
-- `Reflection(reflection_id STRING PRIMARY KEY, text STRING)` - insights and observations
 
 **Relationship Tables:**
 - `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE, edge_type STRING)` - concept relationship; `edge_type` is `'RELATED_TO'` for organic shared-document edges and `'SEMANTIC_BRIDGE'` for edges added by `heal_graph`
-- `APPLIED_TO_PROJECT(Concept -> Project)` - concept is applied in a project
-- `GENERATED_TASK(Concept -> Task)` - concept generated a task
-- `SPARKED_REFLECTION(Concept -> Reflection)` - concept sparked a reflection
-- `HAS_TASK(Project -> Task)` - project contains a task
 
 Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path. `backend/db/kuzu.py` also exposes `merge_concepts(conn, source_name, target_name)` to move `RELATED_TO` edges from one concept to another, sum overlapping edge weights, and delete the source node; query workers can reuse an already-open database handle for a path if a lock conflict is encountered.
 
@@ -99,16 +92,14 @@ frontend/
     App.tsx                  - Layout shell with collapsible sidebar, top search bar, permanent Brain tab, fully wired tab system, async document loading states, FileExplorer, a dedicated scrollable files rail with a minimal right-side hot-pink scrollbar, TabBar, DocumentEditor, Graph3D callbacks, and always-mounted graph
     index.css                - Tailwind import + global theme
     components/
-      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, deletable sessions, bottom-anchored composer, in-stream loading status bubble, assistant-response graph focus toggles, traversal-state callback wiring, answer provenance sections, inline clickable document hyperlinks inside assistant responses, and mock-data warning when chat is not grounded in live backend notes
-      ConceptDocumentOverlay.tsx - Related-document overlay with automatic first-document selection
+      ChatPanel.tsx          - Right-side chat UI with compact history dropdown, deletable sessions, bottom-anchored composer, in-stream loading status bubble, assistant-response graph focus toggles, traversal-state callback wiring, and mock-data warning when chat is not grounded in live backend notes
+      ChatCitations.tsx      - Reusable citation sub-components rendered inside assistant responses: ConceptSection, InlineDocumentLinks, ChunkSection, and RelationshipSection
       DocumentEditor.tsx     - Milkdown Crepe editor with explicit manual saves, lightweight draft creation for new notes, lightweight PUT updates for existing notes, and a scroll-contained editor region
       EdgeDetailPanel.tsx    - Selected relationship panel with a fixed header, bounded height, and internally scrollable evidence documents
-      EditorArea.tsx         - Container combining TabBar + DocumentEditor (legacy; no longer used by App.tsx, which renders TabBar and DocumentEditor directly)
       Graph3D.tsx            - 3D graph scene with right-side zoom/reset/brain-mesh controls, a top-right Document View card during expanded document mode, a brain wireframe shell that fades in and out, a compact bottom-center stats footer that shows visible nodes/edges plus backend total documents, dodecahedron nodes, force-directed layout, animated node-to-node focus transitions, temporary neuron-firing pulses driven by staged local retrieval traversal plans, query-time traversal washout that turns unreached nodes gray until they are traversed, bright eased gray-to-color pulsing plus a matching pulsing outline on already-revealed traversal nodes while the answer is still in flight, concept dive-in with document sub-graph, compact hover-only node tooltips, and callback props (onOpenDocument, onConceptFocused) for parent tab integration
       FileExplorer.tsx       - Sidebar file tree: collapsible concept folders with document items, auto-expand on highlight, refetchSignal prop for parent-triggered refresh
       IngestPanel.tsx        - New Note button + file upload + Notion import
       MarkdownDocumentViewer.tsx - Read-only markdown renderer for selected documents
-      NoteEditor.tsx         - Full-page markdown note editor (legacy, replaced by DocumentEditor for tab system)
       NodeTooltip.tsx        - Compact hover tooltip that renders `name (connectionCount)` above the hovered node
       SearchBar.tsx          - Slim horizontal search input for the top bar
       TabBar.tsx             - Horizontal tab bar with active highlighting, conditional close buttons (hidden when `closable === false`), and new-tab italic indicator
@@ -121,6 +112,9 @@ frontend/
       brainScene.ts          - Brain model centering plus scene-focus and rotation helpers
       chatStorage.ts         - localStorage helpers for persisted chat sessions
       graphData.ts           - Graph payload validation + normalization
+      graphConstants.ts      - Shared constants and interfaces for the 3D graph scene (visual tuning, camera timing, link colors, type definitions)
+      graphLinks.ts          - Pure link-styling functions: color, width, and dash pattern based on link type and interaction context
+      graphNodes.ts          - Pure node utility functions: deterministic seeding, THREE.js node construction, text sprites, material helpers
       graphView.ts           - Colors, adjacency, search, and camera helpers
     mock/
       mockGraph.ts           - Focused 29-concept student knowledge graph with hand-written documents and weighted edges

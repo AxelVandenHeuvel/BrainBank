@@ -6,7 +6,6 @@ that the 3-document minimum is strictly enforced.
 
 import lancedb
 import kuzu
-import pandas as pd
 from tabulate import tabulate
 
 def run_audit(kuzu_path="./data/kuzu", lancedb_path="./data/lancedb"):

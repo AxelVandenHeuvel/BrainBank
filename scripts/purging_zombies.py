@@ -1,6 +1,5 @@
 import kuzu
 import lancedb
-import pandas as pd
 
 def purge_zombies(kuzu_path="./data/kuzu", lancedb_path="./data/lancedb"):
     print("🧹 Starting Zombie Purge...")

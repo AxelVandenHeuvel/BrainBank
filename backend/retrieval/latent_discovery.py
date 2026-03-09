@@ -127,10 +127,3 @@ def concept_name_from_query_rows(chunks_df, concept_name: str) -> tuple[set[str]
 
     existing_doc_ids = set(concept_rows["doc_id"].astype(str))
     return existing_doc_ids, [(concept_name, 1.0)]
-
-
-def get_document_chunks_for_concept(chunks_df, concept_name: str):
-    if chunks_df.empty:
-        return chunks_df
-    exploded = chunks_df[["doc_id", "vector", "concepts"]].explode("concepts")
-    return exploded[exploded["concepts"] == concept_name]

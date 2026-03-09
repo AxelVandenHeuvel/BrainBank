@@ -58,10 +58,6 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (mag_a * mag_b)
 
 
-def _escape_lance_literal(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def _replace_concept_in_chunks(chunks_table, source_name: str, target_name: str) -> int:
     """Replace source_name with target_name in every chunk's concepts array.
 
@@ -517,46 +513,3 @@ class ConceptConsolidator:
         merge_concepts(conn, source_name, target_name)
         return True
 
-    def _replace_concept_in_chunk_metadata(self, source_name: str, target_name: str) -> int:
-        if source_name == target_name:
-            return 0
-
-        try:
-            df = self.chunks_table.to_pandas()
-        except Exception:
-            return 0
-
-        if df.empty:
-            return 0
-
-        updated_records: list[dict] = []
-        stale_chunk_ids: list[str] = []
-
-        for row in df.itertuples(index=False):
-            concepts = _normalize_concepts(row.concepts)
-            if source_name not in concepts:
-                continue
-
-            updated_concepts = _dedupe_preserving_order(
-                [target_name if concept == source_name else concept for concept in concepts]
-            )
-            stale_chunk_ids.append(str(row.chunk_id))
-            updated_records.append(
-                {
-                    "chunk_id": str(row.chunk_id),
-                    "doc_id": str(row.doc_id),
-                    "doc_name": str(row.doc_name),
-                    "text": str(row.text),
-                    "concepts": updated_concepts,
-                    "vector": [float(value) for value in row.vector],
-                }
-            )
-
-        for chunk_id in stale_chunk_ids:
-            escaped_chunk_id = _escape_lance_literal(chunk_id)
-            self.chunks_table.delete(f'chunk_id = "{escaped_chunk_id}"')
-
-        if updated_records:
-            self.chunks_table.add(updated_records)
-
-        return len(updated_records)
