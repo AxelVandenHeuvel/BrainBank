@@ -17,6 +17,7 @@ AUTO_MERGE_SIMILARITY_THRESHOLD = 0.92
 LLM_DECISION_MIN_SIMILARITY = 0.75
 LLM_BATCH_SIZE = 5
 FORCED_ORPHAN_NEAREST_CANDIDATES = 5
+ISLAND_NEAREST_CANDIDATES = 5
 FORCED_ORPHAN_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 
 logger = logging.getLogger(__name__)
@@ -58,10 +59,6 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (mag_a * mag_b)
 
 
-def _escape_lance_literal(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def _replace_concept_in_chunks(chunks_table, source_name: str, target_name: str) -> int:
     """Replace source_name with target_name in every chunk's concepts array.
 
@@ -75,14 +72,11 @@ def _replace_concept_in_chunks(chunks_table, source_name: str, target_name: str)
     escaped_source = source_name.replace("'", "''")
     escaped_target = target_name.replace("'", "''")
 
-    try:
-        result = chunks_table.update(
-            where=f"list_contains(concepts, '{escaped_source}')",
-            values_sql={"concepts": f"array_replace(concepts, '{escaped_source}', '{escaped_target}')"},
-        )
-        return result.rows_updated
-    except Exception:
-        return 0
+    result = chunks_table.update(
+        where=f"list_contains(concepts, '{escaped_source}')",
+        values_sql={"concepts": f"array_replace(concepts, '{escaped_source}', '{escaped_target}')"},
+    )
+    return result.rows_updated
 
 
 def _batched(items: list[dict], size: int) -> list[list[dict]]:
@@ -262,6 +256,89 @@ class ConceptConsolidator:
             summary["forced_merges"],
         )
         return summary
+
+    def force_consolidate_islands(self, conn: _kuzu.Connection) -> dict[str, int]:
+        """Merge concepts with zero edges into their nearest semantic neighbor."""
+        concept_centroids = self._load_concept_centroids()
+
+        result = conn.execute(
+            "MATCH (c:Concept) WHERE NOT (c)-[]-() RETURN c.name"
+        )
+        islands: list[str] = []
+        while result.has_next():
+            islands.append(result.get_next()[0])
+        islands.sort()
+
+        forced_merges = 0
+        llm_calls = 0
+
+        print(f"    Processing {len(islands)} island nodes for consolidation...")
+        for index, island_name in enumerate(islands, start=1):
+            if index % 5 == 0 or index == 1:
+                print(f"      Island {index}/{len(islands)}: '{island_name}'...")
+
+            nearest = self._nearest_concepts_with_scores(
+                island_name,
+                concept_centroids,
+                limit=ISLAND_NEAREST_CANDIDATES,
+            )
+            candidates = [name for name, _score in nearest][:ISLAND_NEAREST_CANDIDATES]
+            if not candidates:
+                continue
+
+            llm_calls += 1
+            chosen_target = self._decide_island_merge(island_name, candidates)
+            if not chosen_target:
+                continue
+
+            if self._apply_merge(conn, island_name, chosen_target):
+                forced_merges += 1
+
+        summary = {
+            "islands_seen": len(islands),
+            "llm_calls": llm_calls,
+            "forced_merges": forced_merges,
+        }
+        logger.info(
+            "Island consolidation summary: islands_seen=%d llm_calls=%d forced_merges=%d",
+            summary["islands_seen"],
+            summary["llm_calls"],
+            summary["forced_merges"],
+        )
+        return summary
+
+    def _build_island_merge_prompt(self, island_name: str, candidates: list[str]) -> str:
+        candidates_str = ", ".join([f"'{c}'" for c in candidates])
+        return (
+            f"The concept '{island_name}' is disconnected from the knowledge graph (zero edges).\n"
+            f"Does it logically belong merged into one of these {len(candidates)} candidate hubs: [{candidates_str}]?\n"
+            f"Reply ONLY with the chosen name, or 'NONE' if it should remain an isolated topic "
+            f"(e.g., a completely unique journal entry).\n"
+            f"Chosen Name:"
+        )
+
+    def _decide_island_merge(self, island_name: str, candidates: list[str]) -> str | None:
+        prompt = self._build_island_merge_prompt(island_name, candidates)
+        try:
+            response = generate_text_with_backoff(
+                prompt,
+                provider_name="gemini",
+                gemini_model=FORCED_ORPHAN_GEMINI_MODEL,
+            )
+        except Exception as error:
+            logger.warning(
+                "Island merge decision failed for %s: %s",
+                island_name,
+                error,
+            )
+            return None
+
+        response_name = response.strip().strip('"').strip("'")
+        if not response_name or response_name.upper() == "NONE":
+            return None
+
+        by_lower = {candidate.lower(): candidate for candidate in candidates}
+        return by_lower.get(response_name.lower())
 
     def _map_to_canonical_name(
         self,
@@ -513,50 +590,18 @@ class ConceptConsolidator:
         if not source_name or not target_name or source_name == target_name:
             return False
 
-        _replace_concept_in_chunks(self.chunks_table, source_name, target_name)
+        try:
+            _replace_concept_in_chunks(self.chunks_table, source_name, target_name)
+        except Exception as error:
+            logger.warning(
+                "LanceDB update failed for '%s' -> '%s': %s. "
+                "Skipping Kuzu merge to prevent ghost concept.",
+                source_name,
+                target_name,
+                error,
+            )
+            return False
+
         merge_concepts(conn, source_name, target_name)
         return True
 
-    def _replace_concept_in_chunk_metadata(self, source_name: str, target_name: str) -> int:
-        if source_name == target_name:
-            return 0
-
-        try:
-            df = self.chunks_table.to_pandas()
-        except Exception:
-            return 0
-
-        if df.empty:
-            return 0
-
-        updated_records: list[dict] = []
-        stale_chunk_ids: list[str] = []
-
-        for row in df.itertuples(index=False):
-            concepts = _normalize_concepts(row.concepts)
-            if source_name not in concepts:
-                continue
-
-            updated_concepts = _dedupe_preserving_order(
-                [target_name if concept == source_name else concept for concept in concepts]
-            )
-            stale_chunk_ids.append(str(row.chunk_id))
-            updated_records.append(
-                {
-                    "chunk_id": str(row.chunk_id),
-                    "doc_id": str(row.doc_id),
-                    "doc_name": str(row.doc_name),
-                    "text": str(row.text),
-                    "concepts": updated_concepts,
-                    "vector": [float(value) for value in row.vector],
-                }
-            )
-
-        for chunk_id in stale_chunk_ids:
-            escaped_chunk_id = _escape_lance_literal(chunk_id)
-            self.chunks_table.delete(f'chunk_id = "{escaped_chunk_id}"')
-
-        if updated_records:
-            self.chunks_table.add(updated_records)
-
-        return len(updated_records)

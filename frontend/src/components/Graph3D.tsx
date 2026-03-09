@@ -6,18 +6,15 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import {
-  ACTIVE_LINK_COLOR,
-  DIMMED_LINK_COLOR,
   DIMMED_NODE_COLOR,
   DIMMED_SEARCH_COLOR,
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
-  communityColor,
   conceptColorFromScore,
+  communityColor,
   createFocusSet,
   findMatchingNodeIds,
   getConnectionCount,
-  isDirectHoverLink,
 } from '../lib/graphView';
 import {
   clampNodesToContainment,
@@ -47,52 +44,63 @@ import type { ActiveTraversal } from '../types/traversal';
 import { EdgeDetailPanel } from './EdgeDetailPanel';
 import { NodeTooltip } from './NodeTooltip';
 
-interface OrbitControlsLike {
-  autoRotate: boolean;
-  autoRotateSpeed: number;
-  addEventListener: (event: string, callback: () => void) => void;
-  removeEventListener: (event: string, callback: () => void) => void;
-  target: {
-    set: (x: number, y: number, z: number) => void;
-  };
-  update: () => void;
-}
+import {
+  TRAVERSAL_INACTIVE_COLOR,
+  TRAVERSAL_AMBIENT_BLINK_PERIOD_MS,
+  TRAVERSAL_AMBIENT_BLINK_BASE,
+  TRAVERSAL_AMBIENT_BLINK_RANGE,
+  TRAVERSAL_OUTLINE_COLOR,
+  BRAIN_MODEL_URL,
+  CAMERA_MOVE_DURATION_MS,
+  AUTO_CENTER_PADDING,
+  IDLE_ROTATE_DELAY_MS,
+  IDLE_ROTATE_INTERVAL_MS,
+  BUTTON_ZOOM_IN_FACTOR,
+  BUTTON_ZOOM_OUT_FACTOR,
+  WHEEL_ZOOM_IN_FACTOR,
+  WHEEL_ZOOM_OUT_FACTOR,
+  DOUBLE_CLICK_THRESHOLD_MS,
+  BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER,
+  MIN_BRAIN_HOME_VIEW_DISTANCE,
+  POINTER_ROTATION_SPEED,
+  IDLE_ROTATION_SPEED,
+  MAX_SCENE_TILT,
+  BRAIN_MODEL_TARGET_DIAGONAL,
+  DEFAULT_BRAIN_MESH_HEX,
+  BRAIN_MESH_BASE_OPACITY,
+  BRAIN_MESH_TOGGLE_FADE_DURATION_MS,
+  EXPANDED_DOC_RADIUS,
+  EXPANDED_VIEW_DISTANCE,
+  DISCOVERY_OUTLINE_COLOR,
+  DIVE_ZOOM_IN_DURATION_MS,
+  DEFAULT_BACKGROUND_HEX,
+  type ForceGraphHandle,
+  type TooltipPosition,
+  type BrainHomeView,
+  type TraversalPulseWindow,
+} from '../lib/graphConstants';
 
-interface ForceGraphHandle {
-  controls: () => OrbitControlsLike;
-  cameraPosition(): { x: number; y: number; z: number };
-  cameraPosition(
-    position: { x: number; y: number; z: number },
-    lookAt?: { x: number; y: number; z: number },
-    durationMs?: number,
-  ): void;
-  graph2ScreenCoords: (
-    x: number,
-    y: number,
-    z: number,
-  ) => { x: number; y: number };
-  scene: () => THREE.Scene;
-  zoomToFit: (durationMs?: number, padding?: number) => void;
-  getGraphBbox: () => {
-    x: [number, number];
-    y: [number, number];
-    z: [number, number];
-  };
-  refresh: () => void;
-}
+import {
+  seedNodePosition,
+  getTraversalBlinkPhase,
+  formatStatLabel,
+  applyNodeMaterialState,
+  getBrainMeshMaterials,
+  buildNodeThreeObject,
+  resolveNodeColor,
+} from '../lib/graphNodes';
 
-interface TooltipPosition {
-  x: number;
-  y: number;
-}
+import {
+  getLinkColor as computeLinkColor,
+  getLinkWidth as computeLinkWidth,
+  getLinkLineDash,
+  type LinkContext,
+} from '../lib/graphLinks';
 
-interface BrainHomeView {
-  distance: number;
-  focusPoint: {
-    x: number;
-    y: number;
-    z: number;
-  };
+interface SelectedRelationshipEdge {
+  sourceId: string;
+  targetId: string;
+  reason: string;
 }
 
 interface Graph3DProps {
@@ -108,221 +116,6 @@ interface Graph3DProps {
   onHoverNode?: (node: GraphNode | null) => void;
   onOpenDocument?: (docId: string, name: string, content: string) => void;
   onConceptFocused?: (conceptName: string | null) => void;
-}
-
-interface SelectedRelationshipEdge {
-  sourceId: string;
-  targetId: string;
-  reason: string;
-}
-
-interface TraversalPulseWindow {
-  startMs: number;
-  endMs: number;
-  brightness: number;
-}
-
-const TRAVERSAL_INACTIVE_COLOR = new THREE.Color('#64748b');
-const TRAVERSAL_AMBIENT_BLINK_PERIOD_MS = 900;
-const TRAVERSAL_AMBIENT_BLINK_BASE = 0.18;
-const TRAVERSAL_AMBIENT_BLINK_RANGE = 0.55;
-const TRAVERSAL_OUTLINE_COLOR = new THREE.Color('#f8fafc');
-
-const BRAIN_MODEL_URL = '/assets/human-brain.glb';
-const CAMERA_MOVE_DURATION_MS = 1200;
-const AUTO_CENTER_PADDING = 120;
-const IDLE_ROTATE_DELAY_MS = 5000;
-const IDLE_ROTATE_INTERVAL_MS = 16;
-const BUTTON_ZOOM_IN_FACTOR = 0.84;
-const BUTTON_ZOOM_OUT_FACTOR = 1.2;
-const WHEEL_ZOOM_IN_FACTOR = 0.9;
-const WHEEL_ZOOM_OUT_FACTOR = 1.2;
-const DOUBLE_CLICK_THRESHOLD_MS = 300;
-const BRAIN_HOME_VIEW_DISTANCE_MULTIPLIER = 2.6;
-const MIN_BRAIN_HOME_VIEW_DISTANCE = 240;
-const POINTER_ROTATION_SPEED = 0.005;
-const IDLE_ROTATION_SPEED = 0.002;
-const MAX_SCENE_TILT = Math.PI / 3;
-const GHOST_EDGE_COLOR = 'rgba(168, 85, 247, 0.28)';
-const BASE_LINK_COLOR = 'rgba(186, 224, 255, 0.34)';
-const SEMANTIC_BRIDGE_COLOR = 'rgba(251, 191, 36, 0.6)';
-const GHOST_EDGE_WIDTH = 0.55;
-const SEMANTIC_BRIDGE_WIDTH = 0.7;
-const ESTABLISHED_LINK_WIDTH_MULTIPLIER = 2.2;
-const BRAIN_MODEL_TARGET_DIAGONAL = 500;
-const DEFAULT_BRAIN_MESH_HEX = '#FFFFFF';
-const BRAIN_MESH_BASE_OPACITY = 0.06;
-const BRAIN_MESH_TOGGLE_FADE_DURATION_MS = 200;
-const NEURON_MODEL_TARGET_DIAGONAL = 10;
-const EXPANDED_DOC_RADIUS = 30;
-const EXPANDED_VIEW_DISTANCE = 78;
-const NODE_LABEL_Y_OFFSET = 16;
-const DISCOVERY_OUTLINE_COLOR = '#fbbf24';
-const DIVE_ZOOM_IN_DURATION_MS = 700;
-const DEFAULT_BACKGROUND_HEX = '#0E0F10';
-/** Seed initial position from a deterministic hash so the force simulation starts
- *  with nodes spread out instead of all at the origin. */
-function seedNodePosition(nodeId: string): { x: number; y: number; z: number } {
-  let hash = 0;
-  for (let i = 0; i < nodeId.length; i++) {
-    hash = (hash * 31 + nodeId.charCodeAt(i)) | 0;
-  }
-  const phi = ((hash & 0xffff) / 0xffff) * Math.PI * 2;
-  const cosTheta = ((((hash >> 16) & 0xffff) / 0xffff) * 2) - 1;
-  const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
-  const r = 15 + ((hash & 0xff) / 255) * 20;
-  return {
-    x: r * sinTheta * Math.cos(phi),
-    y: r * cosTheta,
-    z: r * sinTheta * Math.sin(phi),
-  };
-}
-
-function getDeterministicNodeColorScore(node: GraphNode): number {
-  if (node.colorScore !== undefined) {
-    return node.colorScore;
-  }
-
-  return (
-    String(node.id).split('').reduce((acc, char) => {
-      return (acc * 31 + char.charCodeAt(0)) % 10000;
-    }, 0) / 10000
-  );
-}
-
-function getVisualNodeColor(node: GraphNode): THREE.Color {
-  // Use a cooler, professional spectrum (cyan to indigo) instead of pink/red
-  return new THREE.Color(0x22d3ee).lerp(
-    new THREE.Color(0x6366f1),
-    getDeterministicNodeColorScore(node),
-  );
-}
-
-function getTraversalBlinkPhase(nodeId: string): number {
-  let hash = 0;
-  for (let i = 0; i < nodeId.length; i++) {
-    hash = (hash * 33 + nodeId.charCodeAt(i)) | 0;
-  }
-
-  return (((hash >>> 0) % 360) / 360) * Math.PI * 2;
-}
-
-function formatStatLabel(count: number, singular: string, plural: string): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
-function createTextSprite(text: string, color: string = '#ffffff'): THREE.Sprite {
-  const font = 'bold 52px "Inter", "Roboto", sans-serif';
-  const padding = 80;
-  const height = 128;
-
-  // Measure text width to size canvas dynamically
-  const measureCanvas = document.createElement('canvas');
-  const measureCtx = measureCanvas.getContext('2d');
-  let textWidth = 512; // fallback
-  if (measureCtx) {
-    measureCtx.font = font;
-    textWidth = Math.ceil(measureCtx.measureText(text).width) + padding;
-  }
-  const width = Math.max(256, textWidth);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  let ctx: CanvasRenderingContext2D | null = null;
-
-  try {
-    ctx = canvas.getContext('2d');
-  } catch {
-    ctx = null;
-  }
-
-  if (ctx) {
-    ctx.fillStyle = 'rgba(0,0,0,0)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
-    ctx.beginPath();
-    ctx.roundRect(0, 0, canvas.width, canvas.height, 64);
-    ctx.fill();
-
-    ctx.font = font;
-    ctx.fillStyle = color;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.minFilter = THREE.LinearFilter;
-  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
-  const sprite = new THREE.Sprite(material);
-  // Scale width proportionally so the sprite aspect ratio matches the canvas
-  const spriteHeight = 4;
-  const spriteWidth = spriteHeight * (width / height);
-  sprite.scale.set(spriteWidth, spriteHeight, 1);
-  sprite.renderOrder = 999;
-  return sprite;
-}
-
-function createNodeMaterial(nodeColor: THREE.Color): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color: nodeColor,
-    emissive: new THREE.Color(0x000000), // Remove emissive glow
-    roughness: 0.8,
-    metalness: 0,
-    flatShading: true,
-    transparent: true,
-    opacity: 0.9,
-  });
-}
-
-function applyNodeMaterialState(
-  obj: THREE.Object3D,
-  color: THREE.Color,
-  emissive: THREE.Color,
-  opacity: number,
-) {
-  obj.userData.currentColor = color.clone();
-  obj.userData.currentEmissive = emissive.clone();
-  obj.userData.currentOpacity = opacity;
-  obj.userData.currentOutlineOpacity = Number(obj.userData.currentOutlineOpacity ?? 0);
-  obj.userData.currentSpriteOpacity = Number(obj.userData.currentSpriteOpacity ?? 1);
-
-  obj.traverse((child) => {
-    if (!(child instanceof THREE.Mesh) || !child.material) {
-      return;
-    }
-
-    if (child.name !== 'node-shape') {
-      return;
-    }
-
-    const material = child.material as THREE.MeshStandardMaterial;
-    material.color.copy(color);
-    material.emissive.copy(emissive);
-    material.opacity = opacity;
-    material.transparent = true;
-  });
-}
-
-function getBrainMeshMaterials(brain: THREE.Object3D): THREE.MeshBasicMaterial[] {
-  const materials: THREE.MeshBasicMaterial[] = [];
-
-  brain.traverse((node) => {
-    if (!(node instanceof THREE.Mesh)) {
-      return;
-    }
-
-    const childMaterials = Array.isArray(node.material) ? node.material : [node.material];
-    childMaterials.forEach((material) => {
-      if (material instanceof THREE.MeshBasicMaterial) {
-        materials.push(material);
-      }
-    });
-  });
-
-  return materials;
 }
 
 export function Graph3D({
@@ -672,36 +465,6 @@ export function Graph3D({
     return node?.name ?? nodeId;
   }
 
-  function isSelectedLink(link: GraphLink): boolean {
-    if (!selectedEdge) {
-      return false;
-    }
-
-    const source = typeof link.source === 'string' ? link.source : link.source.id;
-    const target = typeof link.target === 'string' ? link.target : link.target.id;
-
-    return source === selectedEdge.sourceId && target === selectedEdge.targetId;
-  }
-
-  function isFocusedNodeLink(link: GraphLink): boolean {
-    if (!focusedEdgeNodeId) {
-      return false;
-    }
-
-    const source = typeof link.source === 'string' ? link.source : link.source.id;
-    const target = typeof link.target === 'string' ? link.target : link.target.id;
-
-    return source === focusedEdgeNodeId || target === focusedEdgeNodeId;
-  }
-
-  function isGhostLink(link: GraphLink): boolean {
-    return link.isGhost === true || link.type === 'LATENT_DISCOVERY';
-  }
-
-  function isSemanticBridgeLink(link: GraphLink): boolean {
-    return link.type === 'SEMANTIC_BRIDGE';
-  }
-
   function clearSelectedEdge() {
     setSelectedEdge(null);
     setRelationshipDetails(null);
@@ -710,41 +473,9 @@ export function Graph3D({
   }
 
   const getNodeThreeObject = useCallback((node: GraphNode): THREE.Object3D => {
-    const group = new THREE.Group();
+    const nodeColor = resolveNodeColor(node);
+    const group = buildNodeThreeObject(node, nodeColor);
 
-    const nodeColor =
-      node.type === 'Concept' && node.community_id != null
-        ? new THREE.Color(communityColor(node.community_id))
-        : getVisualNodeColor(node);
-    const hexColor = `#${nodeColor.getHexString()}`;
-    const material = createNodeMaterial(nodeColor);
-
-    const radius = NEURON_MODEL_TARGET_DIAGONAL / 2;
-    const geo = new THREE.DodecahedronGeometry(radius, 0);
-    const mesh = new THREE.Mesh(geo, material);
-    mesh.name = 'node-shape';
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-    group.add(mesh);
-
-    const outline = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(radius * 1.18, 0),
-      new THREE.MeshBasicMaterial({
-        color: DISCOVERY_OUTLINE_COLOR,
-        wireframe: true,
-        transparent: true,
-        opacity: 0,
-      }),
-    );
-    outline.name = 'node-outline';
-    outline.visible = false;
-    group.add(outline);
-
-    const labelSprite = createTextSprite(node.name || 'Concept', hexColor);
-    labelSprite.position.set(0, NODE_LABEL_Y_OFFSET, 0);
-    group.add(labelSprite);
-    group.userData.baseColor = nodeColor.clone();
-    group.userData.traversalPulse = 0;
     const initialRevealTime = traversalRevealTimesRef.current.get(node.id);
     const initialTraversalRevealed =
       traversalIsActiveRef.current &&
@@ -879,17 +610,17 @@ export function Graph3D({
       return;
     }
 
-    const focusPoint = new THREE.Vector3(
+    const focusPt = new THREE.Vector3(
       sceneFocusPointRef.current.x,
       sceneFocusPointRef.current.y,
       sceneFocusPointRef.current.z,
     );
 
-    keepLocalPointAtWorldOrigin(rotationRoot, focusPoint);
+    keepLocalPointAtWorldOrigin(rotationRoot, focusPt);
     sceneFocusPointRef.current = {
-      x: focusPoint.x,
-      y: focusPoint.y,
-      z: focusPoint.z,
+      x: focusPt.x,
+      y: focusPt.y,
+      z: focusPt.z,
     };
     rotationRoot.updateMatrixWorld(true);
     lookAtTargetRef.current = { x: 0, y: 0, z: 0 };
@@ -1309,7 +1040,7 @@ export function Graph3D({
 
   async function handleLinkClick(link: GraphLink) {
     handleInteraction();
-    if (isGhostLink(link)) {
+    if (link.isGhost === true || link.type === 'LATENT_DISCOVERY') {
       return;
     }
     setRotationPivotNode(null);
@@ -1962,87 +1693,22 @@ export function Graph3D({
     return getBaseNodeColor(node);
   }
 
+  // Build link context once for all link callbacks
+  const linkCtx: LinkContext = {
+    hoveredNode,
+    selectedEdge,
+    focusedEdgeNodeId,
+    expandedNodeIds,
+    hasChatFocus,
+    chatFocusHighlightedNodeIds: chatFocusNodeIds.highlightedNodeIds,
+  };
+
   function getLinkColor(link: GraphLink): string {
-    // When a concept is expanded, only show doc↔doc links; hide everything else
-    if (expandedNodeIds) {
-      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      if (expandedNodeIds.has(sourceId) && expandedNodeIds.has(targetId)) {
-        return ACTIVE_LINK_COLOR;
-      }
-      return 'rgba(0,0,0,0)';
-    }
-
-    if (isGhostLink(link)) {
-      return GHOST_EDGE_COLOR;
-    }
-
-    if (isSemanticBridgeLink(link)) {
-      if (isSelectedLink(link) || isFocusedNodeLink(link) || isDirectHoverLink(link, hoveredNode)) {
-        return ACTIVE_LINK_COLOR;
-      }
-      if (focusedEdgeNodeId || hoveredNode) {
-        return DIMMED_LINK_COLOR;
-      }
-      return SEMANTIC_BRIDGE_COLOR;
-    }
-
-    if (isSelectedLink(link)) {
-      return ACTIVE_LINK_COLOR;
-    }
-
-    if (hasChatFocus) {
-      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-
-      return chatFocusNodeIds.highlightedNodeIds.has(sourceId) &&
-        chatFocusNodeIds.highlightedNodeIds.has(targetId)
-        ? ACTIVE_LINK_COLOR
-        : DIMMED_LINK_COLOR;
-    }
-
-    if (focusedEdgeNodeId) {
-      return isFocusedNodeLink(link) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
-    }
-
-    if (hoveredNode) {
-      return isDirectHoverLink(link, hoveredNode) ? ACTIVE_LINK_COLOR : DIMMED_LINK_COLOR;
-    }
-
-    return BASE_LINK_COLOR;
+    return computeLinkColor(link, linkCtx);
   }
 
   function getLinkWidth(link: GraphLink): number {
-    if (expandedNodeIds) {
-      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      if (!expandedNodeIds.has(sourceId) || !expandedNodeIds.has(targetId)) {
-        return 0;
-      }
-    }
-
-    if (isGhostLink(link)) {
-      return GHOST_EDGE_WIDTH;
-    }
-
-    if (isSemanticBridgeLink(link)) {
-      return SEMANTIC_BRIDGE_WIDTH;
-    }
-
-    const weight =
-      typeof link.weight === 'number' && Number.isFinite(link.weight) && link.weight > 0
-        ? link.weight
-        : 1;
-
-    return Math.log(weight + 1) * ESTABLISHED_LINK_WIDTH_MULTIPLIER;
-  }
-
-  function getLinkLineDash(link: GraphLink): [number, number] | undefined {
-    if (isGhostLink(link)) {
-      return [2, 1];
-    }
-
-    return undefined;
+    return computeLinkWidth(link, expandedNodeIds);
   }
 
   // Stable callback refs so ForceGraph3D doesn't see new function identity on every render

@@ -1,4 +1,21 @@
 #!/usr/bin/env python3
+"""
+Rebuild GraphRAG Artifacts
+==========================
+WHEN TO USE: After ingesting new documents, or periodically to clean up
+the knowledge graph. Runs the full 5-step maintenance pipeline:
+  1. Consolidation cleanup (merge under-populated concepts)
+  2. Heal graph (add semantic bridge edges)
+  3. Forced orphan cleanup (reap concepts with < 3 docs)
+  4. Island reaper (merge zero-edge nodes)
+  5. Rebuild community artifacts (centroids + summaries)
+
+IMPORTANT: Stop the backend server before running. Kuzu enforces an
+exclusive file lock, so this script cannot run while the API is serving.
+
+Usage:
+    python scripts/rebuild_graphrag_artifacts.py
+"""
 import sys
 from pathlib import Path
 
@@ -54,23 +71,47 @@ def run_force_orphan_cleanup(
         kuzu_db.close()
 
 
+def run_island_cleanup(
+    lance_db_path: str = "./data/lancedb",
+    kuzu_db_path: str = "./data/kuzu",
+) -> dict[str, int]:
+    db, chunks_table = init_lancedb(lance_db_path)
+    concept_centroids_table = db.open_table("concept_centroids")
+    kuzu_db, conn = init_kuzu(kuzu_db_path)
+
+    try:
+        consolidator = ConceptConsolidator(
+            chunks_table=chunks_table,
+            concept_centroids_table=concept_centroids_table,
+            lance_db=db,
+        )
+        return consolidator.force_consolidate_islands(conn)
+    finally:
+        conn.close()
+        kuzu_db.close()
+
+
 def main() -> int:
     print("Starting GraphRAG artifact rebuild...")
     
-    print("Step 1/4: Running consolidation cleanup...")
+    print("Step 1/5: Running consolidation cleanup...")
     cleanup = run_consolidation_cleanup()
     print(f"  - Merged {cleanup.get('merged_count', 0)} concepts")
     print(f"  - Renamed {cleanup.get('renamed_count', 0)} canonical concepts")
     
-    print("Step 2/4: Healing graph (adding semantic bridges)...")
+    print("Step 2/5: Healing graph (adding semantic bridges)...")
     bridges = heal_graph()
     print(f"  - Added {bridges} semantic bridges")
     
-    print("Step 3/4: Forcing orphan cleanup...")
+    print("Step 3/5: Forcing orphan cleanup...")
     orphan_cleanup = run_force_orphan_cleanup()
     print(f"  - Forced {orphan_cleanup.get('forced_merges', 0)} orphan merges")
-    
-    print("Step 4/4: Rebuilding community artifacts...")
+
+    print("Step 4/5: Reaping island nodes (zero edges)...")
+    island_cleanup = run_island_cleanup()
+    print(f"  - Merged {island_cleanup.get('forced_merges', 0)} island nodes")
+
+    print("Step 5/5: Rebuilding community artifacts...")
     summary = rebuild_graphrag_artifacts()
     
     print("\nRebuild Complete!")

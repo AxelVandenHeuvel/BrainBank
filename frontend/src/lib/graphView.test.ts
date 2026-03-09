@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   NODE_TYPE_COLORS,
   buildAdjacencyMap,
-  centerCameraOnTarget,
   conceptColorFromScore,
   findMatchingNodeIds,
   getConnectionCount,
@@ -68,28 +67,6 @@ describe('graphView helpers', () => {
     const matches = findMatchingNodeIds(graph.nodes, 'calc');
 
     expect(matches).toEqual(new Set(['concept:Calculus']));
-  });
-
-  it('centers the home view camera on a target', () => {
-    const cameraPosition = vi.fn();
-    const fgRef = {
-      current: {
-        cameraPosition,
-      },
-    };
-
-    centerCameraOnTarget(
-      fgRef,
-      { x: 0, y: 8, z: 0 },
-      300,
-      900,
-    );
-
-    expect(cameraPosition).toHaveBeenCalledWith(
-      { x: 0, y: 32, z: 300 },
-      { x: 0, y: 8, z: 0 },
-      900,
-    );
   });
 
 });

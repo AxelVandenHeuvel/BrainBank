@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+Seed College Math Notes
+=======================
+WHEN TO USE: First-time setup or after a database wipe. Seeds sample college
+math notes into LanceDB and Kuzu so you have data to work with immediately.
+Skips documents that already exist, so it's safe to run multiple times.
+
+Usage:
+    python scripts/seed_college_math_notes.py
+    python scripts/seed_college_math_notes.py --lance-db-path ./data/lancedb --kuzu-db-path ./data/kuzu
+"""
 import argparse
 import sys
 from pathlib import Path

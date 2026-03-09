@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+Print Concept Graph
+===================
+WHEN TO USE: To inspect the current state of your knowledge graph in the
+terminal. Prints an ASCII adjacency tree showing concepts and their
+connections. Falls back to LanceDB if Kuzu can't be opened (e.g. server
+is running and holds the lock).
+
+Usage:
+    python scripts/print_concept_graph.py
+    python scripts/print_concept_graph.py --kuzu-db-path ./data/kuzu --lance-db-path ./data/lancedb
+"""
 import argparse
 import sys
 from pathlib import Path

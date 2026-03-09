@@ -2,7 +2,6 @@ from dataclasses import replace
 
 from backend.retrieval.types import (
     ChunkHit,
-    GlobalCommunityHit,
     LocalSearchResult,
 )
 
@@ -116,21 +115,4 @@ def build_local_context(search_result: LocalSearchResult, max_words: int) -> str
         for chunk in selected_latent:
             used_words = _append_line(lines, used_words, chunk.text, max_words)
 
-    return "\n".join(lines)
-
-
-def build_global_context(community_hit: GlobalCommunityHit, max_words: int) -> str:
-    if max_words < 1:
-        return ""
-
-    lines: list[str] = []
-    used_words = 0
-    used_words = _append_line(lines, used_words, f"Community: {community_hit.community_id}", max_words)
-    used_words = _append_line(
-        lines,
-        used_words,
-        f"Member concepts: {', '.join(community_hit.member_concepts)}",
-        max_words,
-    )
-    used_words = _append_line(lines, used_words, f"Summary: {community_hit.summary}", max_words)
     return "\n".join(lines)
