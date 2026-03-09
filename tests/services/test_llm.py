@@ -103,6 +103,31 @@ class TestExtractConcepts:
         assert "2-6 specific method/entity concepts" in prompt
         assert '"relationships"' in prompt
 
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_prompt_requires_contextual_disambiguation(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = '{"concepts": ["Limits (Calculus)"], "relationships": []}'
+        mock_get_provider.return_value = provider
+
+        extract_concepts("Limits of sequences and series.", "Calc Notes")
+
+        prompt = provider.generate_text.call_args.args[0]
+        assert "multiple meanings" in prompt
+        assert "broad domain in parentheses" in prompt
+        assert "Limits (Calculus)" in prompt
+
+    @patch("backend.services.llm.get_provider")
+    def test_extract_concepts_prompt_requires_parent_concept_extraction(self, mock_get_provider):
+        provider = Mock()
+        provider.generate_text.return_value = '{"concepts": ["Derivatives", "Calculus"], "relationships": []}'
+        mock_get_provider.return_value = provider
+
+        extract_concepts("Derivatives and the chain rule.", "Calc Notes")
+
+        prompt = provider.generate_text.call_args.args[0]
+        assert "parent concept" in prompt.lower()
+        assert "Derivatives" in prompt
+        assert "Calculus" in prompt
 
     @patch("backend.services.llm.get_provider")
     def test_extract_concepts_prompt_includes_existing_concept_mapping_guidance(self, mock_get_provider):

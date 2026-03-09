@@ -624,3 +624,169 @@ class TestReplaceConceptInChunks:
         all_concepts = [c for row in df["concepts"].tolist() for c in row]
         assert "Biology" in all_concepts
         assert "Electromagnetism" not in all_concepts
+
+
+class TestForceConsolidateIslands:
+    def test_merges_zero_edge_node_into_llm_chosen_neighbor(self, lance_path, kuzu_path):
+        db, chunks_table = init_lancedb(lance_path)
+        concept_centroids = db.open_table("concept_centroids")
+        concept_centroids.add(
+            [
+                {
+                    "concept_name": "Limits",
+                    "centroid_vector": _vec(0.9, 0.1),
+                    "document_count": 5,
+                },
+                {
+                    "concept_name": "Calculus",
+                    "centroid_vector": _vec(1.0, 0.0),
+                    "document_count": 10,
+                },
+                {
+                    "concept_name": "Derivatives",
+                    "centroid_vector": _vec(0.0, 1.0),
+                    "document_count": 8,
+                },
+            ]
+        )
+        chunks_table.add(
+            [
+                {
+                    "chunk_id": "island-1",
+                    "doc_id": "d1",
+                    "doc_name": "Doc 1",
+                    "text": "Limits of sequences",
+                    "concepts": ["Limits"],
+                    "vector": _vec(0.9, 0.1),
+                },
+            ]
+        )
+
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Limits'})")
+        conn.execute("CREATE (:Concept {name: 'Calculus'})")
+        conn.execute("CREATE (:Concept {name: 'Derivatives'})")
+        # Calculus <-> Derivatives have an edge; Limits has ZERO edges
+        conn.execute(
+            "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Derivatives'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 1.0, edge_type: 'RELATED_TO'}]->(b)"
+        )
+
+        consolidator = ConceptConsolidator(chunks_table, concept_centroids, db)
+
+        with patch(
+            "backend.ingestion.consolidator.generate_text_with_backoff",
+            return_value="Calculus",
+        ) as mock_llm:
+            summary = consolidator.force_consolidate_islands(conn)
+
+        assert summary["forced_merges"] == 1
+        assert mock_llm.call_count == 1
+        prompt = mock_llm.call_args.args[0]
+        assert "disconnected" in prompt.lower()
+        assert "Limits" in prompt
+
+        deleted = conn.execute("MATCH (c:Concept {name: 'Limits'}) RETURN count(c)")
+        assert deleted.get_next()[0] == 0
+
+        chunk_df = chunks_table.to_pandas()
+        all_concepts = [c for row in chunk_df["concepts"].tolist() for c in row]
+        assert "Limits" not in all_concepts
+        assert "Calculus" in all_concepts
+        conn.close()
+
+    def test_skips_nodes_that_have_edges(self, lance_path, kuzu_path):
+        db, chunks_table = init_lancedb(lance_path)
+        concept_centroids = db.open_table("concept_centroids")
+        concept_centroids.add(
+            [
+                {
+                    "concept_name": "Calculus",
+                    "centroid_vector": _vec(1.0, 0.0),
+                    "document_count": 10,
+                },
+                {
+                    "concept_name": "Derivatives",
+                    "centroid_vector": _vec(0.0, 1.0),
+                    "document_count": 8,
+                },
+            ]
+        )
+        chunks_table.add(
+            [
+                {
+                    "chunk_id": "c1",
+                    "doc_id": "d1",
+                    "doc_name": "Doc 1",
+                    "text": "Calculus",
+                    "concepts": ["Calculus"],
+                    "vector": _vec(1.0, 0.0),
+                },
+            ]
+        )
+
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'Calculus'})")
+        conn.execute("CREATE (:Concept {name: 'Derivatives'})")
+        conn.execute(
+            "MATCH (a:Concept {name: 'Calculus'}), (b:Concept {name: 'Derivatives'}) "
+            "CREATE (a)-[:RELATED_TO {reason: 'shared_document', weight: 1.0, edge_type: 'RELATED_TO'}]->(b)"
+        )
+
+        consolidator = ConceptConsolidator(chunks_table, concept_centroids, db)
+
+        with patch(
+            "backend.ingestion.consolidator.generate_text_with_backoff",
+        ) as mock_llm:
+            summary = consolidator.force_consolidate_islands(conn)
+
+        assert summary["forced_merges"] == 0
+        mock_llm.assert_not_called()
+        conn.close()
+
+    def test_respects_llm_none_decision(self, lance_path, kuzu_path):
+        db, chunks_table = init_lancedb(lance_path)
+        concept_centroids = db.open_table("concept_centroids")
+        concept_centroids.add(
+            [
+                {
+                    "concept_name": "My Journal Entry",
+                    "centroid_vector": _vec(0.5, 0.5),
+                    "document_count": 3,
+                },
+                {
+                    "concept_name": "Calculus",
+                    "centroid_vector": _vec(1.0, 0.0),
+                    "document_count": 10,
+                },
+            ]
+        )
+        chunks_table.add(
+            [
+                {
+                    "chunk_id": "c1",
+                    "doc_id": "d1",
+                    "doc_name": "Doc 1",
+                    "text": "journal",
+                    "concepts": ["My Journal Entry"],
+                    "vector": _vec(0.5, 0.5),
+                },
+            ]
+        )
+
+        _, conn = init_kuzu(kuzu_path)
+        conn.execute("CREATE (:Concept {name: 'My Journal Entry'})")
+        conn.execute("CREATE (:Concept {name: 'Calculus'})")
+
+        consolidator = ConceptConsolidator(chunks_table, concept_centroids, db)
+
+        with patch(
+            "backend.ingestion.consolidator.generate_text_with_backoff",
+            return_value="NONE",
+        ):
+            summary = consolidator.force_consolidate_islands(conn)
+
+        assert summary["forced_merges"] == 0
+        still_exists = conn.execute("MATCH (c:Concept {name: 'My Journal Entry'}) RETURN count(c)")
+        assert still_exists.get_next()[0] == 1
+        conn.close()

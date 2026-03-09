@@ -147,7 +147,7 @@ backend/
     heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
-    consolidator.py         - Canonical concept mapping + density-control merges with threshold gates, batched LLM decisions, and forced orphan reaper merges
+    consolidator.py         - Canonical concept mapping + density-control merges with threshold gates, batched LLM decisions, forced orphan reaper, and island node reaper (zero-edge consolidation)
     processor.py            - Ingest pipeline: chunk -> embed -> hinted extract -> canonicalize -> store -> consolidate
   session/
     memory.py               - In-memory session store with bounded turn window and TTL
@@ -171,7 +171,7 @@ scripts/
   print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
   seed_mock_demo_data.py     - Seeds the hackathon demo corpus into local databases
-  rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup → heal_graph (semantic bridges) → forced orphan reaper → recomputes concept centroids and community summaries
+  rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup → heal_graph (semantic bridges) → forced orphan reaper → island reaper (zero-edge nodes) → recomputes concept centroids and community summaries
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
@@ -348,7 +348,7 @@ Input: text + title
 LanceDB concept_centroids lookup -- fetch top 50 frequent concepts as extraction hints
   |
   v
-llm.extract_concepts(existing_concepts=...) -- Gemini extracts 4-8 balanced concepts and prefers mapping to known canonical names
+llm.extract_concepts(existing_concepts=...) -- Gemini extracts 4-8 balanced concepts and prefers mapping to known canonical names; prompt enforces contextual disambiguation (polysemous terms get domain suffix, e.g. "Limits (Calculus)") and parent concept co-extraction (specific concepts must co-occur with their broad parent)
   |
   v
 chunker.semantic_chunk_text() -- split by topic shift using sentence similarity
@@ -395,6 +395,7 @@ scripts.heal_graph.heal_graph() -- add SEMANTIC_BRIDGE edges between similar but
   |
   v
 scripts.rebuild_graphrag_artifacts.run_force_orphan_cleanup() -- strict orphan pass: force concepts with <3 docs into top-1 vector neighbor (LLM decision, fallback to nearest if LLM fails)
+scripts.rebuild_graphrag_artifacts.run_island_cleanup() -- island reaper: find concepts with zero edges, LLM decides whether to merge into nearest neighbor or keep as isolated topic
   |
   v
 retrieval.artifacts._build_concept_centroid_records() -- average chunk vectors per canonical concept
@@ -421,7 +422,7 @@ embeddings.embed_texts() -- embed each summary
 LanceDB replace community_summaries -- persist community summaries for global GraphRAG
 ```
 
-This rebuild is batch-oriented and runs in order: density-control merges → semantic bridge healing → forced orphan reaper (with LLM decision + vector-neighbor fallback) → concept centroids → community summaries.
+This rebuild is batch-oriented and runs in order: density-control merges → semantic bridge healing → forced orphan reaper (with LLM decision + vector-neighbor fallback) → island reaper (zero-edge nodes, LLM decision with NONE opt-out) → concept centroids → community summaries.
 
 ## Notion Import Flow (`POST /ingest/notion`)
 

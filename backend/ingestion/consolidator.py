@@ -17,6 +17,7 @@ AUTO_MERGE_SIMILARITY_THRESHOLD = 0.92
 LLM_DECISION_MIN_SIMILARITY = 0.75
 LLM_BATCH_SIZE = 5
 FORCED_ORPHAN_NEAREST_CANDIDATES = 5
+ISLAND_NEAREST_CANDIDATES = 5
 FORCED_ORPHAN_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,89 @@ class ConceptConsolidator:
             summary["forced_merges"],
         )
         return summary
+
+    def force_consolidate_islands(self, conn: _kuzu.Connection) -> dict[str, int]:
+        """Merge concepts with zero edges into their nearest semantic neighbor."""
+        concept_centroids = self._load_concept_centroids()
+
+        result = conn.execute(
+            "MATCH (c:Concept) WHERE NOT (c)-[]-() RETURN c.name"
+        )
+        islands: list[str] = []
+        while result.has_next():
+            islands.append(result.get_next()[0])
+        islands.sort()
+
+        forced_merges = 0
+        llm_calls = 0
+
+        print(f"    Processing {len(islands)} island nodes for consolidation...")
+        for index, island_name in enumerate(islands, start=1):
+            if index % 5 == 0 or index == 1:
+                print(f"      Island {index}/{len(islands)}: '{island_name}'...")
+
+            nearest = self._nearest_concepts_with_scores(
+                island_name,
+                concept_centroids,
+                limit=ISLAND_NEAREST_CANDIDATES,
+            )
+            candidates = [name for name, _score in nearest][:ISLAND_NEAREST_CANDIDATES]
+            if not candidates:
+                continue
+
+            llm_calls += 1
+            chosen_target = self._decide_island_merge(island_name, candidates)
+            if not chosen_target:
+                continue
+
+            if self._apply_merge(conn, island_name, chosen_target):
+                forced_merges += 1
+
+        summary = {
+            "islands_seen": len(islands),
+            "llm_calls": llm_calls,
+            "forced_merges": forced_merges,
+        }
+        logger.info(
+            "Island consolidation summary: islands_seen=%d llm_calls=%d forced_merges=%d",
+            summary["islands_seen"],
+            summary["llm_calls"],
+            summary["forced_merges"],
+        )
+        return summary
+
+    def _build_island_merge_prompt(self, island_name: str, candidates: list[str]) -> str:
+        candidates_str = ", ".join([f"'{c}'" for c in candidates])
+        return (
+            f"The concept '{island_name}' is disconnected from the knowledge graph (zero edges).\n"
+            f"Does it logically belong merged into one of these {len(candidates)} candidate hubs: [{candidates_str}]?\n"
+            f"Reply ONLY with the chosen name, or 'NONE' if it should remain an isolated topic "
+            f"(e.g., a completely unique journal entry).\n"
+            f"Chosen Name:"
+        )
+
+    def _decide_island_merge(self, island_name: str, candidates: list[str]) -> str | None:
+        prompt = self._build_island_merge_prompt(island_name, candidates)
+        try:
+            response = generate_text_with_backoff(
+                prompt,
+                provider_name="gemini",
+                gemini_model=FORCED_ORPHAN_GEMINI_MODEL,
+            )
+        except Exception as error:
+            logger.warning(
+                "Island merge decision failed for %s: %s",
+                island_name,
+                error,
+            )
+            return None
+
+        response_name = response.strip().strip('"').strip("'")
+        if not response_name or response_name.upper() == "NONE":
+            return None
+
+        by_lower = {candidate.lower(): candidate for candidate in candidates}
+        return by_lower.get(response_name.lower())
 
     def _map_to_canonical_name(
         self,
