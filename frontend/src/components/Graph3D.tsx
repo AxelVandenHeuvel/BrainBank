@@ -26,10 +26,6 @@ import {
   keepLocalPointAtWorldOrigin,
   rotateObjectFromPointerDelta,
 } from '../lib/brainScene';
-import {
-  getMockDocumentsForConcept,
-  mockRelationshipDetailsByEdge,
-} from '../mock/mockGraph';
 import type {
   GraphData,
   GraphLink,
@@ -148,6 +144,12 @@ export function Graph3D({
   const lastDragPositionRef = useRef({ x: 0, y: 0 });
   const containerSizeRef = useRef({ width: 0, height: 0 });
   const cameraAnimationRef = useRef<number | null>(null);
+  const cameraAnimationTargetRef = useRef<{
+    pos: { x: number; y: number; z: number };
+    lookAt: { x: number; y: number; z: number };
+    focusPoint?: { x: number; y: number; z: number };
+    onComplete?: () => void;
+  } | null>(null);
   const brainMeshAnimationRef = useRef<number | null>(null);
   const simulationSettledRef = useRef(false);
   const pinnedPositionsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
@@ -178,6 +180,7 @@ export function Graph3D({
   } | null>(null);
   const diveStartTimeRef = useRef<number | null>(null);
   const [isDiving, setIsDiving] = useState(false);
+  const [emptyConceptName, setEmptyConceptName] = useState<string | null>(null);
   const [showBrainMesh, setShowBrainMesh] = useState(true);
   const [graphStats, setGraphStats] = useState<GraphStatsResponse | null>(null);
   const showBrainMeshRef = useRef(showBrainMesh);
@@ -185,6 +188,12 @@ export function Graph3D({
   useEffect(() => {
     showBrainMeshRef.current = showBrainMesh;
   }, [showBrainMesh]);
+
+  useEffect(() => {
+    if (!emptyConceptName) return;
+    const id = setTimeout(() => setEmptyConceptName(null), 3000);
+    return () => clearTimeout(id);
+  }, [emptyConceptName]);
 
   useEffect(() => {
     if (graphSource !== 'api') {
@@ -714,6 +723,56 @@ export function Graph3D({
     scheduleIdleRotation();
   }
 
+  const suppressNextForceGraphClickRef = useRef(false);
+
+  /** Find the closest visible node to a screen position using 2D projection. */
+  function findNodeAtScreenPos(clientX: number, clientY: number): GraphNode | null {
+    const fg = graphRef.current;
+    const container = containerRef.current;
+    if (!fg || !container) return null;
+
+    const rect = container.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+
+    let closest: GraphNode | null = null;
+    let closestDist = Infinity;
+    const threshold = 25; // pixels
+
+    for (const node of displayDataRef.current.nodes) {
+      const worldPos = toWorldPoint({ x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 });
+      const screenCoords = fg.graph2ScreenCoords(worldPos.x, worldPos.y, worldPos.z);
+      const dx = screenCoords.x - localX;
+      const dy = screenCoords.y - localY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < threshold && dist < closestDist) {
+        closest = node;
+        closestDist = dist;
+      }
+    }
+
+    return closest;
+  }
+
+  function snapCameraAnimationToEnd() {
+    if (cameraAnimationRef.current !== null) {
+      cancelAnimationFrame(cameraAnimationRef.current);
+      cameraAnimationRef.current = null;
+    }
+    const target = cameraAnimationTargetRef.current;
+    if (target) {
+      if (target.focusPoint) {
+        sceneFocusPointRef.current = target.focusPoint;
+        applySceneFocusPoint();
+      }
+      graphRef.current?.cameraPosition(target.pos, target.lookAt);
+      lookAtTargetRef.current = target.lookAt;
+      const cb = target.onComplete;
+      cameraAnimationTargetRef.current = null;
+      cb?.();
+    }
+  }
+
   function handleMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) {
       return;
@@ -721,6 +780,30 @@ export function Graph3D({
 
     if (event.target instanceof HTMLElement && event.target.closest('button')) {
       return;
+    }
+
+    // If camera is mid-animation, identify the node under the cursor
+    // at the current intermediate camera position and handle the click
+    // ourselves — ForceGraph3D's raycast would miss because the camera
+    // is moving.
+    if (cameraAnimationRef.current !== null) {
+      const node = findNodeAtScreenPos(event.clientX, event.clientY);
+      if (node) {
+        // Cancel the in-flight animation (don't snap — we'll start a
+        // new animation toward the clicked node).
+        cancelAnimationFrame(cameraAnimationRef.current);
+        cameraAnimationRef.current = null;
+        cameraAnimationTargetRef.current = null;
+
+        // Suppress ForceGraph3D's click for this interaction.
+        suppressNextForceGraphClickRef.current = true;
+        setTimeout(() => { suppressNextForceGraphClickRef.current = false; }, 300);
+
+        handleNodeClick(node);
+        return;
+      }
+      // No node under cursor — snap to end so next interaction works.
+      snapCameraAnimationToEnd();
     }
 
     isDragRotatingRef.current = true;
@@ -819,19 +902,22 @@ export function Graph3D({
         docs = await response.json();
       }
     } catch { }
-    if (docs.length === 0) docs = getMockDocumentsForConcept(conceptName);
     return docs;
   }
 
-  function handleConceptExpansion(node: GraphNode) {
+  async function handleConceptExpansion(node: GraphNode) {
+    const docs = await fetchConceptDocs(node.name);
+
+    if (docs.length === 0) {
+      setEmptyConceptName(node.name);
+      return;
+    }
+
     const nodePoint = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
 
     // Start dive animation: push the camera inward while the rest of the brain fades away.
     setIsDiving(true);
     diveStartTimeRef.current = performance.now();
-
-    // Prefetch docs while camera zooms in
-    const docsPromise = fetchConceptDocs(node.name);
 
     // Phase 1: zoom into the concept node
     sceneFocusPointRef.current = nodePoint;
@@ -846,14 +932,9 @@ export function Graph3D({
       target,
       DIVE_ZOOM_IN_DURATION_MS,
       () => {
-        // Once the inward dive finishes, reveal the doc sub-graph in place.
-        docsPromise.then((docs) => {
-          if (docs.length > 0) {
-            setExpandedConcept({ node, docs });
-          }
-          setIsDiving(false);
-          diveStartTimeRef.current = null;
-        });
+        setExpandedConcept({ node, docs });
+        setIsDiving(false);
+        diveStartTimeRef.current = null;
       },
     );
   }
@@ -899,6 +980,14 @@ export function Graph3D({
       cameraAnimationRef.current = null;
     }
 
+    // Store the final destination so we can snap to it on click.
+    cameraAnimationTargetRef.current = {
+      pos: targetPos,
+      lookAt: targetLookAt,
+      focusPoint: targetFocusPoint,
+      onComplete,
+    };
+
     const cam = graphRef.current?.cameraPosition();
     if (!cam) return;
 
@@ -939,6 +1028,7 @@ export function Graph3D({
         cameraAnimationRef.current = requestAnimationFrame(animate);
       } else {
         cameraAnimationRef.current = null;
+        cameraAnimationTargetRef.current = null;
         onComplete?.();
       }
     }
@@ -1052,9 +1142,6 @@ export function Graph3D({
     const sourceName = getNodeName(sourceId);
     const targetName = getNodeName(targetId);
 
-    const mockDetailsKey = `${sourceId}->${targetId}`;
-    const mockDetails = mockRelationshipDetailsByEdge[mockDetailsKey];
-
     setSelectedEdge({
       sourceId,
       targetId,
@@ -1078,22 +1165,6 @@ export function Graph3D({
 
     if (!sourceConcept || !targetConcept) {
       setRelationshipError('Relationship details are only available for concept-to-concept links.');
-      setIsRelationshipLoading(false);
-      return;
-    }
-
-    if (graphSource === 'mock') {
-      setRelationshipDetails(
-        mockDetails ?? {
-          source: sourceName,
-          target: targetName,
-          type: 'RELATED_TO',
-          reason: link.reason ?? 'Related concepts',
-          source_documents: [],
-          target_documents: [],
-          shared_document_ids: [],
-        },
-      );
       setIsRelationshipLoading(false);
       return;
     }
@@ -1200,15 +1271,19 @@ export function Graph3D({
           z: centeredBrain.orbitTarget.z,
         },
       };
-      clampNodesWithinBrain(true);
+      // Clamp existing nodes into the brain volume using the ref
+      // (the closure's displayData may be stale since this effect has [] deps).
+      const currentNodes = displayDataRef.current.nodes;
+      clampNodesToContainment(currentNodes, brainContainmentRef.current);
+      graphRef.current?.refresh();
 
-      // Update pin map with clamped positions so the reheat doesn't undo the clamping
-      const clampPins = pinnedPositionsRef.current;
-      displayDataRef.current.nodes.forEach((n) => {
-        clampPins.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0 });
-        n.fx = n.x;
-        n.fy = n.y;
-        n.fz = n.z;
+      // Clear fx/fy/fz so the reheated simulation can actually spread
+      // nodes out. Without this, pinned nodes stay clustered near the origin.
+      pinnedPositionsRef.current.clear();
+      currentNodes.forEach((n) => {
+        delete n.fx;
+        delete n.fy;
+        delete n.fz;
       });
 
       brainGroupRef.current = brainGroup;
@@ -1721,8 +1796,15 @@ export function Graph3D({
   const clampNodesWithinBrainRef = useRef(clampNodesWithinBrain);
   clampNodesWithinBrainRef.current = clampNodesWithinBrain;
 
-  const onNodeClick = useCallback((node: object) => handleNodeClickRef.current(node as GraphNode), []);
+  const onNodeClick = useCallback((node: object) => {
+    if (suppressNextForceGraphClickRef.current) {
+      suppressNextForceGraphClickRef.current = false;
+      return;
+    }
+    handleNodeClickRef.current(node as GraphNode);
+  }, []);
   const onLinkClick = useCallback((link: object) => void handleLinkClickRef.current(link as GraphLink), []);
+
   const onNodeHover = useCallback((node: object | null) => onHoverNodeRef.current((node as GraphNode | null) ?? null), []);
   const onEngineTick = useCallback(() => {
     // If simulation already settled, immediately re-pin nodes to prevent jiggle on reheat
@@ -1829,6 +1911,10 @@ export function Graph3D({
         onNodeClick={onNodeClick}
         onNodeHover={onNodeHover}
         onBackgroundClick={() => {
+          if (suppressNextForceGraphClickRef.current) {
+            suppressNextForceGraphClickRef.current = false;
+            return;
+          }
           if (Date.now() <= suppressBackgroundDoubleClickUntilRef.current) return;
           clearSelectedEdge();
           setRotationPivotNode(null);
@@ -1858,6 +1944,17 @@ export function Graph3D({
               {expandedConcept.docs.length}
             </span>
           </div>
+        </div>
+      ) : null}
+
+      {emptyConceptName ? (
+        <div className="absolute left-1/2 top-8 z-20 -translate-x-1/2 border border-white/[0.08] bg-neutral-900 px-5 py-3 text-center">
+          <p className="text-sm font-medium text-neutral-200">
+            No documents for <span className="text-pink-400">{emptyConceptName}</span>
+          </p>
+          <p className="mt-1 text-[11px] text-neutral-500">
+            Ingest notes that mention this concept to populate it.
+          </p>
         </div>
       ) : null}
 

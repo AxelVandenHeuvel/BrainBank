@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { normalizeGraphData, validateGraphApiResponse } from '../lib/graphData';
-import { mockGraphApiResponse } from '../mock/mockGraph';
 import type { GraphData, GraphSource } from '../types/graph';
 
 interface UseGraphDataResult {
@@ -12,23 +11,12 @@ interface UseGraphDataResult {
   refetch: () => void;
 }
 
-const fallbackGraphData = normalizeGraphData(mockGraphApiResponse);
-
-/** Merge API nodes on top of mock nodes while keeping API edges authoritative. */
-function mergeWithMock(apiData: GraphData): GraphData {
-  const apiNodeIds = new Set(apiData.nodes.map((n) => n.id));
-  const mockOnlyNodes = fallbackGraphData.nodes.filter((n) => !apiNodeIds.has(n.id));
-
-  return {
-    nodes: [...mockOnlyNodes, ...apiData.nodes],
-    links: apiData.links,
-  };
-}
+const emptyGraphData: GraphData = { nodes: [], links: [] };
 
 export function useGraphData(): UseGraphDataResult {
   const [result, setResult] = useState<Omit<UseGraphDataResult, 'refetch'>>({
-    data: fallbackGraphData,
-    source: 'mock',
+    data: emptyGraphData,
+    source: 'api',
     isLoading: true,
     error: null,
   });
@@ -63,11 +51,10 @@ export function useGraphData(): UseGraphDataResult {
         }
 
         const apiData = normalizeGraphData(graphPayload);
-        const merged = mergeWithMock(apiData);
 
         setResult({
-          data: merged,
-          source: apiData.nodes.length > 0 ? 'api' : 'mock',
+          data: apiData,
+          source: 'api',
           isLoading: false,
           error: null,
         });
@@ -77,8 +64,8 @@ export function useGraphData(): UseGraphDataResult {
         }
 
         setResult({
-          data: fallbackGraphData,
-          source: 'mock',
+          data: emptyGraphData,
+          source: 'api',
           isLoading: false,
           error: error instanceof Error ? error.message : 'Failed to load graph',
         });

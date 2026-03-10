@@ -19,7 +19,7 @@ export function seedNodePosition(nodeId: string): { x: number; y: number; z: num
   const phi = ((hash & 0xffff) / 0xffff) * Math.PI * 2;
   const cosTheta = ((((hash >> 16) & 0xffff) / 0xffff) * 2) - 1;
   const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
-  const r = 15 + ((hash & 0xff) / 255) * 20;
+  const r = 60 + ((hash & 0xff) / 255) * 80;
   return {
     x: r * sinTheta * Math.cos(phi),
     y: r * cosTheta,

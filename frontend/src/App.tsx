@@ -1,16 +1,15 @@
-import { startTransition, useCallback, useDeferredValue, useMemo, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChatPanel } from './components/ChatPanel';
 import { DocumentEditor } from './components/DocumentEditor';
 import { FileExplorer } from './components/FileExplorer';
 import { Graph3D } from './components/Graph3D';
 import { IngestPanel } from './components/IngestPanel';
-import { SearchBar } from './components/SearchBar';
+import { SearchBar, type SearchBarHandle } from './components/SearchBar';
 import { TabBar } from './components/TabBar';
 import { useGraphData } from './hooks/useGraphData';
 import { useFileTree } from './hooks/useFileTree';
 import { findMatchingNodeIds } from './lib/graphView';
-import { getMockDocumentsForConcept } from './mock/mockGraph';
 import type { AssistantMessageSelection } from './types/chat';
 import type { OpenTab } from './types/notes';
 import type { ActiveTraversal } from './types/traversal';
@@ -38,7 +37,26 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string>(BRAIN_TAB_ID);
   const [highlightedConcept, setHighlightedConcept] = useState<string | null>(null);
 
+  const searchBarRef = useRef<SearchBarHandle>(null);
+
   const { tree, isLoading: isTreeLoading, refetch: refetchTree } = useFileTree(data);
+
+  // Auto-focus search bar when user starts typing on the Brain tab
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (activeTabId !== BRAIN_TAB_ID) return;
+      // Ignore if already focused on an input/textarea or if modifier keys are held
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Only trigger on printable characters
+      if (e.key.length === 1) {
+        searchBarRef.current?.focus();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTabId]);
 
   const matchCount = useMemo(() => {
     const normalizedQuery = deferredQuery.trim().toLowerCase();
@@ -185,34 +203,28 @@ export default function App() {
     setActiveTabId(id);
   }
 
-  // FileExplorer: open doc tab immediately with mock content, then try API
-  function handleFileExplorerOpenDocument(docId: string, name: string, conceptName: string) {
-    const mockDocs = getMockDocumentsForConcept(conceptName);
-    const mockDoc = mockDocs.find((d) => d.doc_id === docId);
-    const content = mockDoc?.full_text ?? '';
-    openDocument(docId, name, content, { isLoading: source === 'api' && content.length === 0 });
+  function handleFileExplorerOpenDocument(docId: string, name: string, _conceptName: string) {
+    openDocument(docId, name, '', { isLoading: true });
 
-    if (source === 'api') {
-      fetch(`/api/documents/${encodeURIComponent(docId)}`)
-        .then((res) => {
-          if (!res.ok) throw new Error('fetch failed');
-          return res.json();
-        })
-        .then((doc: { doc_id: string; name: string; full_text: string }) => {
-          setOpenTabs((prev) =>
-            prev.map((t) => (
-              t.id === docId
-                ? { ...t, title: doc.name, content: doc.full_text, isLoading: false }
-                : t
-            )),
-          );
-        })
-        .catch(() => {
-          setOpenTabs((prev) =>
-            prev.map((t) => (t.id === docId ? { ...t, isLoading: false } : t)),
-          );
-        });
-    }
+    fetch(`/api/documents/${encodeURIComponent(docId)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('fetch failed');
+        return res.json();
+      })
+      .then((doc: { doc_id: string; name: string; full_text: string }) => {
+        setOpenTabs((prev) =>
+          prev.map((t) => (
+            t.id === docId
+              ? { ...t, title: doc.name, content: doc.full_text, isLoading: false }
+              : t
+          )),
+        );
+      })
+      .catch(() => {
+        setOpenTabs((prev) =>
+          prev.map((t) => (t.id === docId ? { ...t, isLoading: false } : t)),
+        );
+      });
   }
 
   function handleChatOpenDocument(docId: string, name: string) {
@@ -325,7 +337,7 @@ export default function App() {
             data-testid="top-bar"
             className="border-b border-white/[0.06] bg-black px-4 py-2.5"
           >
-            <SearchBar query={query} matchCount={matchCount} onQueryChange={handleQueryChange} />
+            <SearchBar ref={searchBarRef} query={query} matchCount={matchCount} onQueryChange={handleQueryChange} />
           </div>
 
           {/* Tab bar — always visible */}

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { getMockDocumentsForConcept } from '../mock/mockGraph';
 import type { GraphData } from '../types/graph';
 
 export interface FileTreeDocument {
@@ -59,16 +58,6 @@ function buildTreeFromGraphData(graphData: GraphData): FileTreeConcept[] {
       const docs = conceptMap.get(conceptNode.name);
       if (docs && !docs.some((d) => d.docId === docNode.id)) {
         docs.push({ docId: docNode.id, name: docNode.name });
-      }
-    }
-  }
-
-  // For concepts with no documents from graph links, use mock documents
-  for (const [conceptName, docs] of conceptMap) {
-    if (docs.length === 0) {
-      const mockDocs = getMockDocumentsForConcept(conceptName);
-      for (const md of mockDocs) {
-        docs.push({ docId: md.doc_id, name: md.name });
       }
     }
   }
