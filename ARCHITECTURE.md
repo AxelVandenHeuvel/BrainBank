@@ -82,9 +82,12 @@ Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurre
 ```
 run.sh                      - Starts backend and frontend together
 frontend/
-  package.json               - Frontend scripts and dependencies
+  package.json               - Frontend scripts and dependencies, including Electron packaging commands
   vite.config.ts             - Vite React config + /api and /ingest proxy
   index.html                 - Frontend HTML entrypoint
+  electron/
+    main.cjs                 - Electron main-process entrypoint that launches the packaged backend and loads the frontend
+    preload.cjs              - Electron preload bridge exposing minimal renderer metadata
   public/assets/
     human-brain.glb          - Embedded glTF brain wireframe asset (neuron GLB removed; nodes are procedural dodecahedrons)
   src/
@@ -108,6 +111,7 @@ frontend/
       useFileTree.ts         - GET /api/concepts + /api/documents hook, builds the sidebar tree and groups concept-less drafts under a `Notes` bucket
       useGraphData.ts        - GET /api/graph with mock fallback + refetch
     lib/
+      api.ts                 - Runtime API base URL helper for Vite dev proxy vs packaged Electron backend
       brainModel.ts          - Brain mesh containment math for node bounds
       brainScene.ts          - Brain model centering plus scene-focus and rotation helpers
       chatStorage.ts         - localStorage helpers for persisted chat sessions
@@ -130,6 +134,7 @@ backend/
   api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/documents/{doc_id} (GET + PUT lightweight + POST reingest), /api/stats, /api/concepts/{name}/documents
   graph_visualization.py    - Terminal-friendly concept graph loading from Kuzu with LanceDB fallback and ASCII rendering
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
+  server.py                 - Uvicorn launcher used by the packaged Electron backend binary
   sample_data/
     college_math_notes.py   - Loads and seeds the sample college math corpus
     mock_demo.py            - Builds and seeds the hackathon demo corpus that mirrors the frontend mock graph
@@ -213,6 +218,14 @@ tests/
 ```
 
 Each file has a single responsibility. Tests mirror the source structure.
+
+## Repository Ignore Policy
+
+The root `.gitignore` is intentionally narrow. It ignores only local secrets (`.env`), Python caches and virtualenv state, embedded runtime databases under `data/` (`kuzu`, `kuzu.wal`, and `lancedb/`), backend packaging output (`backend/dist/`, `build/`), local scratch output under `tmp/`, and the generated Electron backend binary under `frontend/electron/bin/`. Source files such as `backend/server.py`, `brainbank-backend.spec`, and the Electron entrypoints remain trackable.
+
+## Electron Packaging
+
+The Electron shell lives under `frontend/electron/`. `main.cjs` owns the desktop window lifecycle and starts the packaged Python backend binary from `frontend/electron/bin/` when the app runs outside development. `preload.cjs` exposes only minimal renderer metadata. Frontend network calls use `frontend/src/lib/api.ts` so browser development keeps the Vite proxy behavior while packaged desktop builds call the local backend directly at `http://127.0.0.1:8000`. `backend/server.py`, `brainbank-backend.spec`, and `scripts/build_backend.sh` provide the Python entrypoint and build path used to bundle that backend executable.
 
 ## Sample Data Seeding
 
@@ -708,5 +721,3 @@ Frontend utility modules keep only runtime-facing exports; tests avoid depending
 Backend API tests isolate database access at the route boundary when a handler eagerly acquires the shared Kuzu engine, so mocked ingest flows do not depend on the real `./data/kuzu` file lock.
 
 Run: `cd frontend && npm test`
-
-
