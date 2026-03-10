@@ -1,8 +1,9 @@
 from backend.db.lance import (
-    init_lancedb,
-    find_existing_document,
-    delete_document_chunks,
     create_document_text,
+    delete_document_chunks,
+    find_existing_document,
+    init_lancedb,
+    list_chunk_records,
     update_document_text,
 )
 from tests.conftest import mock_embed_texts
@@ -237,6 +238,58 @@ class TestUpdateDocumentText:
         matching = cdf[cdf["doc_id"] == "doc-1"]
         assert len(matching) == 1
         assert matching.iloc[0]["doc_name"] == "Updated Title"
+
+
+class TestListChunkRecords:
+    def test_returns_chunk_records_with_metadata(self, lance_path):
+        _, table = init_lancedb(lance_path)
+        vec = mock_embed_texts(["chunk body"])[0]
+        table.add([{
+            "chunk_id": "chunk-1",
+            "doc_id": "doc-1",
+            "doc_name": "Study Notes",
+            "text": "chunk body",
+            "concepts": ["Calculus"],
+            "vector": vec,
+        }])
+
+        records = list_chunk_records(lance_path)
+
+        assert len(records) == 1
+        assert records[0]["chunk_id"] == "chunk-1"
+        assert records[0]["doc_id"] == "doc-1"
+        assert records[0]["doc_name"] == "Study Notes"
+        assert records[0]["text"] == "chunk body"
+        assert records[0]["concepts"] == ["Calculus"]
+        assert records[0]["vector"] == vec
+
+    def test_filters_records_by_doc_id(self, lance_path):
+        _, table = init_lancedb(lance_path)
+        vec = mock_embed_texts(["chunk"])[0]
+        table.add([
+            {
+                "chunk_id": "chunk-1",
+                "doc_id": "doc-1",
+                "doc_name": "Doc 1",
+                "text": "first",
+                "concepts": ["Math"],
+                "vector": vec,
+            },
+            {
+                "chunk_id": "chunk-2",
+                "doc_id": "doc-2",
+                "doc_name": "Doc 2",
+                "text": "second",
+                "concepts": ["Physics"],
+                "vector": vec,
+            },
+        ])
+
+        records = list_chunk_records(lance_path, doc_id="doc-2")
+
+        assert len(records) == 1
+        assert records[0]["chunk_id"] == "chunk-2"
+        assert records[0]["doc_id"] == "doc-2"
 
     def test_returns_false_for_nonexistent_doc(self, lance_path):
         init_lancedb(lance_path)

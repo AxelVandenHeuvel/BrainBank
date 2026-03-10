@@ -134,7 +134,7 @@ backend/
     college_math_notes.py   - Loads and seeds the sample college math corpus
     mock_demo.py            - Builds and seeds the hackathon demo corpus that mirrors the frontend mock graph
   db/
-    lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup + delete_document_chunks
+    lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup + chunk listing + delete_document_chunks
     kuzu.py                 - Kuzu init + graph schema (nodes + edges) + shared-engine repair from LanceDB + update_node_communities() + clear concurrent-open error translation
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
@@ -169,6 +169,7 @@ sample_data/
     *.md                    - College student math note documents for document-opening tests
 scripts/
   print_concept_graph.py      - Prints the current concept graph as an ASCII adjacency tree, with LanceDB fallback if Kuzu cannot open
+  print_lancedb_chunks.py     - Prints stored LanceDB chunk rows, optionally filtered by `doc_id` and optionally including vectors
   seed_college_math_notes.py - Seeds the sample math note corpus into local databases
   seed_mock_demo_data.py     - Seeds the hackathon demo corpus into local databases
   rebuild_graphrag_artifacts.py - Runs concept-consolidation cleanup → heal_graph (semantic bridges) → forced orphan reaper → island reaper (zero-edge nodes) → recomputes concept centroids and community summaries
@@ -190,6 +191,7 @@ tests/
     test_consolidator.py    - Concept canonicalization + density-control merge tests
   scripts/
     test_heal_graph.py      - heal_graph: cosine similarity, centroid computation, edge-exists, bridge insertion tests
+    test_print_lancedb_chunks.py - CLI renderer/entrypoint tests for the LanceDB chunk inspection script
     test_rebuild_graphrag_artifacts.py - rebuild script integration test for consolidation cleanup pass
   services/
     test_clustering.py      - Leiden clustering: empty/small-graph handling + community assignment tests

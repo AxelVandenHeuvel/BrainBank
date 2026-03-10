@@ -85,6 +85,30 @@ def find_existing_document(title: str, db_path: str = "./data/lancedb") -> dict 
     return {"doc_id": row["doc_id"], "doc_name": row["doc_name"]}
 
 
+def list_chunk_records(db_path: str = "./data/lancedb", doc_id: str | None = None) -> list[dict]:
+    """Return chunk rows from LanceDB as plain dictionaries."""
+    _, table = init_lancedb(db_path)
+    try:
+        df = table.to_pandas()
+    except Exception:
+        return []
+
+    if df.empty:
+        return []
+
+    if doc_id is not None:
+        df = df[df["doc_id"] == doc_id]
+        if df.empty:
+            return []
+
+    df = df.sort_values(by=["doc_name", "chunk_id"], kind="stable")
+    records = df.to_dict(orient="records")
+    for record in records:
+        record["concepts"] = list(record.get("concepts", []))
+        record["vector"] = list(record.get("vector", []))
+    return records
+
+
 def delete_document_chunks(db_path: str, doc_id: str) -> int:
     """Delete all chunks and the centroid for a doc_id. Returns count of deleted chunks."""
     db, table = init_lancedb(db_path)
