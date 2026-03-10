@@ -201,6 +201,7 @@ tests/
     test_pdf.py             - PDF text extraction tests
   test_api_notion.py        - Notion import API endpoint tests
   test_api_upload.py        - File upload API endpoint tests
+  test_gitignore.py         - Repository ignore-policy tests for local runtime and packaging artifacts
   session/
     test_memory.py          - Session store TTL, isolation, and window tests
     test_query_with_history.py - History-aware query pipeline tests
