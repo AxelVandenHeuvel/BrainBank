@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import os
 import uuid
 from itertools import combinations
 
@@ -19,6 +21,12 @@ from backend.services.llm import extract_concepts
 SHARED_DOCUMENT_REASON = "shared_document"
 
 logger = logging.getLogger(__name__)
+
+
+def doc_id_from_path(file_path: str) -> str:
+    """Return a deterministic SHA-256 doc_id from the absolute file path."""
+    absolute = os.path.abspath(file_path)
+    return hashlib.sha256(absolute.encode()).hexdigest()
 
 
 def _dedupe_preserving_order(items: list[str]) -> list[str]:
@@ -60,6 +68,7 @@ def ingest_markdown(
     kuzu_db_path: str = "./data/kuzu",
     shared_kuzu_db=None,
     doc_id: str | None = None,
+    file_path: str | None = None,
 ) -> dict:
     db, table = init_lancedb(lance_db_path)
     document_centroids_table = db.open_table("document_centroids")
@@ -84,8 +93,18 @@ def ingest_markdown(
     )
 
     try:
-        if doc_id is None:
+        if file_path is not None:
+            doc_id = doc_id_from_path(file_path)
+            # Delete old chunks and centroid for this file so re-ingest is idempotent
+            table.delete(f'doc_id = "{doc_id}"')
+            try:
+                document_centroids_table.delete(f'doc_id = "{doc_id}"')
+            except Exception:
+                pass
+        elif doc_id is None:
             doc_id = str(uuid.uuid4())
+
+        resolved_file_path = file_path or ""
 
         chunks = chunk_text(text)
         chunk_ids = [str(uuid.uuid4()) for _ in chunks]
@@ -129,6 +148,7 @@ def ingest_markdown(
                 "chunk_id": chunk_id,
                 "doc_id": doc_id,
                 "doc_name": doc_name,
+                "file_path": resolved_file_path,
                 "text": chunk_text_value,
                 "concepts": chunk_concepts(chunk_text_value),
                 "vector": vector,
@@ -143,6 +163,7 @@ def ingest_markdown(
                 {
                     "doc_id": doc_id,
                     "doc_name": doc_name,
+                    "file_path": resolved_file_path,
                     "centroid_vector": centroid_vector,
                 }
             ]

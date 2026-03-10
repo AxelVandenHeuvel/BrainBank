@@ -12,6 +12,7 @@ CHUNKS_SCHEMA = pa.schema(
         pa.field("chunk_id", pa.string()),
         pa.field("doc_id", pa.string()),
         pa.field("doc_name", pa.string()),
+        pa.field("file_path", pa.string()),
         pa.field("text", pa.string()),
         pa.field("concepts", pa.list_(pa.string())),
         pa.field("vector", pa.list_(pa.float32(), VECTOR_DIM)),
@@ -22,6 +23,7 @@ DOCUMENT_CENTROIDS_SCHEMA = pa.schema(
     [
         pa.field("doc_id", pa.string()),
         pa.field("doc_name", pa.string()),
+        pa.field("file_path", pa.string()),
         pa.field("centroid_vector", pa.list_(pa.float32(), VECTOR_DIM)),
     ]
 )
@@ -117,6 +119,7 @@ def create_document_text(
     doc_name: str,
     text: str,
     doc_id: str | None = None,
+    file_path: str = "",
 ) -> str:
     """Create a lightweight document row in LanceDB for draft-style saves."""
     db, table = init_lancedb(db_path)
@@ -129,6 +132,7 @@ def create_document_text(
         "chunk_id": str(uuid.uuid4()),
         "doc_id": real_doc_id,
         "doc_name": doc_name,
+        "file_path": file_path,
         "text": text,
         "concepts": [],
         "vector": zero_vector,
@@ -137,6 +141,7 @@ def create_document_text(
     centroids_table.add([{
         "doc_id": real_doc_id,
         "doc_name": doc_name,
+        "file_path": file_path,
         "centroid_vector": zero_vector,
     }])
 
@@ -163,11 +168,13 @@ def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str
     first_chunk_id = existing.iloc[0]["chunk_id"]
 
     # Delete old chunks and insert single merged chunk
+    file_path = existing.iloc[0].get("file_path", "") if "file_path" in existing.columns else ""
     table.delete(f'doc_id = "{doc_id}"')
     table.add([{
         "chunk_id": first_chunk_id,
         "doc_id": doc_id,
         "doc_name": doc_name,
+        "file_path": file_path,
         "text": new_text,
         "concepts": all_concepts,
         "vector": first_vector,
@@ -179,6 +186,7 @@ def update_document_text(db_path: str, doc_id: str, doc_name: str, new_text: str
         centroids_table.add([{
             "doc_id": doc_id,
             "doc_name": doc_name,
+            "file_path": file_path,
             "centroid_vector": first_vector,
         }])
     except Exception as e:

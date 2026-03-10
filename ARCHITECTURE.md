@@ -25,23 +25,25 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 
 ### LanceDB: `chunks` table
 
-| Column   | Type              | Description                              |
-|----------|-------------------|------------------------------------------|
-| chunk_id | STRING            | Unique ID per chunk                      |
-| doc_id   | STRING            | Parent document ID                       |
-| doc_name | STRING            | Human-readable document title            |
-| text     | STRING            | Chunk text content                       |
-| concepts | STRING[]          | Concepts mentioned in this chunk         |
-| vector   | FLOAT32[384]      | Embedding vector                         |
+| Column    | Type              | Description                              |
+|-----------|-------------------|------------------------------------------|
+| chunk_id  | STRING            | Unique ID per chunk                      |
+| doc_id    | STRING            | Deterministic SHA-256 of absolute `file_path` (or UUID for non-file ingests) |
+| doc_name  | STRING            | Human-readable document title            |
+| file_path | STRING            | Absolute path to the source `.md` file (empty for non-file ingests) |
+| text      | STRING            | Chunk text content                       |
+| concepts  | STRING[]          | Concepts mentioned in this chunk         |
+| vector    | FLOAT32[384]      | Embedding vector                         |
 
-LanceDB is the sole source of document identity and the concept-to-document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph.
+LanceDB is the sole source of document identity and the concept-to-document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph. When `file_path` is provided, `doc_id` is a deterministic SHA-256 hash of the absolute path so re-ingesting the same file overwrites the previous version without duplicates.
 
 ### LanceDB: `document_centroids` table
 
 | Column          | Type         | Description                                     |
 |-----------------|--------------|-------------------------------------------------|
-| doc_id          | STRING       | Parent document ID                              |
+| doc_id          | STRING       | Deterministic SHA-256 of absolute `file_path` (or UUID) |
 | doc_name        | STRING       | Human-readable document title                   |
+| file_path       | STRING       | Absolute path to the source `.md` file (empty for non-file ingests) |
 | centroid_vector | FLOAT32[384] | Mean embedding vector across all document chunks |
 
 `backend/services/embeddings.py` computes this centroid by averaging all chunk `vector` values that share the same `doc_id`.

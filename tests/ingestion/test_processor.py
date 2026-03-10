@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 from backend.db.kuzu import init_kuzu
 from backend.db.lance import init_lancedb
-from backend.ingestion.processor import ingest_markdown
+from backend.ingestion.processor import doc_id_from_path, ingest_markdown
 from tests.conftest import (
     mock_embed_texts,
     mock_extract_concepts,
@@ -216,3 +216,83 @@ class TestIngestMarkdown:
         assert result["concepts"] == ["Integrals", "Derivatives"]
         consolidator.canonicalize_concepts.assert_called_once_with(["Definite Integrals", "Derivatives"])
         consolidator.consolidate_graph.assert_called_once()
+
+
+class TestDocIdFromPath:
+    def test_returns_deterministic_sha256_for_same_path(self):
+        path = "/home/user/notes/calculus.md"
+        id1 = doc_id_from_path(path)
+        id2 = doc_id_from_path(path)
+        assert id1 == id2
+        assert len(id1) == 64  # SHA-256 hex digest
+
+    def test_different_paths_produce_different_ids(self):
+        id1 = doc_id_from_path("/home/user/notes/calculus.md")
+        id2 = doc_id_from_path("/home/user/notes/algebra.md")
+        assert id1 != id2
+
+    def test_uses_absolute_path_for_hashing(self):
+        # Relative and absolute forms of the same path should produce the same id
+        import os
+        rel_path = "data/notes/test.md"
+        abs_path = os.path.abspath(rel_path)
+        assert doc_id_from_path(rel_path) == doc_id_from_path(abs_path)
+
+
+class TestFilePathIngest:
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_file_path_produces_deterministic_doc_id(self, _m1, _m2, _m3, lance_path, kuzu_path):
+        file_path = "/home/user/notes/calculus.md"
+        result = ingest_markdown("Calculus basics", "Calculus", lance_path, kuzu_path, file_path=file_path)
+        assert result["doc_id"] == doc_id_from_path(file_path)
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_file_path_stored_in_chunk_records(self, _m1, _m2, _m3, lance_path, kuzu_path):
+        file_path = "/home/user/notes/calculus.md"
+        result = ingest_markdown("Calculus basics", "Calculus", lance_path, kuzu_path, file_path=file_path)
+        _, table = init_lancedb(lance_path)
+        df = table.to_pandas()
+        matching = df[df["doc_id"] == result["doc_id"]]
+        assert all(matching["file_path"] == file_path)
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_file_path_stored_in_document_centroids(self, _m1, _m2, _m3, lance_path, kuzu_path):
+        file_path = "/home/user/notes/calculus.md"
+        result = ingest_markdown("Calculus basics", "Calculus", lance_path, kuzu_path, file_path=file_path)
+        db, _ = init_lancedb(lance_path)
+        centroids = db.open_table("document_centroids")
+        df = centroids.to_pandas()
+        matching = df[df["doc_id"] == result["doc_id"]]
+        assert len(matching) == 1
+        assert matching.iloc[0]["file_path"] == file_path
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_reingest_same_file_path_overwrites_chunks(self, _m1, _m2, _m3, lance_path, kuzu_path):
+        file_path = "/home/user/notes/calculus.md"
+        r1 = ingest_markdown("Version one", "Calculus", lance_path, kuzu_path, file_path=file_path)
+        r2 = ingest_markdown("Version two", "Calculus", lance_path, kuzu_path, file_path=file_path)
+
+        assert r1["doc_id"] == r2["doc_id"]
+
+        _, table = init_lancedb(lance_path)
+        df = table.to_pandas()
+        matching = df[df["doc_id"] == r1["doc_id"]]
+        # Should only have chunks from the second ingest, not duplicates
+        assert all("Version two" in text for text in matching["text"].tolist())
+
+    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
+    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
+    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
+    def test_no_file_path_still_uses_random_uuid(self, _m1, _m2, _m3, lance_path, kuzu_path):
+        r1 = ingest_markdown("Text one", "Doc 1", lance_path, kuzu_path)
+        r2 = ingest_markdown("Text two", "Doc 2", lance_path, kuzu_path)
+        assert r1["doc_id"] != r2["doc_id"]
+        assert len(r1["doc_id"]) == 36  # UUID format
