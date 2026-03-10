@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 DEBOUNCE_SECONDS = 60.0
 WATCHED_EXTENSIONS = {".md", ".txt"}
-DEFAULT_NOTES_DIR = "./data/notes"
-DEFAULT_ASSETS_DIR = "./data/assets"
+DEFAULT_NOTES_DIR = "./notes"
+DEFAULT_ASSETS_DIR = "./assets"
 
 
 def get_notes_dir() -> str:

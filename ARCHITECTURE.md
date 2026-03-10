@@ -15,6 +15,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | API         | FastAPI                 | HTTP endpoints                   |
 | Vector DB   | LanceDB (embedded)      | Chunk storage + similarity search|
 | Graph DB    | Kuzu (embedded)         | Concept graph + traversal        |
+| Manifest DB | SQLite (embedded)       | Guarded file system state & content hashes|
 | Clustering  | igraph + leidenalg      | Weighted Leiden community detection |
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
 | Graph Analytics | NetworkX           | Batch Louvain community detection |
@@ -23,6 +24,18 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | LLM         | Gemini 2.5 Flash + Gemini 3.1 Flash-Lite + Ollama | Gemini extraction/forced orphan merge decisions + grounded answers |
 
 ## Data Model
+
+### SQLite: `.brainbank_manifest.db`
+
+| Column          | Type         | Description                                                                 |
+|-----------------|--------------|-----------------------------------------------------------------------------|
+| doc_id          | STRING (PK)  | Deterministic SHA-256 of absolute `file_path`                               |
+| file_path       | STRING       | Absolute path to the source `.md` file                                      |
+| content_hash    | STRING       | SHA-256 of the file content to detect actual changes, ignoring OS metadata  |
+| status          | STRING       | Current indexing status (e.g., "indexed", "external")                       |
+| is_managed      | BOOLEAN      | TRUE if created via the app/adopted; FALSE if dropped in via external means |
+
+This SQLite database acts as the "Fortress Guard" for the file system. The Watchdog script checks this table on every file event to ensure unauthorized files do not consume LLM API quota or pollute the GraphRAG databases.
 
 ### LanceDB: `chunks` table
 
@@ -78,7 +91,7 @@ This table powers the global GraphRAG route. It is refreshed only by the batch r
 **Relationship Tables:**
 - `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE, edge_type STRING)` - concept relationship; `edge_type` is `'RELATED_TO'` for organic shared-document edges and `'SEMANTIC_BRIDGE'` for edges added by `heal_graph`
 
-Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup, guards singleton creation with a lock to avoid first-request concurrent-open races, and starts a `SyncAgent` file watcher that monitors `BRAINBANK_NOTES_DIR` (default `./data/notes`) for `.md`/`.txt` changes and auto-ingests them after a 2-second debounce window. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path. `backend/db/kuzu.py` also exposes `merge_concepts(conn, source_name, target_name)` to move `RELATED_TO` edges from one concept to another, sum overlapping edge weights, and delete the source node; query workers can reuse an already-open database handle for a path if a lock conflict is encountered.
+Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup, guards singleton creation with a lock to avoid first-request concurrent-open races, and starts a `SyncAgent` file watcher that monitors `BRAINBANK_NOTES_DIR` (default `./data/notes`) for `.md`/`.txt` changes and auto-ingests them after a 60-second debounce window if authorized by the SQLite manifest. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path. `backend/db/kuzu.py` also exposes `merge_concepts(conn, source_name, target_name)` to move `RELATED_TO` edges from one concept to another, sum overlapping edge weights, and delete the source node; query workers can reuse an already-open database handle for a path if a lock conflict is encountered.
 
 ## Project Structure
 
@@ -100,7 +113,7 @@ frontend/
       DocumentEditor.tsx     - Milkdown Crepe editor with explicit manual saves, lightweight draft creation for new notes, lightweight PUT updates for existing notes, and a scroll-contained editor region
       EdgeDetailPanel.tsx    - Selected relationship panel with a fixed header, bounded height, and internally scrollable evidence documents
       Graph3D.tsx            - 3D graph scene with right-side zoom/reset/brain-mesh controls, a top-right Document View card during expanded document mode, a brain wireframe shell that fades in and out, a compact bottom-center stats footer that shows visible nodes/edges plus backend total documents, dodecahedron nodes, force-directed layout, animated node-to-node focus transitions, temporary neuron-firing pulses driven by staged local retrieval traversal plans, query-time traversal washout that turns unreached nodes gray until they are traversed, bright eased gray-to-color pulsing plus a matching pulsing outline on already-revealed traversal nodes while the answer is still in flight, concept dive-in with document sub-graph, compact hover-only node tooltips, and callback props (onOpenDocument, onConceptFocused) for parent tab integration
-      FileExplorer.tsx       - Sidebar file tree: collapsible concept folders with document items, auto-expand on highlight, refetchSignal prop for parent-triggered refresh
+      FileExplorer.tsx       - Sidebar file tree: collapsible concept folders. Distinguishes unmanaged files with warning icons and disabled clicks, surfacing an Adopt button to authorize external files.
       IngestPanel.tsx        - New Note button + file upload + Notion import
       MarkdownDocumentViewer.tsx - Read-only markdown renderer for selected documents
       NodeTooltip.tsx        - Compact hover tooltip that renders `name (connectionCount)` above the hovered node
@@ -129,8 +142,8 @@ frontend/
       graph.ts               - Graph node, edge, link, and discovery types
       notes.ts               - OpenTab interface for the tab system (includes optional `closable` field)
 backend/
-  api.py                    - FastAPI /ingest, /query, /query/prepare, and /query/answer endpoints
-  api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/documents/{doc_id} (GET + PUT lightweight + POST reingest), /api/stats, /api/concepts/{name}/documents
+  api.py                    - FastAPI /ingest, /query, /query/prepare, and /query/answer endpoints. Handles PDF asset preservation to ASSETS_DIR.
+  api_graph.py              - FastAPI router: /api/graph, /api/recluster, /api/relationships/details, /api/discovery/latent/{concept_name}, /api/concepts, /api/documents, /api/documents/{doc_id} (GET + PUT + POST reingest + POST adopt), /api/stats
   graph_visualization.py    - Terminal-friendly concept graph loading from Kuzu with LanceDB fallback and ASCII rendering
   schemas.py                - Shared Pydantic response models for documents, graph edges, and relationship details
   sample_data/
@@ -139,15 +152,17 @@ backend/
   db/
     lance.py                - LanceDB init + chunks/document/concept/community schemas + duplicate document lookup + delete_document_chunks
     kuzu.py                 - Kuzu init + graph schema (nodes + edges) + shared-engine repair from LanceDB + update_node_communities() + clear concurrent-open error translation
+    manifest.py             - Thread-safe SQLite Manager for tracking guarded file system state and content hashes
   services/
     clustering.py           - Leiden community detection: build igraph from RELATED_TO edges and return concept→community_id map
     embeddings.py           - Sentence-transformer embedding functions + document centroid calculation
     llm.py                  - BrainBank prompt workflows + JSON parsing + provider-agnostic 429 backoff/retry handling
     llm_providers.py        - Provider registry plus Gemini/Ollama transport adapters
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
-    notes_fs.py             - File-system I/O for markdown notes: write, read, list, delete (used by document API endpoints)
+    notes_fs.py             - File-system I/O for markdown notes: write, read, list, delete, path sanitization, and SHA-256 content hashing helpers
     pdf.py                  - PDF text extraction using PyMuPDF
-    sync_agent.py           - File system watcher with debounce queue: monitors NOTES_DIR for .md/.txt changes, auto-ingests via watchdog + background drain thread
+    sync_agent.py           - Guarded file system watcher: monitors NOTES_DIR with a 60-second debounce. Filters by .md/.txt, checks SQLite manifest, ignores unauthorized files, and re-ingests managed files only if content hash changes.
+    
   scripts/
     heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
@@ -183,12 +198,13 @@ scripts/
 tests/
   conftest.py               - Shared fixtures + mock functions
   test_api.py               - API endpoint tests
-  test_api_graph.py         - Graph export API tests
+  test_api_graph.py         - Graph export API tests + Adopt document tests
   sample_data/
     test_college_math_notes.py - Sample data loading and seeding tests
   db/
     test_lance.py           - LanceDB init tests
     test_kuzu.py            - Kuzu init tests
+    test_manifest.py        - SQLite manifest thread-safe upsert, path tracking, and adopt tests
   ingestion/
     test_chunker.py         - Chunking logic tests
     test_processor.py       - Ingestion pipeline tests
@@ -202,10 +218,10 @@ tests/
     test_llm_providers.py   - Provider registry and Gemini/Ollama adapter tests
     test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
     test_pdf.py             - PDF text extraction tests
-    test_notes_fs.py        - File-system note I/O tests: write, read, list, delete, path sanitization
-    test_sync_agent.py      - File system watcher debounce, processing, extension filtering, and lifecycle tests
+    test_notes_fs.py        - File-system note I/O tests: write, read, list, delete, path sanitization, and SHA-256 hash tests
+    test_sync_agent.py      - File system watcher debounce, manifest guarding, extension filtering, and lifecycle tests
   test_api_notion.py        - Notion import API endpoint tests
-  test_api_upload.py        - File upload API endpoint tests
+  test_api_upload.py        - File upload API endpoint tests (including PDF preservation)
   session/
     test_memory.py          - Session store TTL, isolation, and window tests
     test_query_with_history.py - History-aware query pipeline tests
@@ -280,7 +296,7 @@ GLTFLoader -- load human-brain.glb for the wireframe shell; nodes are procedural
 The sidebar has a "New Note" button and a file upload option:
 
 1. **New Note** - clicking will open a document in the tab system (wired by other agents). The NoteEditor full-page overlay has been removed in favor of the new tab-based editing flow.
-2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are converted to text server-side using PyMuPDF. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped, and the frontend shows a notification naming which files already exist (e.g. "notes already exists"). On completion, a summary shows the total ingested count, duplicate names, or a partial-failure message.
+2. **File Upload** - user picks one or more `.md`, `.txt`, `.pdf`, or `.zip` files from the sidebar. Files are sent individually as `multipart/form-data` via `POST /ingest/upload` with per-file progress tracking ("Uploading 1 of 3..."). PDFs are saved fully intact to `ASSETS_DIR`, then converted to text server-side using PyMuPDF. The resulting `.md` file is placed in `NOTES_DIR` with a `Source: [[assets/...]]` footer and immediately authorized in the manifest. Zip files are extracted in-memory; `__MACOSX` metadata and hidden files are skipped, and only `.md`, `.txt`, `.pdf` entries inside are processed. Duplicate documents (matching `doc_name` in LanceDB) are skipped, and the frontend shows a notification naming which files already exist (e.g. "notes already exists"). On completion, a summary shows the total ingested count, duplicate names, or a partial-failure message.
 
 3. **Import from Notion** - user clicks "Import from Notion" in the sidebar, enters their Notion integration token and a page/database URL, and clicks Import. The frontend `POST /ingest/notion` sends `{token, url}`. The backend parses the URL to determine page vs database, fetches content via the Notion API, converts blocks to markdown, and runs each page through the standard ingest pipeline. Success shows the number of pages imported.
 
@@ -591,6 +607,11 @@ If LanceDB has zero ingested chunks, `/query` returns a specific empty-database 
 
 ## API Endpoints
 
+### `POST /api/documents/{doc_id}/adopt`
+- Body: empty
+- Authorizes an unmanaged external file by setting `is_managed=TRUE` in the SQLite manifest, then triggers immediate ingestion.
+- Returns: `{"status": "adopted"}`
+
 ### `POST /ingest`
 - Body: `{"text": "...", "title": "..."}`
 - Returns: `{"doc_id": "...", "chunks": N, "concepts": [...]}`
@@ -657,7 +678,7 @@ If LanceDB has zero ingested chunks, `/query` returns a specific empty-database 
 ### `POST /ingest/upload`
 - Body: `multipart/form-data` with one or more files under the `files` field
 - Accepts `.md`, `.txt`, `.pdf`, `.zip` files
-- PDFs are converted to text server-side via PyMuPDF
+- PDFs are saved fully intact to `ASSETS_DIR`, then converted to text server-side via PyMuPDF. The resulting `.md` file is placed in `NOTES_DIR` with a `Source: [[assets/...]]` footer and immediately authorized in the manifest.
 - Zip files are extracted in-memory; `__MACOSX`/hidden files skipped, only `.md`/`.txt`/`.pdf` entries processed
 - Duplicate documents (matching `doc_name` in LanceDB) are skipped with `{"skipped": true, "reason": "duplicate"}`
 - Returns: `{"imported": N, "results": [{"title", "doc_id", "chunks", "concepts"}]}`
