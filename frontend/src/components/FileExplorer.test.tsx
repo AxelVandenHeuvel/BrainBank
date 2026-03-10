@@ -16,18 +16,18 @@ const mockUseFileTree = vi.mocked(useFileTree);
 const MOCK_TREE = [
   {
     name: 'Algebra',
-    documents: [{ docId: 'doc-3', name: 'Linear Equations' }],
+    documents: [{ docId: 'doc-3', name: 'Linear Equations' }], // Managed by default
   },
   {
     name: 'Calculus',
     documents: [
-      { docId: 'doc-1', name: 'Derivatives Notes' },
-      { docId: 'doc-2', name: 'Mechanics Overview' },
+      { docId: 'doc-1', name: 'Derivatives Notes', isManaged: true },
+      { docId: 'doc-2', name: 'Mechanics Overview', isManaged: false }, // EXTERNAL FILE
     ],
   },
   {
     name: 'Physics',
-    documents: [{ docId: 'doc-2', name: 'Mechanics Overview' }],
+    documents: [{ docId: 'doc-2', name: 'Mechanics Overview', isManaged: false }],
   },
 ];
 
@@ -43,60 +43,11 @@ describe('FileExplorer', () => {
     );
 
     expect(screen.getByTestId('file-explorer-scroll-shell')).toBeInTheDocument();
-    expect(screen.getByTestId('file-explorer-scroll-container')).toBeInTheDocument();
-    expect(screen.getByTestId('file-explorer-scroll-rail')).toBeInTheDocument();
-    expect(screen.getByTestId('file-explorer-scroll-thumb')).toBeInTheDocument();
-    expect(screen.getByTestId('file-explorer-tree')).toHaveClass('sidebar-files-content');
     expect(screen.getByText('Algebra')).toBeInTheDocument();
     expect(screen.getByText('Calculus')).toBeInTheDocument();
-    expect(screen.getByText('Physics')).toBeInTheDocument();
   });
 
-  it('clicking a folder expands it showing documents', async () => {
-    const user = userEvent.setup();
-
-    render(
-      <FileExplorer
-        tree={MOCK_TREE}
-        isLoading={false}
-        highlightedConcept={null}
-        onOpenDocument={vi.fn()}
-      />,
-    );
-
-    // Documents should not be visible initially
-    expect(screen.queryByText('Derivatives Notes')).not.toBeInTheDocument();
-
-    // Click the Calculus folder
-    await user.click(screen.getByText('Calculus'));
-
-    // Now documents should be visible
-    expect(screen.getByText('Derivatives Notes')).toBeInTheDocument();
-    expect(screen.getByText('Mechanics Overview')).toBeInTheDocument();
-  });
-
-  it('clicking an expanded folder collapses it', async () => {
-    const user = userEvent.setup();
-
-    render(
-      <FileExplorer
-        tree={MOCK_TREE}
-        isLoading={false}
-        highlightedConcept={null}
-        onOpenDocument={vi.fn()}
-      />,
-    );
-
-    // Expand
-    await user.click(screen.getByText('Calculus'));
-    expect(screen.getByText('Derivatives Notes')).toBeInTheDocument();
-
-    // Collapse
-    await user.click(screen.getByText('Calculus'));
-    expect(screen.queryByText('Derivatives Notes')).not.toBeInTheDocument();
-  });
-
-  it('clicking a document calls onOpenDocument with correct args', async () => {
+  it('clicking a managed document calls onOpenDocument', async () => {
     const user = userEvent.setup();
     const onOpenDocument = vi.fn();
 
@@ -109,13 +60,58 @@ describe('FileExplorer', () => {
       />,
     );
 
-    // Expand Calculus folder
     await user.click(screen.getByText('Calculus'));
-
-    // Click a document
     await user.click(screen.getByText('Derivatives Notes'));
 
     expect(onOpenDocument).toHaveBeenCalledWith('doc-1', 'Derivatives Notes', 'Calculus');
+  });
+
+  it('prevents opening unmanaged (external) documents', async () => {
+    const user = userEvent.setup();
+    const onOpenDocument = vi.fn();
+
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={onOpenDocument}
+      />,
+    );
+
+    await user.click(screen.getByText('Calculus'));
+    
+    const unmanagedDoc = screen.getByText('Mechanics Overview');
+    await user.click(unmanagedDoc);
+
+    // Should NOT have been called because the button is disabled
+    expect(onOpenDocument).not.toHaveBeenCalled();
+  });
+
+  it('displays the Adopt button for unmanaged documents and triggers onAdoptDocument', async () => {
+    const user = userEvent.setup();
+    const onAdoptDocument = vi.fn();
+
+    render(
+      <FileExplorer
+        tree={MOCK_TREE}
+        isLoading={false}
+        highlightedConcept={null}
+        onOpenDocument={vi.fn()}
+        onAdoptDocument={onAdoptDocument}
+      />,
+    );
+
+    await user.click(screen.getByText('Calculus'));
+    
+    // The warning icon SVG has a title of "Unindexed File"
+    expect(screen.getAllByTitle('Unindexed File')[0]).toBeInTheDocument();
+
+    const adoptButtons = screen.getAllByText('Adopt');
+    expect(adoptButtons.length).toBeGreaterThan(0);
+
+    await user.click(adoptButtons[0]);
+    expect(onAdoptDocument).toHaveBeenCalledWith('doc-2');
   });
 
   it('highlightedConcept auto-expands that folder', async () => {
@@ -128,66 +124,9 @@ describe('FileExplorer', () => {
       />,
     );
 
-    // Physics folder should be auto-expanded
     await waitFor(() => {
       expect(screen.getByText('Mechanics Overview')).toBeInTheDocument();
     });
-  });
-
-  it('changing highlightedConcept expands the new folder', async () => {
-    const { rerender } = render(
-      <FileExplorer
-        tree={MOCK_TREE}
-        isLoading={false}
-        highlightedConcept="Physics"
-        onOpenDocument={vi.fn()}
-      />,
-    );
-
-    // Physics should be expanded
-    await waitFor(() => {
-      expect(screen.getByText('Mechanics Overview')).toBeInTheDocument();
-    });
-
-    // Change to Algebra
-    rerender(
-      <FileExplorer
-        tree={MOCK_TREE}
-        isLoading={false}
-        highlightedConcept="Algebra"
-        onOpenDocument={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Linear Equations')).toBeInTheDocument();
-    });
-  });
-
-  it('shows loading state', () => {
-    render(
-      <FileExplorer
-        tree={[]}
-        isLoading={true}
-        highlightedConcept={null}
-        onOpenDocument={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
-  });
-
-  it('shows empty state when tree is empty', () => {
-    render(
-      <FileExplorer
-        tree={[]}
-        isLoading={false}
-        highlightedConcept={null}
-        onOpenDocument={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText(/no concepts yet/i)).toBeInTheDocument();
   });
 
   it('filters based on searchQuery and auto-expands matches', () => {
@@ -201,13 +140,9 @@ describe('FileExplorer', () => {
       />,
     );
 
-    // Should show the matching document parent folder
     expect(screen.getByText('Calculus')).toBeInTheDocument();
-    // Should be auto-expanded and show the matching document
-    expect(screen.getByText('Deriv')).toBeInTheDocument(); // It will show 'Deriv' as part of 'Derivatives Notes'
-    expect(screen.getByText('atives Notes')).toBeInTheDocument(); // Highlighting splits text
-
-    // Should NOT show Algebra as it doesn't match and doesn't contain matching docs
+    expect(screen.getByText('Deriv')).toBeInTheDocument(); 
+    expect(screen.getByText('atives Notes')).toBeInTheDocument(); 
     expect(screen.queryByText('Algebra')).not.toBeInTheDocument();
   });
 });

@@ -141,7 +141,7 @@ export function DocumentEditor({
   const statusLabel: Record<SaveStatus, string> = {
     idle: '',
     saving: 'Saving...',
-    saved: 'Saved',
+    saved: 'Saved to disk',
     error: 'Error',
   };
 

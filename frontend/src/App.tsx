@@ -178,6 +178,14 @@ export default function App() {
     refetchTree();
   }
 
+  async function handleAdoptDocument(docId: string) {
+    await fetch(`/api/documents/${encodeURIComponent(docId)}/adopt`, {
+      method: 'POST',
+    });
+    refetch();
+    refetchTree();
+  }
+
   function handleNewNote() {
     const id = generateNewNoteId();
     const newTab: OpenTab = { id, title: 'Untitled', content: '', isNew: true };
@@ -311,6 +319,7 @@ export default function App() {
                 isLoading={isTreeLoading}
                 highlightedConcept={highlightedConcept}
                 onOpenDocument={handleFileExplorerOpenDocument}
+                onAdoptDocument={handleAdoptDocument}
                 graphData={data}
                 searchQuery={deferredQuery}
               />

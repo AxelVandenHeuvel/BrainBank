@@ -8,6 +8,7 @@ interface FileExplorerProps {
   isLoading: boolean;
   highlightedConcept: string | null;
   onOpenDocument: (docId: string, name: string, conceptName: string) => void;
+  onAdoptDocument?: (docId: string) => Promise<void> | void; // NEW: Adopt callback
   graphData?: GraphData;
   searchQuery?: string;
 }
@@ -17,6 +18,7 @@ export function FileExplorer({
   isLoading,
   highlightedConcept,
   onOpenDocument,
+  onAdoptDocument,
   graphData,
   searchQuery = '',
 }: FileExplorerProps) {
@@ -48,8 +50,6 @@ export function FileExplorer({
         if (isConceptMatch || matchingDocs.length > 0) {
           return {
             ...concept,
-            // If concept matches, show all its documents (or should we?)
-            // If concept doesn't match, only show matching documents
             documents: isConceptMatch ? concept.documents : matchingDocs,
             isConceptMatch,
           };
@@ -88,11 +88,10 @@ export function FileExplorer({
     }
   }, [searchQuery, filteredTree]);
 
+  // Scrollbar logic (unchanged)
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer) {
-      return;
-    }
+    if (!scrollContainer) return;
 
     let frameId: number | null = null;
 
@@ -101,11 +100,7 @@ export function FileExplorer({
       const maxScroll = Math.max(scrollHeight - clientHeight, 0);
 
       if (clientHeight <= 0 || maxScroll <= 0) {
-        setScrollThumbStyle({
-          height: '0px',
-          transform: 'translateY(0px)',
-          opacity: 0,
-        });
+        setScrollThumbStyle({ height: '0px', transform: 'translateY(0px)', opacity: 0 });
         return;
       }
 
@@ -121,9 +116,7 @@ export function FileExplorer({
     };
 
     const scheduleUpdate = () => {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
+      if (frameId !== null) cancelAnimationFrame(frameId);
       frameId = requestAnimationFrame(() => {
         frameId = null;
         updateScrollThumb();
@@ -144,20 +137,15 @@ export function FileExplorer({
       scrollContainer.removeEventListener('scroll', scheduleUpdate);
       window.removeEventListener('resize', scheduleUpdate);
       resizeObserver?.disconnect();
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [filteredTree, expandedConcepts, highlightedConcept]);
 
   function toggleConcept(name: string) {
     setExpandedConcepts((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) {
-        next.delete(name);
-      } else {
-        next.add(name);
-      }
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   }
@@ -195,6 +183,7 @@ export function FileExplorer({
                 searchQuery={searchQuery}
                 onToggle={() => toggleConcept(concept.name)}
                 onOpenDocument={onOpenDocument}
+                onAdoptDocument={onAdoptDocument}
                 ref={(el) => {
                   conceptRefs.current.set(concept.name, el);
                 }}
@@ -224,10 +213,11 @@ interface ConceptFolderProps {
   searchQuery: string;
   onToggle: () => void;
   onOpenDocument: (docId: string, name: string, conceptName: string) => void;
+  onAdoptDocument?: (docId: string) => Promise<void> | void;
 }
 
 const ConceptFolder = forwardRef<HTMLDivElement, ConceptFolderProps>(
-  function ConceptFolder({ concept, isExpanded, isHighlighted, searchQuery, onToggle, onOpenDocument }, ref) {
+  function ConceptFolder({ concept, isExpanded, isHighlighted, searchQuery, onToggle, onOpenDocument, onAdoptDocument }, ref) {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
     return (
@@ -235,8 +225,9 @@ const ConceptFolder = forwardRef<HTMLDivElement, ConceptFolderProps>(
         <button
           type="button"
           onClick={onToggle}
-          className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-sm transition hover:bg-white/[0.03] ${isHighlighted ? 'bg-pink-500/10 text-pink-300' : 'text-neutral-400'
-            }`}
+          className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-sm transition hover:bg-white/[0.03] ${
+            isHighlighted ? 'bg-pink-500/10 text-pink-300' : 'text-neutral-400'
+          }`}
         >
           <span className="shrink-0 text-xs text-neutral-600">
             {isExpanded ? '\u25BE' : '\u25B8'}
@@ -251,18 +242,46 @@ const ConceptFolder = forwardRef<HTMLDivElement, ConceptFolderProps>(
 
         {isExpanded && (
           <div className="ml-4 space-y-0.5 border-l border-white/[0.06] pl-2">
-            {concept.documents.map((doc) => (
-              <button
-                key={doc.docId}
-                type="button"
-                onClick={() => onOpenDocument(doc.docId, doc.name, concept.name)}
-                className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm text-neutral-500 transition hover:bg-white/[0.03] hover:text-neutral-300"
-              >
-                <span className="truncate">
-                  <HighlightedText text={doc.name} highlight={normalizedQuery} />
-                </span>
-              </button>
-            ))}
+            {concept.documents.map((doc: any) => {
+              const isExternal = doc.isManaged === false;
+
+              return (
+                <div key={doc.docId} className="group flex w-full items-center justify-between transition hover:bg-white/[0.03]">
+                  <button
+                    type="button"
+                    onClick={() => !isExternal && onOpenDocument(doc.docId, doc.name, concept.name)}
+                    disabled={isExternal}
+                    title={isExternal ? "External File: Adopt to view and index" : ""}
+                    className={`flex flex-1 items-center gap-1.5 px-2 py-1 text-left text-sm transition ${
+                      isExternal ? 'cursor-not-allowed text-neutral-600' : 'text-neutral-500 hover:text-neutral-300'
+                    }`}
+                  >
+                    {isExternal && (
+                      <svg className="h-3.5 w-3.5 shrink-0 text-amber-500/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <title>Unindexed File</title>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    )}
+                    <span className="truncate">
+                      <HighlightedText text={doc.name} highlight={normalizedQuery} />
+                    </span>
+                  </button>
+
+                  {isExternal && onAdoptDocument && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAdoptDocument(doc.docId);
+                      }}
+                      className="hidden group-hover:block mr-2 shrink-0 rounded bg-pink-500/10 px-2 py-0.5 text-xs text-pink-400 ring-1 ring-inset ring-pink-500/30 hover:bg-pink-500/20"
+                    >
+                      Adopt
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

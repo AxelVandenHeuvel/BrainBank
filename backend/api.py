@@ -13,9 +13,9 @@ from pydantic import BaseModel
 
 from backend.api_graph import graph_router
 from backend.db.kuzu import get_kuzu_engine, update_node_communities
-from backend.db.lance import find_existing_document, init_lancedb
+from backend.db.lance import init_lancedb
 from backend.ingestion.consolidator import ConceptConsolidator
-from backend.ingestion.processor import ingest_markdown
+from backend.ingestion.processor import doc_id_from_path, ingest_markdown
 from backend.retrieval.query import query_brainbank
 from backend.retrieval.query import prepare_brainbank_query, answer_prepared_local_query
 from backend.retrieval.routing import QueryRoute
@@ -23,6 +23,8 @@ from backend.session.prepared_query_store import PreparedQueryStore
 from backend.sample_data.mock_demo import seed_mock_demo_data
 from backend.services.clustering import run_leiden_clustering
 from backend.services.llm import generate_test_answer
+from backend.services.notes_fs import content_hash_bytes, write_note
+from backend.services.sync_agent import SyncAgent, get_assets_dir, get_notes_dir
 from backend.services.notion import (
     fetch_database_page_ids,
     fetch_page_markdown,
@@ -39,11 +41,17 @@ _manual_ingest_lock = threading.Lock()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Open the shared Kuzu database and run clustering on existing concepts at startup."""
+    """Open the shared Kuzu database, run clustering, and start file watcher at startup."""
     db = get_kuzu_engine()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _run_startup_clustering, db)
+
+    sync_agent = SyncAgent(notes_dir=get_notes_dir(), auto_start=True)
+    _app.state.sync_agent = sync_agent
+
     yield
+
+    sync_agent.stop()
 
 
 def _run_startup_clustering(db) -> None:
@@ -286,6 +294,47 @@ def _extract_text(filename: str, data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _save_pdf_asset(filename: str, data: bytes) -> str:
+    """Save original PDF to ASSETS_DIR. Returns the asset path."""
+    assets_dir = get_assets_dir()
+    os.makedirs(assets_dir, exist_ok=True)
+    asset_path = os.path.join(assets_dir, filename)
+    with open(asset_path, "wb") as f:
+        f.write(data)
+    return asset_path
+
+
+def _ingest_uploaded_file(filename: str, data: bytes, title: str) -> dict:
+    """Process a single uploaded file: save to disk and register in manifest.
+
+    PDFs are preserved in ASSETS_DIR and a .md stub is written to NOTES_DIR.
+    Text files (.md, .txt) are written directly to NOTES_DIR.
+    The manifest is updated and the SyncAgent will handle ingestion.
+    """
+    from backend.db.manifest import Manifest
+
+    notes_dir = get_notes_dir()
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext == ".pdf":
+        asset_path = _save_pdf_asset(filename, data)
+        text = pdf_to_text(data)
+        md_body = f"{text}\n\n---\nSource: [[assets/{filename}]]"
+        file_path = write_note(notes_dir, title, md_body)
+    else:
+        text = data.decode("utf-8", errors="replace")
+        file_path = write_note(notes_dir, title, text)
+
+    doc_id = doc_id_from_path(file_path)
+    content_hash = content_hash_bytes(text.encode("utf-8"))
+
+    manifest = Manifest(notes_dir)
+    manifest.upsert(doc_id, file_path, content_hash, is_managed=True, status="pending")
+    manifest.close()
+
+    return {"doc_id": doc_id, "title": title, "status": "saved"}
+
+
 @app.post("/ingest/upload")
 async def ingest_upload(files: list[UploadFile]):
     for f in files:
@@ -312,33 +361,20 @@ async def ingest_upload(files: list[UploadFile]):
                     if entry_ext not in ALLOWED_EXTENSIONS:
                         continue
                     title = os.path.splitext(os.path.basename(entry))[0]
-                    existing = await loop.run_in_executor(
-                        None, partial(find_existing_document, title)
-                    )
-                    if existing:
-                        results.append({"title": title, "skipped": True, "reason": "duplicate"})
-                        continue
                     try:
-                        text = _extract_text(entry, zf.read(entry))
+                        entry_data = zf.read(entry)
                     except Exception:
                         continue
                     result = await loop.run_in_executor(
-                        None, partial(ingest_markdown, text, title, shared_kuzu_db=get_kuzu_engine())
+                        None, partial(_ingest_uploaded_file, os.path.basename(entry), entry_data, title)
                     )
-                    results.append({"title": title, **result})
+                    results.append(result)
         else:
             title = os.path.splitext(f.filename or "Untitled")[0]
-            existing = await loop.run_in_executor(
-                None, partial(find_existing_document, title)
-            )
-            if existing:
-                results.append({"title": title, "skipped": True, "reason": "duplicate"})
-                continue
-            text = _extract_text(f.filename or "", raw)
             result = await loop.run_in_executor(
-                None, partial(ingest_markdown, text, title, shared_kuzu_db=get_kuzu_engine())
+                None, partial(_ingest_uploaded_file, f.filename or "Untitled", raw, title)
             )
-            results.append({"title": title, **result})
+            results.append(result)
 
     imported = sum(1 for r in results if not r.get("skipped"))
     return {"imported": imported, "results": results}

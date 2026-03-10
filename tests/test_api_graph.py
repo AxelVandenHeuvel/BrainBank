@@ -17,12 +17,16 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def isolate_graph_data(monkeypatch, lance_path, kuzu_path):
+def isolate_graph_data(monkeypatch, lance_path, kuzu_path, tmp_path):
     # init_kuzu initialises schema and returns (db, conn); we only need the db.
     real_kuzu_db, _ = real_init_kuzu(kuzu_path)
 
     # Store lance_path so update-document tests can verify data directly.
     LANCE_PATH_HOLDER["path"] = lance_path
+
+    # Use an isolated temp notes directory for file-system document tests.
+    notes_dir = str(tmp_path / "notes")
+    monkeypatch.setattr("backend.api_graph.get_notes_dir", lambda: notes_dir)
 
     # Route all per-request Kuzu connections to the isolated test DB.
     # get_db_connection() calls get_kuzu_engine() which reads _db_instance at
@@ -50,26 +54,12 @@ def isolate_graph_data(monkeypatch, lance_path, kuzu_path):
         lambda db_path, doc_id: real_delete(lance_path, doc_id),
     )
 
-    # Route update_document_text to use the isolated test path.
-    from backend.db.lance import update_document_text as real_update_text
-    monkeypatch.setattr(
-        "backend.api_graph.update_document_text",
-        lambda db_path, doc_id, doc_name, new_text: real_update_text(lance_path, doc_id, doc_name, new_text),
-    )
-
-    # Route create_document_text to use the isolated test path.
-    from backend.db.lance import create_document_text as real_create_text
-    monkeypatch.setattr(
-        "backend.api_graph.create_document_text",
-        lambda db_path, doc_name, text, doc_id=None: real_create_text(lance_path, doc_name, text, doc_id),
-    )
-
     # Route ingest_markdown in api_graph to use the isolated test path.
     from backend.ingestion.processor import ingest_markdown as real_ingest
     monkeypatch.setattr(
         "backend.api_graph.ingest_markdown",
-        lambda text, title, shared_kuzu_db=None, doc_id=None: real_ingest(
-            text, title, lance_db_path=lance_path, shared_kuzu_db=shared_kuzu_db, doc_id=doc_id,
+        lambda text, title, shared_kuzu_db=None, doc_id=None, file_path=None: real_ingest(
+            text, title, lance_db_path=lance_path, shared_kuzu_db=shared_kuzu_db, doc_id=doc_id, file_path=file_path,
         ),
     )
 
@@ -570,7 +560,7 @@ class TestUpdateDocument:
         assert "doc_id" in data
         assert data["status"] == "saved"
 
-    def test_create_document_allows_empty_text_and_lists_document(self):
+    def test_create_document_writes_file_and_lists_document(self):
         resp = client.post(
             "/api/documents",
             json={"text": "", "title": "Short draft"},
@@ -584,36 +574,23 @@ class TestUpdateDocument:
         matching = [doc for doc in docs if doc["doc_id"] == doc_id]
         assert len(matching) == 1
         assert matching[0]["name"] == "Short draft"
-        assert matching[0]["concepts"] == []
 
-    def test_create_document_with_text_runs_full_ingest(self):
-        """POST /api/documents with non-empty text should extract concepts and embed."""
-        with (
-            patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts),
-            patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts),
-            patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
-        ):
-            resp = client.post(
-                "/api/documents",
-                json={"text": "Calculus is about Derivatives and Integrals.", "title": "Math Notes"},
-            )
+    def test_create_document_with_text_writes_to_disk(self):
+        """POST /api/documents with text should save to disk (ingestion happens via watcher)."""
+        resp = client.post(
+            "/api/documents",
+            json={"text": "Calculus is about Derivatives.", "title": "Math Notes"},
+        )
 
         assert resp.status_code == 200
         data = resp.json()
         assert "doc_id" in data
-        assert data.get("concepts") is not None
-        assert len(data["concepts"]) > 0
+        assert data["status"] == "saved"
 
-        listing = client.get("/api/documents")
-        docs = listing.json()["documents"]
-        matching = [d for d in docs if d["doc_id"] == data["doc_id"]]
-        assert len(matching) == 1
-        assert len(matching[0]["concepts"]) > 0
-
-    def test_get_document_returns_full_text_for_lightweight_created_note(self):
+    def test_get_document_returns_full_text_from_disk(self):
         create = client.post(
             "/api/documents",
-            json={"text": "", "title": "Short draft"},
+            json={"text": "Some content here.", "title": "Disk Note"},
         )
         doc_id = create.json()["doc_id"]
 
@@ -622,8 +599,8 @@ class TestUpdateDocument:
         assert resp.status_code == 200
         data = resp.json()
         assert data["doc_id"] == doc_id
-        assert data["name"] == "Short draft"
-        assert data["full_text"] == ""
+        assert data["name"] == "Disk Note"
+        assert data["full_text"] == "Some content here."
 
     def _ingest_and_get_doc_id(self, title="Math Notes", text="Calculus is about Derivatives and Integrals."):
         """Ingest a document and return its doc_id."""
@@ -635,13 +612,17 @@ class TestUpdateDocument:
             resp = client.post("/ingest", json={"text": text, "title": title})
         return resp.json()["doc_id"]
 
-    def test_lightweight_save_returns_doc_id(self):
-        """PUT should quickly save text without re-ingesting."""
-        doc_id = self._ingest_and_get_doc_id()
+    def test_save_returns_doc_id(self):
+        """PUT should save text to disk and return doc_id."""
+        resp = client.post(
+            "/api/documents",
+            json={"text": "Initial.", "title": "Test Doc"},
+        )
+        doc_id = resp.json()["doc_id"]
 
         resp = client.put(
             f"/api/documents/{doc_id}",
-            json={"text": "Updated content.", "title": "Updated Title"},
+            json={"text": "Updated content.", "title": "Test Doc"},
         )
 
         assert resp.status_code == 200
@@ -649,31 +630,22 @@ class TestUpdateDocument:
         assert data["doc_id"] == doc_id
         assert data["status"] == "saved"
 
-    def test_lightweight_save_updates_text(self):
-        """After PUT, the document text should be updated."""
-        doc_id = self._ingest_and_get_doc_id()
+    def test_save_updates_text_on_disk(self):
+        """After PUT, GET should return updated text from disk."""
+        resp = client.post(
+            "/api/documents",
+            json={"text": "Original.", "title": "Update Test"},
+        )
+        doc_id = resp.json()["doc_id"]
 
         client.put(
             f"/api/documents/{doc_id}",
-            json={"text": "Biology is about Cells.", "title": "Bio Notes"},
+            json={"text": "Biology is about Cells.", "title": "Update Test"},
         )
 
-        resp = client.get("/api/documents")
-        docs = resp.json()["documents"]
-        matching = [d for d in docs if d["doc_id"] == doc_id]
-        assert len(matching) == 1
-        assert matching[0]["name"] == "Bio Notes"
-
-    def test_lightweight_save_nonexistent_returns_404(self):
-        """PUT with a doc_id that does not exist should return 404."""
-        fake_id = "nonexistent-doc-id-12345"
-
-        resp = client.put(
-            f"/api/documents/{fake_id}",
-            json={"text": "Does not exist.", "title": "Ghost"},
-        )
-
-        assert resp.status_code == 404
+        resp = client.get(f"/api/documents/{doc_id}")
+        assert resp.status_code == 200
+        assert resp.json()["full_text"] == "Biology is about Cells."
 
     def test_reingest_returns_concepts(self):
         """POST reingest should run full pipeline and return concepts."""
@@ -697,3 +669,52 @@ class TestUpdateDocument:
         assert data["doc_id"] == doc_id
         assert "Chemistry" in data["concepts"]
         assert "Atoms" in data["concepts"]
+
+
+class TestAdoptDocument:
+    def test_adopt_sets_managed_and_triggers_ingest(self):
+        """Adopting an unmanaged file should set is_managed=True and ingest."""
+        # Simulate an external file discovered by the watcher
+        from backend.db.manifest import Manifest
+        from backend.services.notes_fs import write_note
+        from backend.ingestion.processor import doc_id_from_path
+
+        notes_dir_holder = {}
+
+        # Get the test's notes_dir via a create call
+        resp = client.post("/api/documents", json={"text": "", "title": "_probe"})
+        assert resp.status_code == 200
+        # The notes_dir is wherever _probe.md was written — derive from doc_id
+        # Instead, let's write an external file and register it as unmanaged
+        import os
+        # find the notes dir from the monkeypatched get_notes_dir
+        from backend.api_graph import get_notes_dir
+        nd = get_notes_dir()
+
+        path = write_note(nd, "External Note", "# External\nSome external content.")
+        did = doc_id_from_path(path)
+        manifest = Manifest(nd)
+        manifest.upsert(did, path, "somehash", is_managed=False, status="discovered")
+        manifest.close()
+
+        with (
+            patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts),
+            patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts),
+            patch("backend.ingestion.processor.calculate_color_score", return_value=0.5),
+        ):
+            resp = client.post(f"/api/documents/{did}/adopt")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "adopted"
+        assert data["doc_id"] == did
+
+        # Verify manifest now shows managed
+        manifest = Manifest(nd)
+        row = manifest.get(did)
+        manifest.close()
+        assert row["is_managed"] is True
+
+    def test_adopt_missing_returns_404(self):
+        resp = client.post("/api/documents/nonexistent-doc-id/adopt")
+        assert resp.status_code == 404

@@ -19,6 +19,7 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | Embeddings  | sentence-transformers   | all-MiniLM-L6-v2, 384-dim       |
 | Graph Analytics | NetworkX           | Batch Louvain community detection |
 | Markdown    | Milkdown Crepe (ProseMirror WYSIWYG) with bundled KaTeX support | Obsidian-like live markdown + LaTeX |
+| File Watcher| watchdog                | OS-native filesystem monitoring for auto-ingest |
 | LLM         | Gemini 2.5 Flash + Gemini 3.1 Flash-Lite + Ollama | Gemini extraction/forced orphan merge decisions + grounded answers |
 
 ## Data Model
@@ -77,7 +78,7 @@ This table powers the global GraphRAG route. It is refreshed only by the batch r
 **Relationship Tables:**
 - `RELATED_TO(Concept -> Concept, reason STRING, weight DOUBLE, edge_type STRING)` - concept relationship; `edge_type` is `'RELATED_TO'` for organic shared-document edges and `'SEMANTIC_BRIDGE'` for edges added by `heal_graph`
 
-Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup and guards singleton creation with a lock to avoid first-request concurrent-open races. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path. `backend/db/kuzu.py` also exposes `merge_concepts(conn, source_name, target_name)` to move `RELATED_TO` edges from one concept to another, sum overlapping edge weights, and delete the source node; query workers can reuse an already-open database handle for a path if a lock conflict is encountered.
+Documents are **not** stored in Kuzu. The concept graph is a weighted co-occurrence graph: when two extracted concepts appear in the same ingested document, BrainBank creates or increments a `RELATED_TO` edge with `reason="shared_document"` and a numeric `weight`. Document nodes and MENTIONS edges in the graph API are derived at query time from LanceDB chunk metadata. `GET /api/graph` emits a stable edge shape where `type` is the relationship kind, `reason` is optional edge metadata, and `weight` carries shared-document frequency for weighted relationships. Kuzu still enforces an exclusive lock on its database path, so the API keeps one shared `kuzu.Database` instance open and serves requests with short-lived per-request connections. The backend opens this shared engine during FastAPI lifespan startup, guards singleton creation with a lock to avoid first-request concurrent-open races, and starts a `SyncAgent` file watcher that monitors `BRAINBANK_NOTES_DIR` (default `./data/notes`) for `.md`/`.txt` changes and auto-ingests them after a 2-second debounce window. If the shared Kuzu catalog is unreadable because the file is invalid or internally inconsistent, `get_kuzu_engine()` now backs up the broken file, creates a fresh Kuzu database at the same path, and reconstructs `Concept` plus `RELATED_TO` from LanceDB chunk metadata before reclustering communities. This repair path is intentionally limited to the shared API singleton; `init_kuzu()` remains strict so tests, scripts, and one-off callers still surface invalid-path failures instead of silently mutating arbitrary databases. When the current Kuzu Python binding reports a same-path concurrent-open failure as either `IndexError: unordered_map::at: key not found` or `IndexError: invalid unordered_map<K, T> key`, `backend/db/kuzu.py` translates that into a clear runtime error telling the caller to stop the running backend or use a different Kuzu path. `backend/db/kuzu.py` also exposes `merge_concepts(conn, source_name, target_name)` to move `RELATED_TO` edges from one concept to another, sum overlapping edge weights, and delete the source node; query workers can reuse an already-open database handle for a path if a lock conflict is encountered.
 
 ## Project Structure
 
@@ -144,7 +145,9 @@ backend/
     llm.py                  - BrainBank prompt workflows + JSON parsing + provider-agnostic 429 backoff/retry handling
     llm_providers.py        - Provider registry plus Gemini/Ollama transport adapters
     notion.py               - Notion API integration: URL parsing, block→markdown conversion, page/database fetching
+    notes_fs.py             - File-system I/O for markdown notes: write, read, list, delete (used by document API endpoints)
     pdf.py                  - PDF text extraction using PyMuPDF
+    sync_agent.py           - File system watcher with debounce queue: monitors NOTES_DIR for .md/.txt changes, auto-ingests via watchdog + background drain thread
   scripts/
     heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
   ingestion/
@@ -199,6 +202,8 @@ tests/
     test_llm_providers.py   - Provider registry and Gemini/Ollama adapter tests
     test_notion.py          - Notion URL parsing, rich text, and block→markdown tests
     test_pdf.py             - PDF text extraction tests
+    test_notes_fs.py        - File-system note I/O tests: write, read, list, delete, path sanitization
+    test_sync_agent.py      - File system watcher debounce, processing, extension filtering, and lifecycle tests
   test_api_notion.py        - Notion import API endpoint tests
   test_api_upload.py        - File upload API endpoint tests
   session/
@@ -621,23 +626,23 @@ If LanceDB has zero ingested chunks, `/query` returns a specific empty-database 
 
 ### `GET /api/documents`
 - Returns: `{"documents": [{"doc_id", "name", "chunk_count", "concepts"}]}`
+- Merges file-system notes (from `NOTES_DIR`) with LanceDB data; file-system notes take priority
 
 ### `POST /api/documents`
 - Body: `{"text": "...", "title": "..."}`
-- Fast draft save: creates a lightweight LanceDB-backed document immediately, without embeddings, LLM extraction, or graph updates
-- Returns: `{"doc_id": "...", "status": "saved"}`
-- Accepts empty `text`, which allows title-only notes to persist before the user writes the body
+- Writes a `.md` file to `NOTES_DIR` using the title as filename; returns immediately
+- The SyncAgent file watcher detects the new file and triggers full ingestion after the 60-second debounce window
+- Returns: `{"doc_id": "...", "title": "...", "status": "saved"}`
 
 ### `GET /api/documents/{doc_id}`
 - Returns: `{"doc_id", "name", "full_text"}`
-- Reads the full stored text for one document directly from LanceDB
-- Returns `404` if `doc_id` does not exist
+- Reads from the file system first (scanning `NOTES_DIR`), falls back to LanceDB for pre-migration documents
+- Returns `404` if `doc_id` does not exist in either location
 
 ### `PUT /api/documents/{doc_id}`
 - Body: `{"text": "...", "title": "..."}`
-- Lightweight save: updates document text in LanceDB without re-running LLM extraction, embedding, or clustering
-- Returns: `{"doc_id": "...", "status": "saved"}`
-- Returns `404` if `doc_id` does not exist
+- Writes updated text to disk; the SyncAgent handles re-ingestion after the debounce window
+- Returns: `{"doc_id": "...", "title": "...", "status": "saved"}`
 
 ### `POST /api/documents/{doc_id}/reingest`
 - Body: `{"text": "...", "title": "..."}`

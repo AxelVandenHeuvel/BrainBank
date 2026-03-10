@@ -1,6 +1,7 @@
-"""Tests for the POST /ingest/upload endpoint, including zip and duplicate detection."""
+"""Tests for the POST /ingest/upload endpoint, including zip and PDF asset preservation."""
 
 import io
+import os
 import zipfile
 from unittest.mock import patch
 
@@ -8,32 +9,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import app
-from backend.db.kuzu import init_kuzu as real_init_kuzu
-from backend.db.lance import init_lancedb as real_init_lancedb
-from tests.conftest import mock_embed_texts, mock_extract_concepts
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def isolate_upload_data(monkeypatch, lance_path, kuzu_path):
-    real_kuzu_db, _ = real_init_kuzu(kuzu_path)
+def isolate_upload_data(monkeypatch, tmp_path):
+    notes_dir = str(tmp_path / "notes")
+    assets_dir = str(tmp_path / "assets")
 
-    # Route the global Kuzu engine to the isolated test DB
-    monkeypatch.setattr("backend.db.kuzu._db_instance", real_kuzu_db)
-
-    monkeypatch.setattr(
-        "backend.ingestion.processor.init_lancedb",
-        lambda path="./data/lancedb": real_init_lancedb(lance_path),
-    )
-    monkeypatch.setattr(
-        "backend.ingestion.processor.init_kuzu",
-        lambda path="./data/kuzu": real_init_kuzu(kuzu_path),
-    )
-    monkeypatch.setattr(
-        "backend.api.find_existing_document",
-        lambda title: None,
-    )
+    monkeypatch.setattr("backend.api.get_notes_dir", lambda: notes_dir)
+    monkeypatch.setattr("backend.api.get_assets_dir", lambda: assets_dir)
+    # Also patch in api_graph since Manifest opens from get_notes_dir
+    monkeypatch.setattr("backend.api_graph.get_notes_dir", lambda: notes_dir)
 
 
 def _make_zip(files: dict[str, bytes]) -> bytes:
@@ -48,10 +36,7 @@ def _make_zip(files: dict[str, bytes]) -> bytes:
 class TestUploadEndpoint:
     """Tests for single-file upload via /ingest/upload."""
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_single_txt(self, _mock_llm, _mock_emb, _mock_color):
+    def test_upload_single_txt(self):
         file = io.BytesIO(b"Some plain text notes about math")
         resp = client.post(
             "/ingest/upload",
@@ -62,10 +47,7 @@ class TestUploadEndpoint:
         assert data["imported"] == 1
         assert data["results"][0]["title"] == "notes"
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_single_md(self, _mock_llm, _mock_emb, _mock_color):
+    def test_upload_single_md(self):
         file = io.BytesIO(b"# Physics\nForce = mass * acceleration")
         resp = client.post(
             "/ingest/upload",
@@ -76,11 +58,8 @@ class TestUploadEndpoint:
         assert data["imported"] == 1
         assert data["results"][0]["title"] == "physics"
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     @patch("backend.api.pdf_to_text", return_value="Extracted PDF text about biology")
-    def test_upload_single_pdf(self, mock_pdf, _mock_llm, _mock_emb, _mock_color):
+    def test_upload_single_pdf(self, mock_pdf):
         file = io.BytesIO(b"%PDF-fake-content")
         resp = client.post(
             "/ingest/upload",
@@ -92,11 +71,8 @@ class TestUploadEndpoint:
         assert data["results"][0]["title"] == "bio"
         mock_pdf.assert_called_once()
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
     @patch("backend.api.pdf_to_text", return_value="PDF content")
-    def test_upload_multiple_files(self, _mock_pdf, _mock_llm, _mock_emb, _mock_color):
+    def test_upload_multiple_files(self, _mock_pdf):
         txt_file = io.BytesIO(b"Text notes")
         pdf_file = io.BytesIO(b"%PDF-fake")
         resp = client.post(
@@ -128,10 +104,7 @@ class TestUploadEndpoint:
 class TestZipUpload:
     """Tests for zip file upload via /ingest/upload."""
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_zip_with_md_and_txt(self, _mock_llm, _mock_emb, _mock_color):
+    def test_zip_with_md_and_txt(self):
         zip_bytes = _make_zip({
             "notes.md": b"# Markdown file",
             "readme.txt": b"Plain text file",
@@ -146,10 +119,7 @@ class TestZipUpload:
         titles = {r["title"] for r in data["results"]}
         assert titles == {"notes", "readme"}
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_zip_skips_macosx_and_hidden_files(self, _mock_llm, _mock_emb, _mock_color):
+    def test_zip_skips_macosx_and_hidden_files(self):
         zip_bytes = _make_zip({
             "__MACOSX/._notes.md": b"mac metadata",
             ".hidden.md": b"hidden file",
@@ -175,10 +145,7 @@ class TestZipUpload:
         assert data["imported"] == 0
         assert data["results"] == []
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_zip_skips_unsupported_files_silently(self, _mock_llm, _mock_emb, _mock_color):
+    def test_zip_skips_unsupported_files_silently(self):
         zip_bytes = _make_zip({
             "image.png": b"\x89PNG",
             "data.csv": b"a,b,c",
@@ -195,34 +162,30 @@ class TestZipUpload:
 
 
 class TestDuplicateDetection:
-    """Tests for duplicate document detection in /ingest/upload."""
+    """Tests for idempotent upload behavior — same file title overwrites on disk."""
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_skips_duplicate(self, _mock_llm, _mock_emb, _mock_color, monkeypatch):
-        """When find_existing_document returns a match, the file should be skipped."""
-        monkeypatch.setattr(
-            "backend.api.find_existing_document",
-            lambda title: {"doc_id": "existing-123", "doc_name": title},
-        )
-
-        file = io.BytesIO(b"# Duplicate content")
-        resp = client.post(
+    def test_upload_same_title_twice_overwrites(self):
+        """Uploading the same filename twice overwrites the .md on disk (idempotent)."""
+        file1 = io.BytesIO(b"# Version 1")
+        resp1 = client.post(
             "/ingest/upload",
-            files=[("files", ("notes.md", file, "text/markdown"))],
+            files=[("files", ("notes.md", file1, "text/markdown"))],
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["imported"] == 0
-        assert data["results"][0]["skipped"] is True
-        assert data["results"][0]["reason"] == "duplicate"
+        assert resp1.status_code == 200
 
-    @patch("backend.ingestion.processor.calculate_color_score", return_value=0.5)
-    @patch("backend.ingestion.processor.embed_texts", side_effect=mock_embed_texts)
-    @patch("backend.ingestion.processor.extract_concepts", side_effect=mock_extract_concepts)
-    def test_upload_proceeds_when_no_duplicate(self, _mock_llm, _mock_emb, _mock_color):
-        """When find_existing_document returns None, the file should be ingested."""
+        file2 = io.BytesIO(b"# Version 2")
+        resp2 = client.post(
+            "/ingest/upload",
+            files=[("files", ("notes.md", file2, "text/markdown"))],
+        )
+        assert resp2.status_code == 200
+        data = resp2.json()
+        assert data["imported"] == 1
+        # Same doc_id since same filename → same file path → same SHA-256
+        assert resp1.json()["results"][0]["doc_id"] == data["results"][0]["doc_id"]
+
+    def test_upload_new_file_succeeds(self):
+        """Uploading a new file saves to disk and returns doc_id."""
         file = io.BytesIO(b"# New content")
         resp = client.post(
             "/ingest/upload",
@@ -231,4 +194,66 @@ class TestDuplicateDetection:
         assert resp.status_code == 200
         data = resp.json()
         assert data["imported"] == 1
-        assert data["results"][0].get("skipped") is not True
+        assert "doc_id" in data["results"][0]
+
+
+class TestPdfAssetPreservation:
+    """Tests for PDF upload preserving the original asset and creating .md stub."""
+
+    @patch("backend.api.pdf_to_text", return_value="Extracted text from the paper")
+    def test_pdf_upload_saves_original_to_assets_dir(self, _mock_pdf, tmp_path, monkeypatch):
+        assets_dir = str(tmp_path / "assets")
+        monkeypatch.setattr("backend.api.get_assets_dir", lambda: assets_dir)
+
+        file = io.BytesIO(b"%PDF-fake-content")
+        resp = client.post(
+            "/ingest/upload",
+            files=[("files", ("paper.pdf", file, "application/pdf"))],
+        )
+
+        assert resp.status_code == 200
+        assert os.path.exists(os.path.join(assets_dir, "paper.pdf"))
+
+    @patch("backend.api.pdf_to_text", return_value="Extracted text from the paper")
+    def test_pdf_upload_creates_md_with_source_footer(self, _mock_pdf, tmp_path, monkeypatch):
+        notes_dir = str(tmp_path / "notes2")
+        assets_dir = str(tmp_path / "assets2")
+        monkeypatch.setattr("backend.api.get_notes_dir", lambda: notes_dir)
+        monkeypatch.setattr("backend.api.get_assets_dir", lambda: assets_dir)
+
+        file = io.BytesIO(b"%PDF-fake-content")
+        resp = client.post(
+            "/ingest/upload",
+            files=[("files", ("paper.pdf", file, "application/pdf"))],
+        )
+
+        assert resp.status_code == 200
+        md_path = os.path.join(notes_dir, "paper.md")
+        assert os.path.exists(md_path)
+        with open(md_path, encoding="utf-8") as f:
+            content = f.read()
+        assert "Extracted text from the paper" in content
+        assert "Source: [[assets/paper.pdf]]" in content
+
+    @patch("backend.api.pdf_to_text", return_value="PDF text")
+    def test_pdf_upload_registers_in_manifest(self, _mock_pdf, tmp_path, monkeypatch):
+        notes_dir = str(tmp_path / "notes3")
+        monkeypatch.setattr("backend.api.get_notes_dir", lambda: notes_dir)
+        monkeypatch.setattr("backend.api.get_assets_dir", lambda: str(tmp_path / "assets3"))
+
+        file = io.BytesIO(b"%PDF-fake-content")
+        resp = client.post(
+            "/ingest/upload",
+            files=[("files", ("report.pdf", file, "application/pdf"))],
+        )
+
+        assert resp.status_code == 200
+        doc_id = resp.json()["results"][0]["doc_id"]
+
+        from backend.db.manifest import Manifest
+        manifest = Manifest(notes_dir)
+        row = manifest.get(doc_id)
+        manifest.close()
+
+        assert row is not None
+        assert row["is_managed"] is True

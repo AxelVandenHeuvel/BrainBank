@@ -1,4 +1,5 @@
 import asyncio
+import os
 from functools import partial
 
 import kuzu
@@ -7,13 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.db.kuzu import get_db_connection, get_kuzu_engine, update_node_communities
 from backend.db.lance import (
     init_lancedb,
-    create_document_text,
     delete_document_chunks,
-    update_document_text,
 )
-from backend.ingestion.processor import ingest_markdown
+from backend.db.manifest import Manifest
+from backend.ingestion.processor import doc_id_from_path, ingest_markdown
 from backend.retrieval.latent_discovery import concept_name_from_query_rows, find_latent_document_hits
 from backend.services.clustering import run_leiden_clustering
+from backend.services.notes_fs import content_hash_bytes, write_note, read_note, list_notes, note_path
+from backend.services.sync_agent import get_notes_dir
 from backend.schemas import (
     DiscoveryItemResponse,
     DiscoveryResponse,
@@ -221,51 +223,86 @@ def get_concepts(conn: kuzu.Connection = Depends(get_db_connection)):
 
 @graph_router.get("/documents")
 def get_documents():
-    """Return all documents with chunk counts and linked concepts."""
+    """Return all documents, merging file-system notes with LanceDB data."""
+    notes_dir = get_notes_dir()
+    fs_notes = list_notes(notes_dir)
+
     _, table = init_lancedb()
     df = table.to_pandas()
 
-    if df.empty:
-        return {"documents": []}
-
-    documents = []
-    for doc_id, group in df.groupby("doc_id", sort=False):
-        doc_name = group["doc_name"].iloc[0]
-        chunk_count = len(group)
-        all_concepts = group["concepts"].explode().dropna().unique().tolist()
-        documents.append(
-            {
-                "doc_id": doc_id,
-                "name": doc_name,
-                "chunk_count": chunk_count,
-                "concepts": all_concepts,
+    # Build lookup of LanceDB data keyed by doc_id
+    lance_docs: dict[str, dict] = {}
+    if not df.empty:
+        for did, group in df.groupby("doc_id", sort=False):
+            lance_docs[did] = {
+                "doc_id": did,
+                "name": group["doc_name"].iloc[0],
+                "chunk_count": len(group),
+                "concepts": group["concepts"].explode().dropna().unique().tolist(),
             }
-        )
 
-    print(f"[api] GET /api/documents -> {len(documents)} docs: {[d['name'] for d in documents]}")
+    seen_doc_ids: set[str] = set()
+    documents = []
+
+    # File-system notes take priority
+    for entry in fs_notes:
+        did = doc_id_from_path(entry["file_path"])
+        seen_doc_ids.add(did)
+        lance = lance_docs.get(did)
+        documents.append({
+            "doc_id": did,
+            "name": entry["title"],
+            "chunk_count": lance["chunk_count"] if lance else 0,
+            "concepts": lance["concepts"] if lance else [],
+        })
+
+    # Include LanceDB-only documents (pre-migration)
+    for did, info in lance_docs.items():
+        if did not in seen_doc_ids:
+            documents.append(info)
+
     return {"documents": documents}
 
 
 @graph_router.post("/documents")
 async def create_document(body: UpdateDocumentRequest):
-    """Create a new document. Runs full ingest when text is provided, lightweight draft otherwise."""
+    """Create a new document by writing a .md file to NOTES_DIR.
+
+    The SyncAgent file watcher will detect the new file and trigger ingestion
+    automatically after the debounce window.
+    """
+    notes_dir = get_notes_dir()
     text = (body.text or "").strip()
+    file_path = write_note(notes_dir, body.title, text)
+    doc_id = doc_id_from_path(file_path)
 
-    if not text:
-        doc_id = create_document_text("./data/lancedb", body.title, "")
-        return {"doc_id": doc_id, "status": "saved", "concepts": []}
+    manifest = Manifest(notes_dir)
+    manifest.upsert(doc_id, file_path, content_hash_bytes(text.encode("utf-8")), is_managed=True, status="pending")
+    manifest.close()
 
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        partial(ingest_markdown, text, body.title, shared_kuzu_db=get_kuzu_engine()),
-    )
-    return result
+    return {"doc_id": doc_id, "title": body.title, "status": "saved"}
 
 
 @graph_router.get("/documents/{doc_id}", response_model=DocumentResponse)
 def get_document(doc_id: str):
-    """Return the full text for one document id."""
+    """Return the full text for one document.
+
+    Tries the file system first (by scanning NOTES_DIR), falls back to LanceDB
+    for documents that were ingested before the file-system migration.
+    """
+    notes_dir = get_notes_dir()
+    for entry in list_notes(notes_dir):
+        path = entry["file_path"]
+        if doc_id_from_path(path) == doc_id:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            return DocumentResponse(
+                doc_id=doc_id,
+                name=entry["title"],
+                full_text=text,
+            )
+
+    # Fallback: document may exist in LanceDB from before file-system migration
     document = get_document_from_table(doc_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -274,11 +311,16 @@ def get_document(doc_id: str):
 
 @graph_router.put("/documents/{doc_id}")
 async def update_document(doc_id: str, body: UpdateDocumentRequest):
-    """Lightweight save: update document text without re-running the full pipeline."""
-    updated = update_document_text("./data/lancedb", doc_id, body.title, body.text)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return {"doc_id": doc_id, "status": "saved"}
+    """Save document text to disk. The SyncAgent handles ingestion."""
+    notes_dir = get_notes_dir()
+    file_path = write_note(notes_dir, body.title, body.text)
+    actual_doc_id = doc_id_from_path(file_path)
+
+    manifest = Manifest(notes_dir)
+    manifest.upsert(actual_doc_id, file_path, content_hash_bytes(body.text.encode("utf-8")), is_managed=True, status="pending")
+    manifest.close()
+
+    return {"doc_id": actual_doc_id, "title": body.title, "status": "saved"}
 
 
 @graph_router.post("/documents/{doc_id}/reingest")
@@ -298,6 +340,45 @@ async def reingest_document(doc_id: str, body: UpdateDocumentRequest):
         ),
     )
     return result
+
+
+@graph_router.post("/documents/{doc_id}/adopt")
+async def adopt_document(doc_id: str):
+    """Toggle an external (unmanaged) file to managed and trigger indexing."""
+    notes_dir = get_notes_dir()
+    manifest = Manifest(notes_dir)
+    row = manifest.get(doc_id)
+
+    if row is None:
+        manifest.close()
+        raise HTTPException(status_code=404, detail="Document not found in manifest")
+
+    manifest.adopt(doc_id)
+
+    # Trigger immediate ingest
+    file_path = row["file_path"]
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        doc_name = os.path.splitext(os.path.basename(file_path))[0]
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            partial(
+                ingest_markdown,
+                text,
+                doc_name,
+                shared_kuzu_db=get_kuzu_engine(),
+                file_path=file_path,
+            ),
+        )
+        from backend.services.notes_fs import content_hash_file
+        manifest.upsert(doc_id, file_path, content_hash_file(file_path), is_managed=True, status="indexed")
+        manifest.close()
+        return {"doc_id": doc_id, "status": "adopted", **result}
+
+    manifest.close()
+    return {"doc_id": doc_id, "status": "adopted"}
 
 
 @graph_router.get("/concepts/{concept_name}/documents", response_model=list[DocumentResponse])
