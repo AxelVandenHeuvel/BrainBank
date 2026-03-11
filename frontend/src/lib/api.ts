@@ -3,7 +3,7 @@
  * Handles switching between development proxy and production absolute URLs.
  */
 
-const isElectron = typeof window !== 'undefined' && window.process && (window.process as any).type === 'renderer';
+const _isElectron = typeof window !== 'undefined' && (window as any).process && ((window as any).process as any).type === 'renderer';
 
 // In development, Vite handles the proxy via /query, /api etc.
 // In production packaged Electron, we need to point to the backend's port directly.
