@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getApiUrl } from '../lib/api';
 
 import type { GraphData } from '../types/graph';
 
@@ -88,8 +89,8 @@ export function useFileTree(graphData?: GraphData): UseFileTreeResult {
       setIsLoading(true);
       try {
         const [conceptsRes, documentsRes] = await Promise.all([
-          fetch('/api/concepts', { signal: controller.signal }),
-          fetch('/api/documents', { signal: controller.signal }),
+          fetch(getApiUrl('/api/concepts'), { signal: controller.signal }),
+          fetch(getApiUrl('/api/documents'), { signal: controller.signal }),
         ]);
 
         if (!conceptsRes.ok || !documentsRes.ok) {

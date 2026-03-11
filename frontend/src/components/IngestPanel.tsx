@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { getApiUrl } from '../lib/api';
 
 interface IngestPanelProps {
   onIngestComplete: () => void;
@@ -43,7 +44,7 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
         const formData = new FormData();
         formData.append('files', fileList[i]);
 
-        const response = await fetch('/ingest/upload', {
+        const response = await fetch(getApiUrl('/ingest/upload'), {
           method: 'POST',
           body: formData,
         });
@@ -105,7 +106,7 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
     setResult(null);
 
     try {
-      const response = await fetch('/ingest/notion', {
+      const response = await fetch(getApiUrl('/ingest/notion'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: notionToken.trim(), url: notionUrl.trim() }),
@@ -223,9 +224,8 @@ export function IngestPanel({ onIngestComplete, onNewNote }: IngestPanelProps) {
 
       {result && (
         <p
-          className={`text-xs ${
-            result.type === 'success' ? 'text-emerald-400' : 'text-red-400'
-          }`}
+          className={`text-xs ${result.type === 'success' ? 'text-emerald-400' : 'text-red-400'
+            }`}
         >
           {result.message}
         </p>

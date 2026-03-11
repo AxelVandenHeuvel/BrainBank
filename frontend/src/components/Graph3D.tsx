@@ -4,6 +4,7 @@ import ForceGraph3D from 'react-force-graph-3d';
 import { forceCollide } from 'd3-force-3d';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { getApiUrl } from '../lib/api';
 
 import {
   DIMMED_NODE_COLOR,
@@ -205,7 +206,7 @@ export function Graph3D({
 
     async function loadGraphStats() {
       try {
-        const response = await fetch('/api/stats', {
+        const response = await fetch(getApiUrl('/api/stats'), {
           signal: controller.signal,
         });
         if (!response.ok) {

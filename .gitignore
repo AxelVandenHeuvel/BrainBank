@@ -1,8 +1,16 @@
+.env
 .venv/
+.pytest_cache/
 __pycache__/
+*.pyc
 *.egg-info/
 data/
 tmp/
-.pytest_cache/
-.env
 node_modules/
+
+# Backend packaging outputs
+backend/dist/
+build/
+
+# Electron-packaged backend binary
+frontend/electron/bin/

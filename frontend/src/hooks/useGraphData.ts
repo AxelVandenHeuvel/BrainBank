@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { getApiUrl } from '../lib/api';
 
 import { normalizeGraphData, validateGraphApiResponse } from '../lib/graphData';
 import type { GraphData, GraphSource } from '../types/graph';
@@ -31,7 +32,7 @@ export function useGraphData(): UseGraphDataResult {
 
     async function loadGraph() {
       try {
-        const response = await fetch('/api/graph', {
+        const response = await fetch(getApiUrl('/api/graph'), {
           signal: controller.signal,
         });
 

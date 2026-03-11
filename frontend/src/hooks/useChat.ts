@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { getApiUrl } from '../lib/api';
 
 import {
   loadActiveSessionId,
@@ -65,9 +66,10 @@ interface UseChatResult {
   sendMessage: (question: string) => Promise<void>;
 }
 
-const QUERY_ENDPOINT = '/query';
-const QUERY_PREPARE_ENDPOINT = '/query/prepare';
-const QUERY_ANSWER_ENDPOINT = '/query/answer';
+const QUERY_ENDPOINT = getApiUrl('/query');
+const QUERY_PREPARE_ENDPOINT = getApiUrl('/query/prepare');
+const QUERY_ANSWER_ENDPOINT = getApiUrl('/query/answer');
+
 const FALLBACK_ERROR_MESSAGE = 'I could not reach BrainBank right now.';
 const DEFAULT_SESSION_TITLE = 'New chat';
 
@@ -241,14 +243,14 @@ export function useChat(): UseChatResult {
         previousSessions.map((session) =>
           session.id === sessionId
             ? {
-                ...session,
-                title:
-                  message.role === 'user'
-                    ? getSessionTitle(message.content, session.title)
-                    : session.title,
-                updatedAt: nextUpdatedAt,
-                messages: [...session.messages, message],
-              }
+              ...session,
+              title:
+                message.role === 'user'
+                  ? getSessionTitle(message.content, session.title)
+                  : session.title,
+              updatedAt: nextUpdatedAt,
+              messages: [...session.messages, message],
+            }
             : session,
         ),
       ),
