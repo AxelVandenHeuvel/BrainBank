@@ -560,6 +560,22 @@ class TestUpdateDocument:
         assert "doc_id" in data
         assert data["status"] == "saved"
 
+    def test_create_duplicate_title_succeeds_with_unique_files(self):
+        """Creating two notes with the same title should not crash."""
+        resp1 = client.post("/api/documents", json={"text": "", "title": "Untitled"})
+        resp2 = client.post("/api/documents", json={"text": "", "title": "Untitled"})
+
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        id1 = resp1.json()["doc_id"]
+        id2 = resp2.json()["doc_id"]
+        assert id1 != id2
+
+        # Both should be retrievable
+        assert client.get(f"/api/documents/{id1}").status_code == 200
+        assert client.get(f"/api/documents/{id2}").status_code == 200
+
     def test_create_document_writes_file_and_lists_document(self):
         resp = client.post(
             "/api/documents",
@@ -647,6 +663,63 @@ class TestUpdateDocument:
         assert resp.status_code == 200
         assert resp.json()["full_text"] == "Biology is about Cells."
 
+    def test_rename_title_moves_file_and_preserves_doc_id(self):
+        """PUT with a new title should rename the file on disk but keep the same doc_id."""
+        resp = client.post(
+            "/api/documents",
+            json={"text": "Some content.", "title": "Old Title"},
+        )
+        doc_id = resp.json()["doc_id"]
+
+        resp = client.put(
+            f"/api/documents/{doc_id}",
+            json={"text": "Some content.", "title": "New Title"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["doc_id"] == doc_id
+
+        # GET should find the document under the same doc_id with the new title
+        resp = client.get(f"/api/documents/{doc_id}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "New Title"
+        assert resp.json()["full_text"] == "Some content."
+
+        # Old file should not exist
+        from backend.api_graph import get_notes_dir
+        from backend.services.notes_fs import note_path
+        import os
+        old_path = note_path(get_notes_dir(), "Old Title")
+        assert not os.path.exists(old_path)
+
+    def test_update_unknown_doc_id_returns_404(self):
+        """PUT with an unknown doc_id should return 404."""
+        resp = client.put(
+            "/api/documents/nonexistent-uuid",
+            json={"text": "content", "title": "Whatever"},
+        )
+        assert resp.status_code == 404
+
+    def test_rename_to_existing_title_returns_409(self):
+        """PUT renaming to a title that another document already owns should return 409."""
+        resp1 = client.post("/api/documents", json={"text": "First", "title": "Alpha"})
+        resp2 = client.post("/api/documents", json={"text": "Second", "title": "Beta"})
+        doc_id_beta = resp2.json()["doc_id"]
+
+        # Try to rename Beta → Alpha (which already exists)
+        resp = client.put(
+            f"/api/documents/{doc_id_beta}",
+            json={"text": "Second", "title": "Alpha"},
+        )
+
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"].lower()
+
+        # Beta should still be intact under its original title
+        get_resp = client.get(f"/api/documents/{doc_id_beta}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["name"] == "Beta"
+
     def test_reingest_returns_concepts(self):
         """POST reingest should run full pipeline and return concepts."""
         doc_id = self._ingest_and_get_doc_id()
@@ -674,25 +747,13 @@ class TestUpdateDocument:
 class TestAdoptDocument:
     def test_adopt_sets_managed_and_triggers_ingest(self):
         """Adopting an unmanaged file should set is_managed=True and ingest."""
-        # Simulate an external file discovered by the watcher
         from backend.db.manifest import Manifest
-        from backend.services.notes_fs import write_note
-        from backend.ingestion.processor import doc_id_from_path
-
-        notes_dir_holder = {}
-
-        # Get the test's notes_dir via a create call
-        resp = client.post("/api/documents", json={"text": "", "title": "_probe"})
-        assert resp.status_code == 200
-        # The notes_dir is wherever _probe.md was written — derive from doc_id
-        # Instead, let's write an external file and register it as unmanaged
-        import os
-        # find the notes dir from the monkeypatched get_notes_dir
+        from backend.services.notes_fs import write_note, generate_doc_id
         from backend.api_graph import get_notes_dir
-        nd = get_notes_dir()
 
+        nd = get_notes_dir()
         path = write_note(nd, "External Note", "# External\nSome external content.")
-        did = doc_id_from_path(path)
+        did = generate_doc_id()
         manifest = Manifest(nd)
         manifest.upsert(did, path, "somehash", is_managed=False, status="discovered")
         manifest.close()

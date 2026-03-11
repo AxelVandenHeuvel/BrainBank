@@ -10,9 +10,10 @@ export interface DocumentEditorProps {
   isNew: boolean;
   onTitleChange?: (docId: string, newTitle: string) => void;
   onSaved?: (docId: string, newDocId?: string, currentContent?: string) => void;
+  onDeleted?: (docId: string) => void; // NEW: Callback for when a note is trashed
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'deleting' | 'conflict';
 
 export function DocumentEditor({
   docId,
@@ -21,65 +22,103 @@ export function DocumentEditor({
   isNew,
   onTitleChange,
   onSaved,
+  onDeleted,
 }: DocumentEditorProps) {
   const [title, setTitle] = useState(initialTitle);
   const [status, setStatus] = useState<SaveStatus>('idle');
+  
   const editorRoot = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
+  
   const contentRef = useRef(initialContent);
   const titleRef = useRef(initialTitle);
   const isMounted = useRef(true);
-  const isSaving = useRef(false);
+  
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const save = useCallback(async () => {
-    const text = contentRef.current.trim();
-    const rawTitle = titleRef.current.trim();
-    if (!text && !rawTitle) return;
-
-    const currentTitle = rawTitle || 'Untitled';
-
-    // Prevent overlapping saves — especially important for new notes where
-    // the first POST creates the doc and subsequent saves should wait until
-    // the component remounts with the real id.
-    if (isSaving.current) return;
-    isSaving.current = true;
-
+  const performSave = useCallback(async (currentTitle: string, currentContent: string) => {
+    if (!isMounted.current || status === 'deleting') return;
     setStatus('saving');
 
     try {
-      const url = isNew ? '/api/documents' : `/api/documents/${docId}`;
+      const endpoint = isNew ? '/api/documents' : `/api/documents/${encodeURIComponent(docId)}`;
       const method = isNew ? 'POST' : 'PUT';
-      const body = JSON.stringify({ title: currentTitle, text });
 
-      const response = await fetch(url, {
-        method,
+      const response = await fetch(endpoint, {
+        method: method,
         headers: { 'Content-Type': 'application/json' },
-        body,
+        body: JSON.stringify({ 
+          title: currentTitle, 
+          text: currentContent 
+        }),
       });
 
-      if (!response.ok) throw new Error(`Save failed (${response.status})`);
+      if (response.status === 409) {
+        if (isMounted.current) setStatus('conflict');
+        return;
+      }
+
+      if (!response.ok) throw new Error('Failed to save document via API');
 
       const data = await response.json();
 
       if (isMounted.current) {
         setStatus('saved');
-        // For new notes, pass the real doc_id from the backend so the tab id can be updated
-        const realDocId = isNew && data.doc_id ? data.doc_id : undefined;
-        onSaved?.(docId, realDocId, contentRef.current);
+        onSaved?.(docId, data.doc_id, currentContent);
       }
-    } catch {
-      if (isMounted.current) {
-        setStatus('error');
-      }
-    } finally {
-      isSaving.current = false;
+    } catch (error) {
+      console.error("Error saving document:", error);
+      if (isMounted.current) setStatus('error');
     }
-  }, [docId, isNew, onSaved]);
+  }, [docId, isNew, onSaved, status]);
 
-  // Milkdown Crepe setup
+  const triggerAutoSave = useCallback((newTitle: string, newContent: string) => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (status === 'deleting') return;
+
+    setStatus('idle');
+    saveTimeoutRef.current = setTimeout(() => {
+      void performSave(newTitle, newContent);
+    }, 1500); 
+  }, [performSave, status]);
+
+  const handleDelete = async () => {
+    if (!window.confirm("Are you sure you want to delete this note? This cannot be undone.")) return;
+    
+    // Stop any pending auto-saves
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    setStatus('deleting');
+
+    try {
+      const response = await fetch(`/api/documents/${encodeURIComponent(docId)}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) throw new Error('Failed to delete document');
+
+      onDeleted?.(docId);
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      if (isMounted.current) setStatus('error');
+    }
+  };
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
+
+  const autoSaveRef = useRef(triggerAutoSave);
+
+  useEffect(() => {
+    autoSaveRef.current = triggerAutoSave;
+  }, [triggerAutoSave]);
+
   useEffect(() => {
     if (!editorRoot.current || crepeRef.current) return;
-
     let destroyed = false;
 
     const crepe = new Crepe({
@@ -93,29 +132,22 @@ export function DocumentEditor({
         [Crepe.Feature.Cursor]: false,
       },
       featureConfigs: {
-        [Crepe.Feature.Placeholder]: {
-          text: 'Start writing...',
-          mode: 'block',
-        },
+        [Crepe.Feature.Placeholder]: { text: 'Start writing...', mode: 'block' },
       },
     });
 
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         contentRef.current = markdown;
-        setStatus((current) => (current === 'saving' ? current : 'idle'));
+        // Call the ref! This prevents the useEffect from needing dependencies
+        autoSaveRef.current(titleRef.current, markdown);
       });
     });
 
-    crepe
-      .create()
-      .then(() => {
+    crepe.create().then(() => {
         if (destroyed) return;
         crepeRef.current = crepe;
-      })
-      .catch((err) => {
-        console.error('Milkdown Crepe failed to initialize:', err);
-      });
+      }).catch((err) => console.error('Milkdown Crepe failed to initialize:', err));
 
     return () => {
       destroyed = true;
@@ -124,67 +156,60 @@ export function DocumentEditor({
     };
   }, []);
 
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
-
   function handleTitleChange(newTitle: string) {
     setTitle(newTitle);
     titleRef.current = newTitle;
     onTitleChange?.(docId, newTitle);
-    setStatus((current) => (current === 'saving' ? current : 'idle'));
+    triggerAutoSave(newTitle, contentRef.current);
   }
 
   const statusLabel: Record<SaveStatus, string> = {
     idle: '',
     saving: 'Saving...',
     saved: 'Saved to disk',
+    deleting: 'Deleting...',
+    conflict: 'Name already exists. Please rename.',
     error: 'Error',
   };
 
   return (
     <div className="flex h-full flex-col">
-      {/* Title + status */}
       <div className="flex items-center gap-3 px-6 pt-4">
         <input
           type="text"
           value={title}
           onChange={(e) => handleTitleChange(e.target.value)}
           placeholder="Untitled"
-          className="min-w-0 flex-1 border-none bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-neutral-700"
+          disabled={status === 'deleting'}
+          className="min-w-0 flex-1 border-none bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-neutral-700 disabled:opacity-50"
         />
+
+        {/* Delete Button */}
         <button
           type="button"
-          onClick={() => {
-            void save();
-          }}
-          disabled={status === 'saving'}
-          className="shrink-0 border border-white/[0.08] bg-neutral-950 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-neutral-300 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={handleDelete}
+          disabled={status === 'deleting'}
+          className="shrink-0 border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-red-400 transition hover:bg-red-500/20 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Save note
+          Delete
         </button>
+
         <span
           data-testid="save-status"
           className={`text-xs ${
-            status === 'error' ? 'text-red-400' : 'text-neutral-600'
+            status === 'error' || status === 'conflict' ? 'text-red-400' : 'text-neutral-600'
           }`}
         >
           {statusLabel[status]}
         </span>
       </div>
 
-      {/* Editor */}
       <div
         data-testid="document-editor-scroll-region"
         className="flex-1 overflow-auto overscroll-contain px-6 py-4"
-        onWheel={(event) => {
-          event.stopPropagation();
-        }}
+        onWheel={(event) => event.stopPropagation()}
       >
-        <div ref={editorRoot} />
+        <div ref={editorRoot} className={status === 'deleting' ? 'opacity-50 pointer-events-none' : ''} />
       </div>
     </div>
   );

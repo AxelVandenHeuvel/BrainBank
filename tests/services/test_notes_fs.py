@@ -9,6 +9,8 @@ from backend.services.notes_fs import (
     list_notes,
     delete_note,
     note_path,
+    rename_note,
+    generate_doc_id,
 )
 
 
@@ -105,6 +107,46 @@ class TestDeleteNote:
 
     def test_returns_false_for_missing_note(self, notes_dir):
         assert delete_note(notes_dir, "Ghost") is False
+
+
+class TestRenameNote:
+    def test_renames_file_on_disk(self, notes_dir):
+        write_note(notes_dir, "Old Title", "content here")
+
+        new_path = rename_note(notes_dir, "Old Title", "New Title")
+
+        assert os.path.exists(new_path)
+        assert not os.path.exists(note_path(notes_dir, "Old Title"))
+        assert os.path.basename(new_path) == "New Title.md"
+        with open(new_path, encoding="utf-8") as f:
+            assert f.read() == "content here"
+
+    def test_returns_none_if_source_missing(self, notes_dir):
+        result = rename_note(notes_dir, "Ghost", "New Name")
+
+        assert result is None
+
+    def test_noop_if_same_title(self, notes_dir):
+        path = write_note(notes_dir, "Same", "content")
+
+        new_path = rename_note(notes_dir, "Same", "Same")
+
+        assert new_path == path
+        assert os.path.exists(path)
+
+
+class TestGenerateDocId:
+    def test_returns_hex_string(self):
+        doc_id = generate_doc_id()
+
+        assert isinstance(doc_id, str)
+        assert len(doc_id) == 32  # uuid4().hex is 32 hex chars
+        int(doc_id, 16)  # should not raise
+
+    def test_returns_unique_ids(self):
+        ids = {generate_doc_id() for _ in range(100)}
+
+        assert len(ids) == 100
 
 
 class TestNotePath:

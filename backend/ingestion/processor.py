@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import uuid
@@ -21,12 +20,6 @@ from backend.services.llm import extract_concepts
 SHARED_DOCUMENT_REASON = "shared_document"
 
 logger = logging.getLogger(__name__)
-
-
-def doc_id_from_path(file_path: str) -> str:
-    """Return a deterministic SHA-256 doc_id from the absolute file path."""
-    absolute = os.path.abspath(file_path)
-    return hashlib.sha256(absolute.encode()).hexdigest()
 
 
 def _dedupe_preserving_order(items: list[str]) -> list[str]:
@@ -94,7 +87,8 @@ def ingest_markdown(
 
     try:
         if file_path is not None:
-            doc_id = doc_id_from_path(file_path)
+            if doc_id is None:
+                raise ValueError("doc_id is required when file_path is provided")
             # Delete old chunks and centroid for this file so re-ingest is idempotent
             table.delete(f'doc_id = "{doc_id}"')
             try:

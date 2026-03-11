@@ -12,7 +12,8 @@ import time
 from backend.db.kuzu import get_kuzu_engine
 from backend.db.lance import delete_document_chunks
 from backend.db.manifest import Manifest
-from backend.ingestion.processor import doc_id_from_path, ingest_markdown
+from backend.ingestion.processor import ingest_markdown
+from backend.services.notes_fs import generate_doc_id
 from backend.services.notes_fs import content_hash_file
 
 logger = logging.getLogger(__name__)
@@ -102,15 +103,17 @@ class SyncAgent:
             if not os.path.exists(path):
                 return
 
-            doc_id = doc_id_from_path(path)
             current_hash = content_hash_file(path)
-            row = self.manifest.get(doc_id)
+            row = self.manifest.get_by_path(path)
 
             if row is None:
-                # Unknown file — register as unmanaged, do NOT ingest
+                # Unknown file — register as unmanaged with a fresh UUID
+                doc_id = generate_doc_id()
                 self.manifest.upsert(doc_id, path, current_hash, is_managed=False, status="discovered")
                 logger.info("Discovered external file %s — registered as unmanaged", path)
                 return
+
+            doc_id = row["doc_id"]
 
             if not row["is_managed"]:
                 # Unmanaged file — skip ingestion
@@ -130,6 +133,7 @@ class SyncAgent:
                 doc_name,
                 shared_kuzu_db=get_kuzu_engine(),
                 file_path=path,
+                doc_id=doc_id,
             )
             self.manifest.upsert(doc_id, path, current_hash, is_managed=True, status="indexed")
             logger.info("Ingested %s", path)
@@ -138,7 +142,11 @@ class SyncAgent:
 
     def _process_delete(self, path: str) -> None:
         try:
-            doc_id = doc_id_from_path(path)
+            row = self.manifest.get_by_path(path)
+            if row is None:
+                logger.debug("Delete event for unknown file %s — ignoring", path)
+                return
+            doc_id = row["doc_id"]
             deleted = delete_document_chunks("./data/lancedb", doc_id)
             self.manifest.delete(doc_id)
             logger.info("Deleted %d chunks for %s", deleted, path)

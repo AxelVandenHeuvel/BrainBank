@@ -151,6 +151,31 @@ class TestManifestNeedsReindex:
         assert manifest.needs_reindex("nonexistent", "any_hash") is True
 
 
+class TestManifestUpdatePath:
+    def test_update_path_changes_file_path(self, manifest):
+        manifest.upsert("doc1", "/notes/old_title.md", "hash1", is_managed=True)
+
+        result = manifest.update_path("doc1", "/notes/new_title.md")
+
+        assert result is True
+        row = manifest.get("doc1")
+        assert row["file_path"] == "/notes/new_title.md"
+        assert row["doc_id"] == "doc1"  # doc_id unchanged
+
+    def test_update_path_returns_false_for_missing(self, manifest):
+        assert manifest.update_path("nonexistent", "/notes/foo.md") is False
+
+    def test_update_path_preserves_other_fields(self, manifest):
+        manifest.upsert("doc1", "/notes/old.md", "hash1", is_managed=True, status="indexed")
+
+        manifest.update_path("doc1", "/notes/new.md")
+
+        row = manifest.get("doc1")
+        assert row["content_hash"] == "hash1"
+        assert row["is_managed"] is True
+        assert row["status"] == "indexed"
+
+
 class TestManifestThreadSafety:
     def test_concurrent_writes_do_not_corrupt(self, manifest):
         errors = []

@@ -7,6 +7,7 @@ and the SyncAgent watches for changes to trigger ingestion.
 import hashlib
 import os
 import re
+import uuid
 
 
 def _sanitize_filename(title: str) -> str:
@@ -51,6 +52,23 @@ def list_notes(notes_dir: str) -> list[dict]:
             "file_path": os.path.join(notes_dir, entry),
         })
     return results
+
+
+def generate_doc_id() -> str:
+    """Generate a new unique document ID."""
+    return uuid.uuid4().hex
+
+
+def rename_note(notes_dir: str, old_title: str, new_title: str) -> str | None:
+    """Rename a note file on disk. Returns the new path, or None if source missing."""
+    old_path = note_path(notes_dir, old_title)
+    if not os.path.exists(old_path):
+        return None
+    new_path = note_path(notes_dir, new_title)
+    if old_path == new_path:
+        return old_path
+    os.rename(old_path, new_path)
+    return new_path
 
 
 def content_hash_file(path: str) -> str:

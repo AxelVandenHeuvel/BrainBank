@@ -135,45 +135,15 @@ export default function App() {
     );
   }
 
-  function handleDocSaved(docId: string, newDocId?: string, currentContent?: string) {
-    const wasNewTab = openTabs.find((t) => t.id === docId)?.isNew ?? false;
-
-    setOpenTabs((prev) => {
-      const idx = prev.findIndex((t) => t.id === docId);
-      if (idx === -1) return prev;
-
-      const savedTab = prev[idx];
-
-      if (savedTab.isNew) {
-        const next = prev.filter((t) => t.id !== docId);
-        if (activeTabId === docId) {
-          if (next.length === 0) {
-            setActiveTabId(BRAIN_TAB_ID);
-          } else if (idx < next.length) {
-            setActiveTabId(next[idx].id);
-          } else {
-            setActiveTabId(next[next.length - 1].id);
-          }
-        }
-        return next;
-      }
-
-      return prev.map((t) => {
-        if (t.id !== docId) return t;
-        // Update the tab id, preserve content so remount doesn't lose it, mark as not new
-        return {
-          ...t,
-          id: newDocId ?? docId,
-          isNew: false,
-          isLoading: false,
-          content: currentContent ?? t.content,
-        };
-      });
-    }
+  function handleDocSaved(docId: string, _newDocId?: string, currentContent?: string) {
+    setOpenTabs((prev) =>
+      prev.map((t) =>
+        t.id === docId
+          ? { ...t, isNew: false, isLoading: false, content: currentContent ?? t.content }
+          : t,
+      ),
     );
-    if (!wasNewTab && newDocId && activeTabId === docId) {
-      setActiveTabId(newDocId);
-    }
+
     refetch();
     refetchTree();
   }
@@ -186,13 +156,40 @@ export default function App() {
     refetchTree();
   }
 
-  function handleNewNote() {
-    const id = generateNewNoteId();
-    const newTab: OpenTab = { id, title: 'Untitled', content: '', isNew: true };
-    setOpenTabs((prev) => [...prev, newTab]);
-    setActiveTabId(id);
+ async function handleNewNote() {
+    // Instantly create the file on disk so we have a stable, permanent ID before the user even types
+    try {
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Untitled', text: '' }),
+      });
+      
+      const data = await response.json();
+      
+      const newTab: OpenTab = { 
+        id: data.doc_id, 
+        title: data.title, 
+        content: '', 
+        isNew: false // It is already on disk!
+      };
+      
+      setOpenTabs((prev) => [...prev, newTab]);
+      setActiveTabId(data.doc_id);
+      refetchTree(); // Update the sidebar to show the new file
+    } catch (error) {
+      console.error("Failed to create new note on disk:", error);
+    }
   }
 
+  function handleDocDeleted(docId: string) {
+    // 1. Close the tab (your existing closeTab function handles moving focus to Brain or the next tab)
+    closeTab(docId);
+    
+    // 2. Refresh the graph and the sidebar to remove the deleted file
+    refetch();
+    refetchTree();
+  }
   // FileExplorer: open doc tab immediately with mock content, then try API
   function handleFileExplorerOpenDocument(docId: string, name: string, conceptName: string) {
     const mockDocs = getMockDocumentsForConcept(conceptName);
@@ -390,6 +387,7 @@ export default function App() {
                   isNew={activeDocTab.isNew}
                   onTitleChange={handleTabTitleChange}
                   onSaved={handleDocSaved}
+                  onDeleted={handleDocDeleted}
                 />
               )}
             </section>

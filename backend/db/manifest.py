@@ -91,6 +91,16 @@ class Manifest:
                 )
                 return cursor.rowcount > 0
 
+    def update_path(self, doc_id: str, new_file_path: str) -> bool:
+        """Update the file_path for an existing document. Returns True if updated."""
+        with self._lock:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "UPDATE manifest SET file_path = ? WHERE doc_id = ?",
+                    (new_file_path, doc_id),
+                )
+                return cursor.rowcount > 0
+
     def delete(self, doc_id: str) -> None:
         with self._lock:
             with self._connect() as conn:

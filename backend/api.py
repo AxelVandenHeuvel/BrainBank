@@ -15,7 +15,7 @@ from backend.api_graph import graph_router
 from backend.db.kuzu import get_kuzu_engine, update_node_communities
 from backend.db.lance import init_lancedb
 from backend.ingestion.consolidator import ConceptConsolidator
-from backend.ingestion.processor import doc_id_from_path, ingest_markdown
+from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.query import query_brainbank
 from backend.retrieval.query import prepare_brainbank_query, answer_prepared_local_query
 from backend.retrieval.routing import QueryRoute
@@ -23,7 +23,7 @@ from backend.session.prepared_query_store import PreparedQueryStore
 from backend.sample_data.mock_demo import seed_mock_demo_data
 from backend.services.clustering import run_leiden_clustering
 from backend.services.llm import generate_test_answer
-from backend.services.notes_fs import content_hash_bytes, write_note
+from backend.services.notes_fs import content_hash_bytes, generate_doc_id, write_note
 from backend.services.sync_agent import SyncAgent, get_assets_dir, get_notes_dir
 from backend.services.notion import (
     fetch_database_page_ids,
@@ -325,10 +325,11 @@ def _ingest_uploaded_file(filename: str, data: bytes, title: str) -> dict:
         text = data.decode("utf-8", errors="replace")
         file_path = write_note(notes_dir, title, text)
 
-    doc_id = doc_id_from_path(file_path)
     content_hash = content_hash_bytes(text.encode("utf-8"))
 
     manifest = Manifest(notes_dir)
+    existing = manifest.get_by_path(file_path)
+    doc_id = existing["doc_id"] if existing else generate_doc_id()
     manifest.upsert(doc_id, file_path, content_hash, is_managed=True, status="pending")
     manifest.close()
 

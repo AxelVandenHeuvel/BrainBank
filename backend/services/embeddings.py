@@ -16,7 +16,10 @@ _anchor_cache: dict[str, list[float]] = {}
 def _get_model():
     global _model
     if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        _model = SentenceTransformer(
+            'nomic-ai/nomic-embed-text-v1.5', 
+            trust_remote_code=True,
+        )
     return _model
 
 

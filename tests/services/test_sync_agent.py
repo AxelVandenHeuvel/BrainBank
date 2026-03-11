@@ -74,18 +74,16 @@ class TestSyncAgentProcessing:
     @patch("backend.services.sync_agent.get_kuzu_engine")
     def test_process_file_calls_ingest_for_managed_file(self, mock_kuzu, mock_ingest, notes_dir):
         mock_kuzu.return_value = MagicMock()
-        mock_ingest.return_value = {"doc_id": "abc", "chunks": 1, "concepts": []}
+        mock_ingest.return_value = {"doc_id": "uuid-1", "chunks": 1, "concepts": []}
 
         agent = SyncAgent(notes_dir=notes_dir, auto_start=False)
         path = os.path.join(notes_dir, "calculus.md")
         with open(path, "w") as f:
             f.write("# Calculus\nDerivatives and integrals.")
 
-        # Register as managed in the manifest
-        from backend.ingestion.processor import doc_id_from_path
+        # Register as managed in the manifest with a UUID
         from backend.services.notes_fs import content_hash_file
-        doc_id = doc_id_from_path(path)
-        agent.manifest.upsert(doc_id, path, content_hash_file(path), is_managed=True)
+        agent.manifest.upsert("uuid-1", path, content_hash_file(path), is_managed=True)
 
         # Change content so hash differs
         with open(path, "w") as f:
@@ -95,6 +93,7 @@ class TestSyncAgentProcessing:
         mock_ingest.assert_called_once()
         call_kwargs = mock_ingest.call_args
         assert call_kwargs[1]["file_path"] == path
+        assert call_kwargs[1]["doc_id"] == "uuid-1"
         assert "Updated" in call_kwargs[0][0]
 
     @patch("backend.services.sync_agent.ingest_markdown")
@@ -111,8 +110,7 @@ class TestSyncAgentProcessing:
 
         # File unknown to manifest → registered as unmanaged, NOT ingested
         mock_ingest.assert_not_called()
-        from backend.ingestion.processor import doc_id_from_path
-        row = agent.manifest.get(doc_id_from_path(path))
+        row = agent.manifest.get_by_path(path)
         assert row is not None
         assert row["is_managed"] is False
 
@@ -126,30 +124,25 @@ class TestSyncAgentProcessing:
         with open(path, "w") as f:
             f.write("# Stable content")
 
-        from backend.ingestion.processor import doc_id_from_path
         from backend.services.notes_fs import content_hash_file
-        doc_id = doc_id_from_path(path)
-        agent.manifest.upsert(doc_id, path, content_hash_file(path), is_managed=True)
+        agent.manifest.upsert("uuid-2", path, content_hash_file(path), is_managed=True)
 
         # Process same file with same content — should skip
         agent._process_file(path)
         mock_ingest.assert_not_called()
 
     @patch("backend.services.sync_agent.delete_document_chunks")
-    @patch("backend.services.sync_agent.doc_id_from_path")
-    def test_process_delete_calls_delete_document_chunks(self, mock_id, mock_delete, notes_dir):
-        mock_id.return_value = "abc123"
+    def test_process_delete_calls_delete_document_chunks(self, mock_delete, notes_dir):
         mock_delete.return_value = 2
 
         agent = SyncAgent(notes_dir=notes_dir, auto_start=False)
         path = os.path.join(notes_dir, "old.md")
 
-        # Register in manifest so delete cleans it up
+        # Register in manifest so delete can find and clean it up
         agent.manifest.upsert("abc123", path, "hash", is_managed=True)
 
         agent._process_delete(path)
 
-        mock_id.assert_called_once_with(path)
         mock_delete.assert_called_once()
         assert agent.manifest.get("abc123") is None
 

@@ -11,10 +11,10 @@ from backend.db.lance import (
     delete_document_chunks,
 )
 from backend.db.manifest import Manifest
-from backend.ingestion.processor import doc_id_from_path, ingest_markdown
+from backend.ingestion.processor import ingest_markdown
 from backend.retrieval.latent_discovery import concept_name_from_query_rows, find_latent_document_hits
 from backend.services.clustering import run_leiden_clustering
-from backend.services.notes_fs import content_hash_bytes, write_note, read_note, list_notes, note_path
+from backend.services.notes_fs import content_hash_bytes, generate_doc_id, rename_note, write_note, read_note, list_notes, note_path
 from backend.services.sync_agent import get_notes_dir
 from backend.schemas import (
     DiscoveryItemResponse,
@@ -241,12 +241,21 @@ def get_documents():
                 "concepts": group["concepts"].explode().dropna().unique().tolist(),
             }
 
+    # Build path→doc_id lookup from manifest
+    manifest = Manifest(notes_dir)
+    path_to_doc_id: dict[str, str] = {}
+    for row in manifest.list_all():
+        path_to_doc_id[row["file_path"]] = row["doc_id"]
+    manifest.close()
+
     seen_doc_ids: set[str] = set()
     documents = []
 
     # File-system notes take priority
     for entry in fs_notes:
-        did = doc_id_from_path(entry["file_path"])
+        did = path_to_doc_id.get(entry["file_path"])
+        if did is None:
+            continue  # File not in manifest — skip
         seen_doc_ids.add(did)
         lance = lance_docs.get(did)
         documents.append({
@@ -273,34 +282,40 @@ async def create_document(body: UpdateDocumentRequest):
     """
     notes_dir = get_notes_dir()
     text = (body.text or "").strip()
-    file_path = write_note(notes_dir, body.title, text)
-    doc_id = doc_id_from_path(file_path)
+    doc_id = generate_doc_id()
+
+    # Disambiguate filename if the title already exists on disk or in the manifest
+    title = body.title
+    candidate_path = note_path(notes_dir, title)
+    if os.path.exists(candidate_path):
+        title = f"{body.title}-{doc_id[:6]}"
+
+    file_path = write_note(notes_dir, title, text)
 
     manifest = Manifest(notes_dir)
     manifest.upsert(doc_id, file_path, content_hash_bytes(text.encode("utf-8")), is_managed=True, status="pending")
     manifest.close()
 
-    return {"doc_id": doc_id, "title": body.title, "status": "saved"}
+    return {"doc_id": doc_id, "title": title, "status": "saved"}
 
 
 @graph_router.get("/documents/{doc_id}", response_model=DocumentResponse)
 def get_document(doc_id: str):
     """Return the full text for one document.
 
-    Tries the file system first (by scanning NOTES_DIR), falls back to LanceDB
-    for documents that were ingested before the file-system migration.
+    Looks up file path from manifest, falls back to LanceDB for pre-migration docs.
     """
     notes_dir = get_notes_dir()
-    for entry in list_notes(notes_dir):
-        path = entry["file_path"]
-        if doc_id_from_path(path) == doc_id:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-            return DocumentResponse(
-                doc_id=doc_id,
-                name=entry["title"],
-                full_text=text,
-            )
+    manifest = Manifest(notes_dir)
+    row = manifest.get(doc_id)
+    manifest.close()
+
+    if row is not None and os.path.exists(row["file_path"]):
+        path = row["file_path"]
+        title = os.path.splitext(os.path.basename(path))[0]
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        return DocumentResponse(doc_id=doc_id, name=title, full_text=text)
 
     # Fallback: document may exist in LanceDB from before file-system migration
     document = get_document_from_table(doc_id)
@@ -311,16 +326,40 @@ def get_document(doc_id: str):
 
 @graph_router.put("/documents/{doc_id}")
 async def update_document(doc_id: str, body: UpdateDocumentRequest):
-    """Save document text to disk. The SyncAgent handles ingestion."""
+    """Save document text to disk, renaming the file if the title changed."""
+    import sqlite3
+
     notes_dir = get_notes_dir()
-    file_path = write_note(notes_dir, body.title, body.text)
-    actual_doc_id = doc_id_from_path(file_path)
 
     manifest = Manifest(notes_dir)
-    manifest.upsert(actual_doc_id, file_path, content_hash_bytes(body.text.encode("utf-8")), is_managed=True, status="pending")
-    manifest.close()
+    row = manifest.get(doc_id)
+    if row is None:
+        manifest.close()
+        raise HTTPException(status_code=404, detail="Document not found")
 
-    return {"doc_id": actual_doc_id, "title": body.title, "status": "saved"}
+    current_path = row["file_path"]
+    new_path = note_path(notes_dir, body.title)
+
+    # Rename the physical file if the title changed
+    if new_path != current_path:
+        try:
+            if os.path.exists(current_path):
+                old_title = os.path.splitext(os.path.basename(current_path))[0]
+                rename_note(notes_dir, old_title, body.title)
+        except (FileExistsError, OSError):
+            manifest.close()
+            raise HTTPException(status_code=409, detail="Name already exists.")
+
+    # Write the updated content
+    try:
+        file_path = write_note(notes_dir, body.title, body.text)
+        manifest.upsert(doc_id, file_path, content_hash_bytes(body.text.encode("utf-8")), is_managed=True, status="pending")
+    except sqlite3.IntegrityError:
+        manifest.close()
+        raise HTTPException(status_code=409, detail="Name already exists.")
+
+    manifest.close()
+    return {"doc_id": doc_id, "title": body.title, "status": "saved"}
 
 
 @graph_router.post("/documents/{doc_id}/reingest")
@@ -370,6 +409,7 @@ async def adopt_document(doc_id: str):
                 doc_name,
                 shared_kuzu_db=get_kuzu_engine(),
                 file_path=file_path,
+                doc_id=doc_id,
             ),
         )
         from backend.services.notes_fs import content_hash_file

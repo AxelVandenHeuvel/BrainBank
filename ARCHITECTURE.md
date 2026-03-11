@@ -23,13 +23,16 @@ BrainBank is a hybrid Vector/Graph RAG system with a standalone frontend visuali
 | File Watcher| watchdog                | OS-native filesystem monitoring for auto-ingest |
 | LLM         | Gemini 2.5 Flash + Gemini 3.1 Flash-Lite + Ollama | Gemini extraction/forced orphan merge decisions + grounded answers |
 
+> [!NOTE]
+> The frontend depends on `@types/node` in `devDependencies` and `"node"` in `tsconfig.json` to support Node.js-style global types (e.g., `NodeJS.Timeout`) used in components like `DocumentEditor.tsx`.
+
 ## Data Model
 
 ### SQLite: `.brainbank_manifest.db`
 
 | Column          | Type         | Description                                                                 |
 |-----------------|--------------|-----------------------------------------------------------------------------|
-| doc_id          | STRING (PK)  | Deterministic SHA-256 of absolute `file_path`                               |
+| doc_id          | STRING (PK)  | Persistent UUID (`uuid4().hex`) assigned at creation time                   |
 | file_path       | STRING       | Absolute path to the source `.md` file                                      |
 | content_hash    | STRING       | SHA-256 of the file content to detect actual changes, ignoring OS metadata  |
 | status          | STRING       | Current indexing status (e.g., "indexed", "external")                       |
@@ -42,20 +45,20 @@ This SQLite database acts as the "Fortress Guard" for the file system. The Watch
 | Column    | Type              | Description                              |
 |-----------|-------------------|------------------------------------------|
 | chunk_id  | STRING            | Unique ID per chunk                      |
-| doc_id    | STRING            | Deterministic SHA-256 of absolute `file_path` (or UUID for non-file ingests) |
+| doc_id    | STRING            | Persistent UUID assigned at creation (stable across renames)                 |
 | doc_name  | STRING            | Human-readable document title            |
 | file_path | STRING            | Absolute path to the source `.md` file (empty for non-file ingests) |
 | text      | STRING            | Chunk text content                       |
 | concepts  | STRING[]          | Concepts mentioned in this chunk         |
 | vector    | FLOAT32[384]      | Embedding vector                         |
 
-LanceDB is the sole source of document identity and the concept-to-document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph. When `file_path` is provided, `doc_id` is a deterministic SHA-256 hash of the absolute path so re-ingesting the same file overwrites the previous version without duplicates.
+LanceDB is the sole source of document identity and the concept-to-document link. The `concepts` field on each chunk bridges the gap between raw text and the Kuzu concept graph. Document identity uses persistent UUIDs stored in the SQLite manifest, so renaming a file does not change its `doc_id`. When re-ingesting, the caller provides the existing `doc_id` to overwrite the previous version without duplicates.
 
 ### LanceDB: `document_centroids` table
 
 | Column          | Type         | Description                                     |
 |-----------------|--------------|-------------------------------------------------|
-| doc_id          | STRING       | Deterministic SHA-256 of absolute `file_path` (or UUID) |
+| doc_id          | STRING       | Persistent UUID assigned at creation (stable across renames) |
 | doc_name        | STRING       | Human-readable document title                   |
 | file_path       | STRING       | Absolute path to the source `.md` file (empty for non-file ingests) |
 | centroid_vector | FLOAT32[384] | Mean embedding vector across all document chunks |
@@ -165,6 +168,7 @@ backend/
     
   scripts/
     heal_graph.py           - Standalone script: adds SEMANTIC_BRIDGE RELATED_TO edges via chunk-vector cosine similarity
+    migrate_to_filesystem.py - One-time migration: reads all LanceDB chunks, groups by doc_id, writes one .md file per document into notes_dir, registers each in the Manifest (is_managed=True). Skips docs already in the Manifest so it is safe to re-run.
   ingestion/
     chunker.py              - Semantic text splitting by topic shift
     consolidator.py         - Canonical concept mapping + density-control merges with threshold gates, batched LLM decisions, forced orphan reaper, and island node reaper (zero-edge consolidation)
@@ -212,6 +216,7 @@ tests/
   scripts/
     test_heal_graph.py      - heal_graph: cosine similarity, centroid computation, edge-exists, bridge insertion tests
     test_rebuild_graphrag_artifacts.py - rebuild script integration test for consolidation cleanup pass
+    test_migrate_to_filesystem.py - migrate_to_filesystem: writes .md files, registers in Manifest, joins chunks, skips already-migrated docs
   services/
     test_clustering.py      - Leiden clustering: empty/small-graph handling + community assignment tests
     test_llm.py             - Prompt workflow and extraction tests
